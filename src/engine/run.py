@@ -1,0 +1,290 @@
+"""
+story_engine generation runner — CLI entry point.
+
+This is what the cron job calls. It:
+  1. Selects candidates from the crawler DB
+  2. Generates scripts via Claude CLI
+  3. Saves results to story_engine's own DB
+
+Usage:
+    python -m engine.run                     # Generate all formats
+    python -m engine.run --lang zh           # All formats, Chinese
+    python -m engine.run --format explainer  # Single format only
+    python -m engine.run --format radar      # Phase 2: stories US media ignores
+    python -m engine.run --format regional   # Phase 2: regional perspective
+    python -m engine.run --format two_takes  # Phase 2: framing contrast
+    python -m engine.run --dry-run           # Show selections without generating
+"""
+
+import argparse
+import logging
+import os
+import sys
+
+# Add src/ to path
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+
+from db.models import init_db
+from engine.selector import (
+    select_for_explainer,
+    select_for_top5,
+    select_for_radar,
+    select_for_regional,
+    select_for_two_takes,
+    select_for_pattern,
+    select_for_viral,
+    select_for_deep_dive,
+    select_for_niche,
+    get_top_regions_with_data,
+)
+from engine.generator import (
+    generate_explainer,
+    generate_top5,
+    generate_radar,
+    generate_regional,
+    generate_two_takes,
+    generate_pattern,
+    generate_viral,
+    generate_deep_dive,
+    generate_niche,
+)
+
+logging.basicConfig(
+    level=os.getenv('LOG_LEVEL', 'INFO'),
+    format='%(levelname)s %(asctime)s %(name)s %(message)s',
+)
+logger = logging.getLogger(__name__)
+
+# Region display names
+REGION_NAMES = {
+    'jp': 'Japan', 'kr': 'South Korea', 'cn': 'China', 'de': 'Germany',
+    'fr': 'France', 'br': 'Brazil', 'es': 'Spain/Latin America',
+    'in': 'India', 'ru': 'Russia', 'it': 'Italy', 'tr': 'Turkey',
+    'ar': 'Arab World', 'id': 'Indonesia', 'pl': 'Poland',
+    'nl': 'Netherlands', 'se': 'Sweden', 'ph': 'Philippines',
+    'vn': 'Vietnam', 'th': 'Thailand', 'my': 'Malaysia',
+    'pt': 'Portugal', 'ar_latam': 'Argentina',
+}
+
+
+def _log_items(label: str, items: list[dict]):
+    """Log selected items."""
+    for i, item in enumerate(items, 1):
+        title = item.get('canonical_title') or item['title_original']
+        region = item.get('region_key', '??')
+        logger.info(f"  {label} #{i}: [{region}/{item['platform']}] {title[:60]} (hotness={item['hotness']:.1f})")
+
+
+def run_explainer(lang: str, channel: int, dry_run: bool) -> int | None:
+    """Generate a 60-second explainer (Format A)."""
+    item = select_for_explainer(lang=lang)
+    if not item:
+        logger.warning("No item found for explainer — skipping")
+        return None
+
+    _log_items("Explainer", [item])
+
+    if dry_run:
+        logger.info("[DRY RUN] Would generate explainer — skipping")
+        return None
+
+    return generate_explainer(item, lang=lang, channel=channel)
+
+
+def run_top5(lang: str, channel: int, dry_run: bool) -> int | None:
+    """Generate a Top 5 Today script (Format B)."""
+    items = select_for_top5(lang=lang)
+    if len(items) < 3:
+        logger.warning(f"Only {len(items)} items for top5 — need at least 3, skipping")
+        return None
+
+    _log_items("Top5", items)
+
+    if dry_run:
+        logger.info("[DRY RUN] Would generate top5 — skipping")
+        return None
+
+    return generate_top5(items, lang=lang, channel=channel)
+
+
+def run_radar(lang: str, channel: int, dry_run: bool) -> int | None:
+    """Generate 'stories US media ignores' (Format C)."""
+    items = select_for_radar()
+    if len(items) < 3:
+        logger.warning(f"Only {len(items)} items for radar — need at least 3, skipping")
+        return None
+
+    _log_items("Radar", items)
+
+    if dry_run:
+        logger.info("[DRY RUN] Would generate radar — skipping")
+        return None
+
+    return generate_radar(items, lang=lang, channel=channel)
+
+
+def run_regional(lang: str, channel: int, dry_run: bool) -> int | None:
+    """Generate regional perspective (Format D) for the top region with data."""
+    regions = get_top_regions_with_data()
+    if not regions:
+        logger.warning("No regions with enough data for regional — skipping")
+        return None
+
+    # Pick the top region
+    region_key = regions[0]
+    region_name = REGION_NAMES.get(region_key, region_key)
+    items = select_for_regional(region=region_key)
+    if len(items) < 3:
+        logger.warning(f"Only {len(items)} items for region '{region_key}' — skipping")
+        return None
+
+    logger.info(f"Regional target: {region_name} ({region_key})")
+    _log_items("Regional", items)
+
+    if dry_run:
+        logger.info(f"[DRY RUN] Would generate regional ({region_name}) — skipping")
+        return None
+
+    return generate_regional(items, region_name=region_name, lang=lang, channel=channel)
+
+
+def run_two_takes(lang: str, channel: int, dry_run: bool) -> int | None:
+    """Generate framing contrast (Format E)."""
+    items = select_for_two_takes()
+    if len(items) < 4:
+        logger.warning(f"Only {len(items)} items for two_takes — need at least 4, skipping")
+        return None
+
+    _log_items("TwoTakes", items)
+
+    if dry_run:
+        logger.info("[DRY RUN] Would generate two_takes — skipping")
+        return None
+
+    return generate_two_takes(items, lang=lang, channel=channel)
+
+
+def run_pattern(lang: str, channel: int, dry_run: bool) -> int | None:
+    """Generate cross-region pattern analysis (Format F)."""
+    items = select_for_pattern()
+    if len(items) < 6:
+        logger.warning(f"Only {len(items)} items for pattern — need at least 6, skipping")
+        return None
+
+    regions = set(i.get('region_key', '') for i in items)
+    logger.info(f"Pattern candidates: {len(items)} items across {len(regions)} regions")
+    _log_items("Pattern", items[:8])
+
+    if dry_run:
+        logger.info("[DRY RUN] Would generate pattern — skipping")
+        return None
+
+    return generate_pattern(items, lang=lang, channel=channel)
+
+
+def run_viral(lang: str, channel: int, dry_run: bool) -> int | None:
+    """Generate 'before it goes viral' (Format G)."""
+    items = select_for_viral()
+    if len(items) < 2:
+        logger.warning(f"Only {len(items)} items for viral — need at least 2, skipping")
+        return None
+
+    _log_items("Viral", items)
+
+    if dry_run:
+        logger.info("[DRY RUN] Would generate viral — skipping")
+        return None
+
+    return generate_viral(items, lang=lang, channel=channel)
+
+
+def run_deep_dive(lang: str, channel: int, dry_run: bool) -> int | None:
+    """Generate weekly deep dive (Format H)."""
+    items = select_for_deep_dive(topic='tech')
+    if len(items) < 5:
+        logger.warning(f"Only {len(items)} items for deep_dive — need at least 5, skipping")
+        return None
+
+    logger.info(f"Deep dive: {len(items)} items for topic 'tech'")
+    _log_items("DeepDive", items[:5])
+
+    if dry_run:
+        logger.info("[DRY RUN] Would generate deep_dive — skipping")
+        return None
+
+    return generate_deep_dive(items, topic='tech', lang=lang, channel=channel)
+
+
+def run_niche(lang: str, channel: int, dry_run: bool) -> int | None:
+    """Generate niche focus (Format I)."""
+    items = select_for_niche(niche='tech')
+    if len(items) < 3:
+        logger.warning(f"Only {len(items)} items for niche — need at least 3, skipping")
+        return None
+
+    logger.info(f"Niche focus: {len(items)} items for 'tech'")
+    _log_items("Niche", items)
+
+    if dry_run:
+        logger.info("[DRY RUN] Would generate niche — skipping")
+        return None
+
+    return generate_niche(items, niche='tech', lang=lang, channel=channel)
+
+
+ALL_FORMATS = ['explainer', 'top5', 'radar', 'regional', 'two_takes', 'pattern', 'viral', 'deep_dive', 'niche']
+
+FORMAT_RUNNERS = {
+    'explainer': run_explainer,
+    'top5': run_top5,
+    'radar': run_radar,
+    'regional': run_regional,
+    'two_takes': run_two_takes,
+    'pattern': run_pattern,
+    'viral': run_viral,
+    'deep_dive': run_deep_dive,
+    'niche': run_niche,
+}
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Generate stories from crawled data')
+    parser.add_argument('--lang', choices=['en', 'zh'], default='en', help='Output language')
+    parser.add_argument('--channel', type=int, choices=[1, 2, 3], default=1, help='Output channel')
+    parser.add_argument('--format', choices=ALL_FORMATS + ['all'], default='all', help='Which format to generate')
+    parser.add_argument('--dry-run', action='store_true', help='Show selections without generating')
+    args = parser.parse_args()
+
+    logger.info(f"=== story_engine generation run ===")
+    logger.info(f"  lang={args.lang}  channel={args.channel}  format={args.format}  dry_run={args.dry_run}")
+
+    # Initialize DB
+    init_db()
+
+    formats = ALL_FORMATS if args.format == 'all' else [args.format]
+    results = {}
+
+    for fmt in formats:
+        runner = FORMAT_RUNNERS[fmt]
+        try:
+            results[fmt] = runner(args.lang, args.channel, args.dry_run)
+        except Exception as e:
+            logger.error(f"{fmt} generation failed: {e}")
+            results[fmt] = None
+
+    # Summary
+    logger.info("=== Generation complete ===")
+    for fmt, story_id in results.items():
+        if story_id:
+            logger.info(f"  {fmt}: story #{story_id}")
+        else:
+            logger.info(f"  {fmt}: skipped or failed")
+
+    if all(v is None for v in results.values()):
+        logger.warning("All formats failed or were skipped")
+        return 1
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main() or 0)

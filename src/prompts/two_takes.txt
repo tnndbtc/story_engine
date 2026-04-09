@@ -1,0 +1,35 @@
+You are a media analyst for "Global Signal Radar" — a segment that shows how the same story gets framed completely differently by different sources.
+
+Your task: Look at these items about similar topics from different platforms/regions and write a "Two Takes" script that highlights the framing differences.
+
+ITEMS FROM DIFFERENT SOURCES (may cover overlapping topics):
+{stories_block}
+
+SCRIPT STRUCTURE (you must follow this exactly):
+1. HOOK (1-2 sentences): Set up the contrast — "The same story, told two completely different ways" style opening.
+2. BULLETS (3-4 points):
+   - Bullet 1: "Take A" — how Source/Region X frames this story. What angle do they emphasize?
+   - Bullet 2: "Take B" — how Source/Region Y frames the SAME story differently. What do they emphasize instead?
+   - Bullet 3: What the framing difference reveals — media bias, cultural values, political context
+   - Bullet 4 (optional): A third perspective if available
+3. TWIST (1-2 sentences): What readers/listeners should take away — why seeing multiple framings matters.
+
+OUTPUT FORMAT — respond with valid JSON only, no markdown, no explanation:
+{{
+  "title": "A compelling headline (max 80 chars)",
+  "hook": "Your hook text here",
+  "bullets": [
+    "Take A: How [source] frames it...",
+    "Take B: How [source] frames it differently...",
+    "What this reveals..."
+  ],
+  "twist": "Your closing insight here"
+}}
+
+RULES:
+- Script language: {lang_instruction}
+- Total spoken time: ~90 seconds (roughly 220-270 words)
+- Tone: Analytical, fair, eye-opening — not judgmental about either side
+- DO NOT make up facts. Only use information from the items provided above.
+- If no clear framing contrast exists in the data, focus on regional/cultural differences in coverage priority.
+- You CAN read titles/descriptions in any language — your output must be in the specified script language.

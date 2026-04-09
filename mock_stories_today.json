@@ -1,0 +1,297 @@
+{
+  "date": "2026-04-08",
+  "generated_at": "2026-04-08T06:02:14Z",
+  "total": 9,
+  "stories": [
+
+    {
+      "id": 1,
+      "title": "Oracle Slashes 30,000 Jobs With a Cold 6 A.M. Email",
+      "format": "explainer",
+      "channel": 1,
+      "lang": "en",
+      "status": "ready",
+      "generated_at": "2026-04-08T06:02:31Z",
+      "sources_count": 3,
+      "script": {
+        "hook": "Why are 30,000 people waking up unemployed this morning?",
+        "bullets": [
+          "Oracle quietly fired 30K workers across the US, India, and other regions — no in-person notice, just an email sent before sunrise.",
+          "No severance negotiation window. No town hall. Access was simply revoked.",
+          "Same week: a Five Guys CEO gave staff a $1.5M bonus 'so he wouldn't get shot in the back like the UnitedHealthcare boss.'"
+        ],
+        "twist": "Corporate America is splitting into two strategies — panic generosity and silent mass disposal. Both are driven by the same fear.",
+        "full_text": "Why are 30,000 people waking up unemployed this morning?\nOracle quietly fired 30K workers across the US, India, and other regions — no in-person notice, just an email sent before sunrise.\nNo severance negotiation window. No town hall. Access was simply revoked.\nSame week: a Five Guys CEO gave staff a $1.5M bonus 'so he wouldn't get shot in the back like the UnitedHealthcare boss.'\nCorporate America is splitting into two strategies — panic generosity and silent mass disposal. Both are driven by the same fear."
+      },
+      "sources": [
+        {
+          "url": "https://www.reddit.com/r/technology/comments/xxx1/oracle_slashes_30000_jobs/",
+          "platform": "reddit",
+          "hotness": 406.7,
+          "title": "Oracle slashes 30,000 jobs with a cold 6 a.m. email"
+        },
+        {
+          "url": "https://www.reddit.com/r/news/comments/xxx2/five_guys_ceo/",
+          "platform": "reddit",
+          "hotness": 367.2,
+          "title": "Five Guys CEO says he gave $1.5M staff bonus so he wouldn't get shot in the back like UnitedHealthcare boss"
+        }
+      ],
+      "comments_used": [
+        {
+          "text": "My entire team in Bangalore just got wiped. Zero severance discussion.",
+          "likes": 4821,
+          "platform": "reddit"
+        },
+        {
+          "text": "The email came before anyone's laptop locked. People found out mid-standup.",
+          "likes": 3102,
+          "platform": "reddit"
+        },
+        {
+          "text": "This is the UnitedHealthcare moment for tech workers.",
+          "likes": 2876,
+          "platform": "reddit"
+        }
+      ]
+    },
+
+    {
+      "id": 2,
+      "title": "Today's Top 5 Stories",
+      "format": "top5",
+      "channel": 1,
+      "lang": "en",
+      "status": "ready",
+      "generated_at": "2026-04-08T06:02:45Z",
+      "sources_count": 5,
+      "script": {
+        "hook": "Five stories you need to know today.",
+        "bullets": [
+          "🔴 Iran threatens to attack Apple, Google, and Microsoft starting April 1 — citing US tech companies' role in surveillance infrastructure.",
+          "⚖️  A federal judge rules Trump's order to defund NPR and PBS unconstitutional.",
+          "💼 Oracle fires 30,000 workers via a 6 a.m. email across the US and India.",
+          "⚓ The US deploys a third aircraft carrier to the Middle East as Iran tensions escalate.",
+          "⛽ US gas prices hit $4/gallon — the highest point of Trump's presidency."
+        ],
+        "twist": "Three of these five stories connect: Iran threat → carrier deployment → gas price spike. One geopolitical thread running through today's news.",
+        "full_text": "Five stories you need to know today.\n🔴 Iran threatens to attack Apple, Google, and Microsoft starting April 1 — citing US tech companies' role in surveillance infrastructure.\n⚖️  A federal judge rules Trump's order to defund NPR and PBS unconstitutional.\n💼 Oracle fires 30,000 workers via a 6 a.m. email across the US and India.\n⚓ The US deploys a third aircraft carrier to the Middle East as Iran tensions escalate.\n⛽ US gas prices hit $4/gallon — the highest point of Trump's presidency.\nThree of these five stories connect: Iran threat → carrier deployment → gas price spike. One geopolitical thread running through today's news."
+      },
+      "sources": [
+        { "url": "https://reddit.com/r/worldnews/comments/aaa1", "platform": "reddit", "hotness": 432.6, "title": "Iran Threatens to Attack U.S. Tech Companies Starting April 1" },
+        { "url": "https://reddit.com/r/politics/comments/aaa2",  "platform": "reddit", "hotness": 442.0, "title": "Judge rules Trump order eliminating NPR, PBS funding is unconstitutional" },
+        { "url": "https://reddit.com/r/technology/comments/aaa3","platform": "reddit", "hotness": 406.7, "title": "Oracle slashes 30,000 jobs with a cold 6 a.m. email" },
+        { "url": "https://reddit.com/r/worldnews/comments/aaa4", "platform": "reddit", "hotness": 394.3, "title": "US deploys third aircraft carrier to Middle East" },
+        { "url": "https://reddit.com/r/politics/comments/aaa5",  "platform": "reddit", "hotness": 382.9, "title": "US gas prices hit $4/gallon, now higher than any point under Trump" }
+      ],
+      "comments_used": []
+    },
+
+    {
+      "id": 3,
+      "title": "3 Stories the US Media Is Ignoring Right Now",
+      "format": "radar",
+      "channel": 2,
+      "lang": "en",
+      "status": "ready",
+      "generated_at": "2026-04-08T06:03:10Z",
+      "sources_count": 3,
+      "script": {
+        "hook": "While US headlines focused on Iran and Oracle today, three other stories were trending globally — and got almost zero coverage stateside.",
+        "bullets": [
+          "🍁 Canada's PM Carney announced a $3.8B nature protection plan — new national parks and marine reserves. Trending in CA, AU, UK. Zero Reddit US coverage.",
+          "⚽ Italy failed to qualify for the 2026 FIFA World Cup. Massive story across Europe and Latin America. Barely a footnote in US sports media.",
+          "🛣️  China deployed anti-fatigue laser lights on highways to combat drowsy driving — framed as quirky tech abroad, but covered as a solved infrastructure problem inside China."
+        ],
+        "twist": "The gap isn't just editorial bias — it's structural. US social platforms amplify US-centric engagement signals. Stories that trend in Naver, Livedoor, or Canadian Reddit simply don't reach the US algorithm.",
+        "full_text": "While US headlines focused on Iran and Oracle today, three other stories were trending globally — and got almost zero coverage stateside.\n🍁 Canada's PM Carney announced a $3.8B nature protection plan — new national parks and marine reserves. Trending in CA, AU, UK. Zero Reddit US coverage.\n⚽ Italy failed to qualify for the 2026 FIFA World Cup. Massive story across Europe and Latin America. Barely a footnote in US sports media.\n🛣️  China deployed anti-fatigue laser lights on highways to combat drowsy driving — framed as quirky tech abroad, but covered as a solved infrastructure problem inside China.\nThe gap isn't just editorial bias — it's structural. US social platforms amplify US-centric engagement signals. Stories that trend in Naver, Livedoor, or Canadian Reddit simply don't reach the US algorithm."
+      },
+      "sources": [
+        { "url": "https://reddit.com/r/canada/comments/bbb1",     "platform": "reddit", "hotness": 385.1, "title": "Carney announces $3.8B to protect nature" },
+        { "url": "https://reddit.com/r/soccer/comments/bbb2",     "platform": "reddit", "hotness": 385.1, "title": "Italy will miss the FIFA World Cup 2026" },
+        { "url": "https://reddit.com/r/worldnews/comments/bbb3",  "platform": "reddit", "hotness": 438.4, "title": "China's anti fatigue laser lights on highways" }
+      ],
+      "comments_used": []
+    },
+
+    {
+      "id": 4,
+      "title": "Same Story, Two Completely Different Realities",
+      "format": "two_takes",
+      "channel": 2,
+      "lang": "en",
+      "status": "ready",
+      "generated_at": "2026-04-08T06:03:28Z",
+      "sources_count": 2,
+      "script": {
+        "hook": "Two posts about Iran went viral this week. They describe the same country, the same week, the same threat — but tell completely different stories.",
+        "bullets": [
+          "Take 1 (16,900 upvotes): 'Iran threatens to attack Apple, Google, and Microsoft.' Frame: Iran as aggressor. Dangerous. Unprovoked.",
+          "Take 2 (12,300 upvotes): 'What if Iran says: we'll reopen the Strait if Trump resigns?' Frame: Iran as strategic actor. Using leverage. Playing chess.",
+          "Same posture. One post reads it as an attack. The other reads it as a negotiating chip. Both went viral on the same day."
+        ],
+        "twist": "The story you believe depends entirely on which post you saw first. That's not an Iran problem — that's a media ecosystem problem.",
+        "full_text": "Two posts about Iran went viral this week. They describe the same country, the same week, the same threat — but tell completely different stories.\nTake 1 (16,900 upvotes): 'Iran threatens to attack Apple, Google, and Microsoft.' Frame: Iran as aggressor. Dangerous. Unprovoked.\nTake 2 (12,300 upvotes): 'What if Iran says: we'll reopen the Strait if Trump resigns?' Frame: Iran as strategic actor. Using leverage. Playing chess.\nSame posture. One post reads it as an attack. The other reads it as a negotiating chip. Both went viral on the same day.\nThe story you believe depends entirely on which post you saw first. That's not an Iran problem — that's a media ecosystem problem."
+      },
+      "sources": [
+        { "url": "https://reddit.com/r/worldnews/comments/ccc1", "platform": "reddit", "hotness": 432.6, "title": "Iran Threatens to Attack U.S. Tech Companies Starting April 1" },
+        { "url": "https://reddit.com/r/geopolitics/comments/ccc2","platform": "reddit", "hotness": 420.8, "title": "What if Iran says to the World 'We'll open the strait if Donald Trump resigns'" }
+      ],
+      "comments_used": [
+        { "text": "These two posts were on the front page at the same time. The cognitive dissonance was real.", "likes": 2341, "platform": "reddit" },
+        { "text": "One is r/worldnews the other is r/geopolitics. Two completely different communities reading the same situation.", "likes": 1876, "platform": "reddit" }
+      ]
+    },
+
+    {
+      "id": 5,
+      "title": "Before It Goes Viral: The White House Ballroom Story",
+      "format": "viral",
+      "channel": 2,
+      "lang": "en",
+      "status": "ready",
+      "generated_at": "2026-04-08T06:03:45Z",
+      "sources_count": 2,
+      "script": {
+        "hook": "This story hasn't blown up yet — but it will. Two separate Reddit posts are rising simultaneously, and mainstream media hasn't touched it.",
+        "bullets": [
+          "A federal judge ordered construction halted on Trump's White House ballroom project, pending congressional approval.",
+          "Two independent posts about this surfaced within 2 hours of each other — a reliable early signal that a story is about to break wide.",
+          "The core hook: a sitting president was using public funds to build a ballroom inside the White House, and a court stopped it mid-construction."
+        ],
+        "twist": "The ballroom itself is almost irrelevant. The story is: what else is being built, funded, or contracted without congressional sign-off right now?",
+        "full_text": "This story hasn't blown up yet — but it will. Two separate Reddit posts are rising simultaneously, and mainstream media hasn't touched it.\nA federal judge ordered construction halted on Trump's White House ballroom project, pending congressional approval.\nTwo independent posts about this surfaced within 2 hours of each other — a reliable early signal that a story is about to break wide.\nThe core hook: a sitting president was using public funds to build a ballroom inside the White House, and a court stopped it mid-construction.\nThe ballroom itself is almost irrelevant. The story is: what else is being built, funded, or contracted without congressional sign-off right now?"
+      },
+      "sources": [
+        { "url": "https://reddit.com/r/politics/comments/ddd1", "platform": "reddit", "hotness": 404.4, "title": "Ballroom construction ordered to halt and wait for congressional approval" },
+        { "url": "https://reddit.com/r/news/comments/ddd2",    "platform": "reddit", "hotness": 393.9, "title": "Judge blocks Trump White House ballroom project for now" }
+      ],
+      "comments_used": [
+        { "text": "Wait, they were literally mid-construction when the judge ruled? How far along was it?", "likes": 3210, "platform": "reddit" },
+        { "text": "This is going to be a much bigger story by tomorrow morning.", "likes": 1543, "platform": "reddit" }
+      ]
+    },
+
+    {
+      "id": 6,
+      "title": "CEO们慌了：美国企业的两种求生策略",
+      "format": "explainer",
+      "channel": 1,
+      "lang": "zh",
+      "status": "ready",
+      "generated_at": "2026-04-08T06:04:02Z",
+      "sources_count": 2,
+      "script": {
+        "hook": "同一周内，两家美国公司做了截然相反的决定——背后是同一种恐惧。",
+        "bullets": [
+          "Oracle 用一封凌晨6点的邮件裁员3万人，没有谈判，没有会面，权限直接撤销。",
+          "Five Guys CEO 同一周向全体员工发放150万美元奖金——他的原话是：'免得自己像联合健康CEO一样被人从背后击毙。'",
+          "两种策略，一种恐惧：美国高管正在用完全相反的方式应对同一个问题——员工的愤怒。"
+        ],
+        "twist": "路易吉·曼焦内效应正在重塑美国企业文化。问题不是裁员本身，而是：当恐惧成为管理工具，公司和员工之间还剩下什么？",
+        "full_text": "同一周内，两家美国公司做了截然相反的决定——背后是同一种恐惧。\nOracle 用一封凌晨6点的邮件裁员3万人，没有谈判，没有会面，权限直接撤销。\nFive Guys CEO 同一周向全体员工发放150万美元奖金——他的原话是：'免得自己像联合健康CEO一样被人从背后击毙。'\n两种策略，一种恐惧：美国高管正在用完全相反的方式应对同一个问题——员工的愤怒。\n路易吉·曼焦内效应正在重塑美国企业文化。问题不是裁员本身，而是：当恐惧成为管理工具，公司和员工之间还剩下什么？"
+      },
+      "sources": [
+        { "url": "https://reddit.com/r/technology/comments/xxx1", "platform": "reddit", "hotness": 406.7, "title": "Oracle slashes 30,000 jobs with a cold 6 a.m. email" },
+        { "url": "https://reddit.com/r/news/comments/xxx2",       "platform": "reddit", "hotness": 367.2, "title": "Five Guys CEO says he gave $1.5M staff bonus so he wouldn't get shot in the back like UnitedHealthcare boss" }
+      ],
+      "comments_used": [
+        { "text": "My entire team in Bangalore just got wiped. Zero severance discussion.", "likes": 4821, "platform": "reddit" },
+        { "text": "This is the UnitedHealthcare moment for tech workers.", "likes": 2876, "platform": "reddit" }
+      ]
+    },
+
+    {
+      "id": 7,
+      "title": "Iran Escalation Deep Dive: What Actually Happened This Week",
+      "format": "deep_dive",
+      "channel": 2,
+      "lang": "en",
+      "status": "ready",
+      "generated_at": "2026-04-08T06:04:30Z",
+      "sources_count": 4,
+      "script": {
+        "hook": "Three separate Iran stories went viral this week. They're not separate stories — they're one escalation arc. Here's the full picture.",
+        "bullets": [
+          "Day 1 — The threat: Iran announced it would target Apple, Google, and Microsoft infrastructure starting April 1, citing their role in US surveillance networks. 16,900 upvotes on Reddit.",
+          "Day 2 — The response: The US quietly deployed a third aircraft carrier to the Middle East. No press conference. Spotted by aviation trackers. 6,600 upvotes.",
+          "Day 3 — The offer: A Reddit geopolitics thread went viral asking: what if Iran offered to reopen the Strait of Hormuz in exchange for Trump's resignation? 12,300 upvotes. Fringe idea — but it signals Iran is testing what leverage it actually has.",
+          "The pattern: Provoke → Wait for military response → Float diplomatic off-ramp. Iran has run this playbook before — 2019, 2020, 2023. Each time, the off-ramp is offered before any actual strike."
+        ],
+        "twist": "The tech company threats may be the least important part. The Strait offer — even as a Reddit hypothetical — tells you what Iran actually wants to negotiate about. Watch the Strait, not the server farms.",
+        "full_text": "Three separate Iran stories went viral this week. They're not separate stories — they're one escalation arc. Here's the full picture.\nDay 1 — The threat: Iran announced it would target Apple, Google, and Microsoft infrastructure starting April 1, citing their role in US surveillance networks. 16,900 upvotes on Reddit.\nDay 2 — The response: The US quietly deployed a third aircraft carrier to the Middle East. No press conference. Spotted by aviation trackers. 6,600 upvotes.\nDay 3 — The offer: A Reddit geopolitics thread went viral asking: what if Iran offered to reopen the Strait of Hormuz in exchange for Trump's resignation? 12,300 upvotes. Fringe idea — but it signals Iran is testing what leverage it actually has.\nThe pattern: Provoke → Wait for military response → Float diplomatic off-ramp. Iran has run this playbook before — 2019, 2020, 2023. Each time, the off-ramp is offered before any actual strike.\nThe tech company threats may be the least important part. The Strait offer — even as a Reddit hypothetical — tells you what Iran actually wants to negotiate about. Watch the Strait, not the server farms."
+      },
+      "sources": [
+        { "url": "https://reddit.com/r/worldnews/comments/eee1",   "platform": "reddit", "hotness": 432.6, "title": "Iran Threatens to Attack U.S. Tech Companies Starting April 1" },
+        { "url": "https://reddit.com/r/worldnews/comments/eee2",   "platform": "reddit", "hotness": 394.3, "title": "US deploys third aircraft carrier to Middle East" },
+        { "url": "https://reddit.com/r/geopolitics/comments/eee3", "platform": "reddit", "hotness": 420.8, "title": "What if Iran says 'We'll open the strait if Trump resigns'" },
+        { "url": "https://reddit.com/r/worldnews/comments/eee4",   "platform": "reddit", "hotness": 360.1, "title": "Iran can do something hilarious" }
+      ],
+      "comments_used": [
+        { "text": "The carrier deployment was buried. No one talked about it. That's the most important move of the week.", "likes": 5621, "platform": "reddit" },
+        { "text": "Iran has done this exact sequence 4 times in the last decade. It never leads to a strike.", "likes": 3890, "platform": "reddit" }
+      ]
+    },
+
+    {
+      "id": 8,
+      "title": "Oracle Layoffs: This Is a Tech Industry Signal, Not a Business Story",
+      "format": "explainer",
+      "channel": 3,
+      "lang": "en",
+      "status": "ready",
+      "generated_at": "2026-04-08T06:04:48Z",
+      "sources_count": 2,
+      "script": {
+        "hook": "Oracle just fired 30,000 people via a pre-dawn email. That's not the story. The story is what it signals for every tech worker alive.",
+        "bullets": [
+          "30,000 jobs. 6 a.m. email. US and India simultaneously. Zero human contact in the process.",
+          "Google did it rolling. Microsoft did it rolling. Oracle did it all at once, before sunrise. The method is new — the direction is the same.",
+          "The question isn't Oracle's strategy. It's: which company is next, and will employees find out from a person or a push notification?"
+        ],
+        "twist": "Big Tech has quietly decided that mass layoffs via automated communication are now socially acceptable. Nobody voted on that. It just became true.",
+        "full_text": "Oracle just fired 30,000 people via a pre-dawn email. That's not the story. The story is what it signals for every tech worker alive.\n30,000 jobs. 6 a.m. email. US and India simultaneously. Zero human contact in the process.\nGoogle did it rolling. Microsoft did it rolling. Oracle did it all at once, before sunrise. The method is new — the direction is the same.\nThe question isn't Oracle's strategy. It's: which company is next, and will employees find out from a person or a push notification?\nBig Tech has quietly decided that mass layoffs via automated communication are now socially acceptable. Nobody voted on that. It just became true."
+      },
+      "sources": [
+        { "url": "https://reddit.com/r/technology/comments/fff1", "platform": "reddit", "hotness": 406.7, "title": "Oracle slashes 30,000 jobs with a cold 6 a.m. email" },
+        { "url": "https://news.ycombinator.com/item?id=99999",    "platform": "hackernews", "hotness": 312.4, "title": "Oracle layoffs — engineering perspective" }
+      ],
+      "comments_used": [
+        { "text": "I got the email at 5:58am. My badge stopped working at 6:00am exactly. They timed it to the minute.", "likes": 8934, "platform": "reddit" },
+        { "text": "HN: The automation of the layoff process itself is the canary. If they can automate the firing, the job was already half-automated.", "likes": 1243, "platform": "hackernews" }
+      ]
+    },
+
+    {
+      "id": 9,
+      "title": "今日TOP5：你今天必须知道的5件事",
+      "format": "top5",
+      "channel": 1,
+      "lang": "zh",
+      "status": "ready",
+      "generated_at": "2026-04-08T06:05:01Z",
+      "sources_count": 5,
+      "script": {
+        "hook": "今天全球最值得关注的5件事。",
+        "bullets": [
+          "🔴 伊朗宣布将从4月1日起攻击苹果、谷歌和微软的基础设施。",
+          "⚖️  美国联邦法官裁定特朗普削减NPR和PBS公共资金的命令违宪。",
+          "💼 Oracle用一封凌晨6点的邮件裁员3万人，波及美国和印度。",
+          "⚓ 美国向中东部署第三艘航空母舰，伊朗局势持续升级。",
+          "⛽ 美国油价触及每加仑4美元，为特朗普执政以来最高点。"
+        ],
+        "twist": "今天的5条新闻，有3条指向同一条线索：伊朗威胁 → 航母部署 → 油价飙升。地缘政治的涟漪，今天已经传到了你的油箱。",
+        "full_text": "今天全球最值得关注的5件事。\n🔴 伊朗宣布将从4月1日起攻击苹果、谷歌和微软的基础设施。\n⚖️  美国联邦法官裁定特朗普削减NPR和PBS公共资金的命令违宪。\n💼 Oracle用一封凌晨6点的邮件裁员3万人，波及美国和印度。\n⚓ 美国向中东部署第三艘航空母舰，伊朗局势持续升级。\n⛽ 美国油价触及每加仑4美元，为特朗普执政以来最高点。\n今天的5条新闻，有3条指向同一条线索：伊朗威胁 → 航母部署 → 油价飙升。地缘政治的涟漪，今天已经传到了你的油箱。"
+      },
+      "sources": [
+        { "url": "https://reddit.com/r/worldnews/comments/aaa1", "platform": "reddit", "hotness": 432.6, "title": "Iran Threatens to Attack U.S. Tech Companies Starting April 1" },
+        { "url": "https://reddit.com/r/politics/comments/aaa2",  "platform": "reddit", "hotness": 442.0, "title": "Judge rules Trump order eliminating NPR, PBS funding is unconstitutional" },
+        { "url": "https://reddit.com/r/technology/comments/aaa3","platform": "reddit", "hotness": 406.7, "title": "Oracle slashes 30,000 jobs with a cold 6 a.m. email" },
+        { "url": "https://reddit.com/r/worldnews/comments/aaa4", "platform": "reddit", "hotness": 394.3, "title": "US deploys third aircraft carrier to Middle East" },
+        { "url": "https://reddit.com/r/politics/comments/aaa5",  "platform": "reddit", "hotness": 382.9, "title": "US gas prices hit $4/gallon" }
+      ],
+      "comments_used": []
+    }
+
+  ]
+}
