@@ -40,8 +40,26 @@ echo ""
 echo "--- Generating Chinese stories ---"
 python "$SCRIPT_DIR/src/engine/run.py" --lang zh --channel 2 "$@"
 
+# Show summary
 echo ""
 echo "========================================="
-echo "  Generation complete"
+cd "$SCRIPT_DIR"
+python -c "
+import sys; sys.path.insert(0, 'src')
+from db.models import get_connection, _ts_to_iso
+conn = get_connection()
+# Get the latest story set
+ss = conn.execute('SELECT id, batch_ts FROM story_sets ORDER BY id DESC LIMIT 1').fetchone()
+if ss:
+    ready = conn.execute('SELECT COUNT(*) FROM stories WHERE batch_id=? AND status=\"ready\"', (ss['id'],)).fetchone()[0]
+    failed = conn.execute('SELECT COUNT(*) FROM stories WHERE batch_id=? AND status=\"failed\"', (ss['id'],)).fetchone()[0]
+    print(f'  Set #{ss[\"id\"]} ({_ts_to_iso(ss[\"batch_ts\"])})')
+    print(f'  Ready: {ready}  Failed: {failed}')
+    if failed > 0:
+        print(f'  ⚠ Check logs/generate.log for failure details')
+else:
+    print('  No story set created')
+conn.close()
+"
 echo "  $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
 echo "========================================="

@@ -17,6 +17,7 @@ from api.schemas import (
     Story,
     StoryCard,
     StoriesListResponse,
+    StorySetSummary,
     Script,
     SourceItem,
     CommentItem,
@@ -25,7 +26,7 @@ from api.schemas import (
     ChannelType,
     LangType,
 )
-from db.models import get_story, get_stories_today, get_stories
+from db.models import get_story, get_stories_today, get_stories, get_story_sets, get_stories_by_set
 from db.crawler_reader import get_item_count, CRAWLER_DB_PATH
 
 import os
@@ -97,6 +98,7 @@ def list_stories(
     format: Optional[FormatType] = None,
     channel: Optional[ChannelType] = None,
     lang: Optional[LangType] = None,
+    set_id: Optional[int] = None,
     limit: int = Query(default=50, le=200),
 ):
     """List stories with optional filters. Returns cards (no full script)."""
@@ -105,9 +107,32 @@ def list_stories(
         format=format,
         channel=channel,
         lang=lang,
+        set_id=set_id,
         limit=limit,
     )
     return [_dict_to_card(s) for s in stories]
+
+
+@router.get("/story-sets", response_model=list[StorySetSummary])
+def list_story_sets(limit: int = Query(default=20, le=100)):
+    """List all story sets with story counts."""
+    sets = get_story_sets(limit=limit)
+    return [StorySetSummary(**s) for s in sets]
+
+
+@router.get("/story-sets/{set_id}", response_model=StoriesListResponse)
+def get_story_set_detail(set_id: int):
+    """Get all stories in a specific story set."""
+    stories = get_stories_by_set(set_id)
+    if not stories:
+        raise HTTPException(status_code=404, detail=f"Story set {set_id} not found or empty")
+
+    return StoriesListResponse(
+        date=stories[0].get('generated_at', '')[:10] if stories else '',
+        generated_at=datetime.utcnow(),
+        total=len(stories),
+        stories=[_dict_to_story(s) for s in stories],
+    )
 
 
 @router.get("/status", response_model=EngineStatus)

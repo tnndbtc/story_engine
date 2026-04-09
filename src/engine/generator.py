@@ -29,8 +29,13 @@ def _call_claude(prompt: str) -> str:
     Uses `claude -p` (pipe mode) which reads from stdin.
     No API key needed — uses the local Claude Code installation.
     """
-    # Append conciseness reminder to prevent truncation
-    prompt = prompt.rstrip() + "\n\nIMPORTANT: Keep your TOTAL JSON response under 500 words. Be concise. Every bullet should be 1-2 sentences max."
+    # Append conciseness and formatting reminders
+    prompt = prompt.rstrip() + (
+        "\n\nIMPORTANT: Keep your TOTAL JSON response under 500 words. Be concise. Every bullet should be 1-2 sentences max."
+        "\n\nCRITICAL JSON RULE: Inside JSON string values, NEVER use ASCII double quotes (\"). "
+        "Use Chinese quotation marks \u300c\u300d or \u201c\u201d instead. "
+        "ASCII double quotes inside strings will break the JSON parser."
+    )
 
     try:
         result = subprocess.run(
@@ -76,8 +81,31 @@ def _parse_json_response(text: str) -> dict:
     start = cleaned.find('{')
     end = cleaned.rfind('}')
     if start != -1 and end != -1 and end > start:
+        extracted = cleaned[start:end + 1]
         try:
-            return json.loads(cleaned[start:end + 1])
+            return json.loads(extracted)
+        except json.JSONDecodeError:
+            pass
+
+        # Fix unescaped ASCII quotes inside JSON string values.
+        # Claude sometimes writes "word" with raw " inside Chinese text.
+        # Strategy: iteratively try replacing problematic quotes until JSON parses.
+        import re
+        fixed = extracted
+        # Replace " surrounded by non-JSON-structural characters (CJK, punctuation)
+        # Pattern: non-whitespace/bracket/colon + " + non-whitespace/bracket/colon
+        fixed = re.sub(
+            r'(?<=[^\s\[\]{},:])"(?=[^\s\[\]{},:"])',
+            '\u201c', fixed
+        )
+        fixed = re.sub(
+            r'(?<=[^\s\[\]{},:"])"(?=[,\]\}\s\n])',
+            '\u201d', fixed
+        )
+        try:
+            result = json.loads(fixed)
+            logger.warning("Fixed unescaped quotes in JSON response")
+            return result
         except json.JSONDecodeError:
             pass
 
@@ -100,8 +128,11 @@ def _parse_json_response(text: str) -> dict:
     except json.JSONDecodeError:
         pass
 
-    # All parsing failed — log raw response for debugging
-    logger.error(f"Failed to parse JSON from Claude response:\n{text[:500]}")
+    # All parsing failed — log FULL raw response for debugging
+    logger.error(
+        f"Failed to parse JSON from Claude response (length={len(text)}).\n"
+        f"=== FULL RAW RESPONSE START ===\n{text}\n=== FULL RAW RESPONSE END ==="
+    )
     raise ValueError(f"Could not parse JSON from Claude response (length={len(text)})")
 
 
@@ -122,7 +153,7 @@ def _format_source(item: dict) -> dict:
     }
 
 
-def generate_explainer(item: dict, lang: str = 'en', channel: int = 1) -> int:
+def generate_explainer(item: dict, lang: str = 'en', channel: int = 1, batch_id: int | None = None, batch_ts: int | None = None) -> int:
     """
     Generate a 60-second explainer script (Format 1).
 
@@ -169,6 +200,8 @@ def generate_explainer(item: dict, lang: str = 'en', channel: int = 1) -> int:
             bullets=script.get('bullets', []),
             twist=script.get('twist', ''),
             sources=[_format_source(item)],
+            batch_id=batch_id,
+            batch_ts=batch_ts,
         )
 
         logger.info(f"Explainer saved: story #{story_id} — {script['title'][:50]}")
@@ -177,11 +210,11 @@ def generate_explainer(item: dict, lang: str = 'en', channel: int = 1) -> int:
     except Exception as e:
         logger.error(f"Failed to generate explainer: {e}")
         title = item.get('canonical_title') or item['title_original']
-        save_failed_story(title=title[:200], format='explainer', lang=lang, error=str(e))
+        save_failed_story(title=title[:200], format='explainer', lang=lang, error=str(e), batch_id=batch_id, batch_ts=batch_ts)
         raise
 
 
-def generate_top5(items: list[dict], lang: str = 'en', channel: int = 1) -> int:
+def generate_top5(items: list[dict], lang: str = 'en', channel: int = 1, batch_id: int | None = None, batch_ts: int | None = None) -> int:
     """
     Generate a Top 5 Today script (Format 2).
 
@@ -236,6 +269,8 @@ def generate_top5(items: list[dict], lang: str = 'en', channel: int = 1) -> int:
             bullets=script.get('bullets', []),
             twist=script.get('twist', ''),
             sources=[_format_source(item) for item in items],
+            batch_id=batch_id,
+            batch_ts=batch_ts,
         )
 
         logger.info(f"Top 5 saved: story #{story_id} — {script['title'][:50]}")
@@ -243,7 +278,7 @@ def generate_top5(items: list[dict], lang: str = 'en', channel: int = 1) -> int:
 
     except Exception as e:
         logger.error(f"Failed to generate top5: {e}")
-        save_failed_story(title="Top 5 Today", format='top5', lang=lang, error=str(e))
+        save_failed_story(title="Top 5 Today", format='top5', lang=lang, error=str(e), batch_id=batch_id, batch_ts=batch_ts)
         raise
 
 
@@ -276,7 +311,7 @@ def _build_stories_block(items: list[dict]) -> str:
     return '\n\n'.join(lines)
 
 
-def generate_radar(items: list[dict], lang: str = 'zh', channel: int = 2) -> int:
+def generate_radar(items: list[dict], lang: str = 'zh', channel: int = 2, batch_id: int | None = None, batch_ts: int | None = None) -> int:
     """
     Generate "stories US media ignores" script (Format 3).
     """
@@ -301,17 +336,19 @@ def generate_radar(items: list[dict], lang: str = 'zh', channel: int = 2) -> int
             bullets=script.get('bullets', []),
             twist=script.get('twist', ''),
             sources=[_format_source(item) for item in items],
+            batch_id=batch_id,
+            batch_ts=batch_ts,
         )
         logger.info(f"Radar saved: story #{story_id} — {script['title'][:50]}")
         return story_id
 
     except Exception as e:
         logger.error(f"Failed to generate radar: {e}")
-        save_failed_story(title="Global Radar", format='radar', lang=lang, error=str(e))
+        save_failed_story(title="Global Radar", format='radar', lang=lang, error=str(e), batch_id=batch_id, batch_ts=batch_ts)
         raise
 
 
-def generate_regional(items: list[dict], region_name: str, lang: str = 'zh', channel: int = 2) -> int:
+def generate_regional(items: list[dict], region_name: str, lang: str = 'zh', channel: int = 2, batch_id: int | None = None, batch_ts: int | None = None) -> int:
     """
     Generate regional perspective script (Format 4).
     """
@@ -337,17 +374,19 @@ def generate_regional(items: list[dict], region_name: str, lang: str = 'zh', cha
             bullets=script.get('bullets', []),
             twist=script.get('twist', ''),
             sources=[_format_source(item) for item in items],
+            batch_id=batch_id,
+            batch_ts=batch_ts,
         )
         logger.info(f"Regional saved: story #{story_id} — {script['title'][:50]}")
         return story_id
 
     except Exception as e:
         logger.error(f"Failed to generate regional ({region_name}): {e}")
-        save_failed_story(title=f"Regional: {region_name}", format='regional', lang=lang, error=str(e))
+        save_failed_story(title=f"Regional: {region_name}", format='regional', lang=lang, error=str(e), batch_id=batch_id, batch_ts=batch_ts)
         raise
 
 
-def generate_two_takes(items: list[dict], lang: str = 'zh', channel: int = 2) -> int:
+def generate_two_takes(items: list[dict], lang: str = 'zh', channel: int = 2, batch_id: int | None = None, batch_ts: int | None = None) -> int:
     """
     Generate framing contrast script (Format 5 — two takes).
     """
@@ -372,17 +411,19 @@ def generate_two_takes(items: list[dict], lang: str = 'zh', channel: int = 2) ->
             bullets=script.get('bullets', []),
             twist=script.get('twist', ''),
             sources=[_format_source(item) for item in items],
+            batch_id=batch_id,
+            batch_ts=batch_ts,
         )
         logger.info(f"Two takes saved: story #{story_id} — {script['title'][:50]}")
         return story_id
 
     except Exception as e:
         logger.error(f"Failed to generate two_takes: {e}")
-        save_failed_story(title="Two Takes", format='two_takes', lang=lang, error=str(e))
+        save_failed_story(title="Two Takes", format='two_takes', lang=lang, error=str(e), batch_id=batch_id, batch_ts=batch_ts)
         raise
 
 
-def generate_pattern(items: list[dict], lang: str = 'zh', channel: int = 2) -> int:
+def generate_pattern(items: list[dict], lang: str = 'zh', channel: int = 2, batch_id: int | None = None, batch_ts: int | None = None) -> int:
     """
     Generate cross-region pattern analysis (Format 6).
     """
@@ -407,17 +448,19 @@ def generate_pattern(items: list[dict], lang: str = 'zh', channel: int = 2) -> i
             bullets=script.get('bullets', []),
             twist=script.get('twist', ''),
             sources=[_format_source(item) for item in items],
+            batch_id=batch_id,
+            batch_ts=batch_ts,
         )
         logger.info(f"Pattern saved: story #{story_id} — {script['title'][:50]}")
         return story_id
 
     except Exception as e:
         logger.error(f"Failed to generate pattern: {e}")
-        save_failed_story(title="Pattern Analysis", format='pattern', lang=lang, error=str(e))
+        save_failed_story(title="Pattern Analysis", format='pattern', lang=lang, error=str(e), batch_id=batch_id, batch_ts=batch_ts)
         raise
 
 
-def generate_viral(items: list[dict], lang: str = 'zh', channel: int = 2) -> int:
+def generate_viral(items: list[dict], lang: str = 'zh', channel: int = 2, batch_id: int | None = None, batch_ts: int | None = None) -> int:
     """
     Generate "before it goes viral" script (Format 7).
     """
@@ -442,17 +485,19 @@ def generate_viral(items: list[dict], lang: str = 'zh', channel: int = 2) -> int
             bullets=script.get('bullets', []),
             twist=script.get('twist', ''),
             sources=[_format_source(item) for item in items],
+            batch_id=batch_id,
+            batch_ts=batch_ts,
         )
         logger.info(f"Viral saved: story #{story_id} — {script['title'][:50]}")
         return story_id
 
     except Exception as e:
         logger.error(f"Failed to generate viral: {e}")
-        save_failed_story(title="Before It Goes Viral", format='viral', lang=lang, error=str(e))
+        save_failed_story(title="Before It Goes Viral", format='viral', lang=lang, error=str(e), batch_id=batch_id, batch_ts=batch_ts)
         raise
 
 
-def generate_deep_dive(items: list[dict], topic: str, lang: str = 'zh', channel: int = 2) -> int:
+def generate_deep_dive(items: list[dict], topic: str, lang: str = 'zh', channel: int = 2, batch_id: int | None = None, batch_ts: int | None = None) -> int:
     """
     Generate weekly deep dive script (Format 8).
     """
@@ -478,17 +523,19 @@ def generate_deep_dive(items: list[dict], topic: str, lang: str = 'zh', channel:
             bullets=script.get('bullets', []),
             twist=script.get('twist', ''),
             sources=[_format_source(item) for item in items],
+            batch_id=batch_id,
+            batch_ts=batch_ts,
         )
         logger.info(f"Deep dive saved: story #{story_id} — {script['title'][:50]}")
         return story_id
 
     except Exception as e:
         logger.error(f"Failed to generate deep_dive ({topic}): {e}")
-        save_failed_story(title=f"Deep Dive: {topic}", format='deep_dive', lang=lang, error=str(e))
+        save_failed_story(title=f"Deep Dive: {topic}", format='deep_dive', lang=lang, error=str(e), batch_id=batch_id, batch_ts=batch_ts)
         raise
 
 
-def generate_niche(items: list[dict], niche: str, lang: str = 'zh', channel: int = 2) -> int:
+def generate_niche(items: list[dict], niche: str, lang: str = 'zh', channel: int = 2, batch_id: int | None = None, batch_ts: int | None = None) -> int:
     """
     Generate niche focus script (Format 9).
     """
@@ -514,11 +561,13 @@ def generate_niche(items: list[dict], niche: str, lang: str = 'zh', channel: int
             bullets=script.get('bullets', []),
             twist=script.get('twist', ''),
             sources=[_format_source(item) for item in items],
+            batch_id=batch_id,
+            batch_ts=batch_ts,
         )
         logger.info(f"Niche saved: story #{story_id} — {script['title'][:50]}")
         return story_id
 
     except Exception as e:
         logger.error(f"Failed to generate niche ({niche}): {e}")
-        save_failed_story(title=f"Niche: {niche}", format='niche', lang=lang, error=str(e))
+        save_failed_story(title=f"Niche: {niche}", format='niche', lang=lang, error=str(e), batch_id=batch_id, batch_ts=batch_ts)
         raise

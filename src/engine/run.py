@@ -2,17 +2,16 @@
 story_engine generation runner — CLI entry point.
 
 This is what the cron job calls. It:
-  1. Selects candidates from the crawler DB
-  2. Generates scripts via Claude CLI
-  3. Saves results to story_engine's own DB
+  1. Creates a story set (batch)
+  2. Selects candidates from the crawler DB (excluding previously used items)
+  3. Generates scripts via Claude CLI
+  4. Records used items for dedup in future runs
+  5. Marks the story set complete/failed
 
 Usage:
     python -m engine.run                     # Generate all formats
     python -m engine.run --lang zh           # All formats, Chinese
     python -m engine.run --format explainer  # Single format only
-    python -m engine.run --format radar      # Phase 2: stories US media ignores
-    python -m engine.run --format regional   # Phase 2: regional perspective
-    python -m engine.run --format two_takes  # Phase 2: framing contrast
     python -m engine.run --dry-run           # Show selections without generating
 """
 
@@ -24,7 +23,12 @@ import sys
 # Add src/ to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from db.models import init_db
+from db.models import (
+    init_db,
+    create_story_set,
+    complete_story_set,
+    record_used_items,
+)
 from engine.selector import (
     select_for_explainer,
     select_for_top5,
@@ -49,9 +53,16 @@ from engine.generator import (
     generate_niche,
 )
 
+LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'logs')
+os.makedirs(LOG_DIR, exist_ok=True)
+
 logging.basicConfig(
     level=os.getenv('LOG_LEVEL', 'INFO'),
     format='%(levelname)s %(asctime)s %(name)s %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler(os.path.join(LOG_DIR, 'generate.log')),
+    ],
 )
 logger = logging.getLogger(__name__)
 
@@ -75,7 +86,7 @@ def _log_items(label: str, items: list[dict]):
         logger.info(f"  {label} #{i}: [{region}/{item['platform']}] {title[:60]} (hotness={item['hotness']:.1f})")
 
 
-def run_explainer(lang: str, channel: int, dry_run: bool) -> int | None:
+def run_explainer(lang: str, channel: int, dry_run: bool, set_id: int | None, batch_ts: int | None = None) -> int | None:
     """Generate a 60-second explainer (Format 1)."""
     item = select_for_explainer(lang=lang)
     if not item:
@@ -88,10 +99,13 @@ def run_explainer(lang: str, channel: int, dry_run: bool) -> int | None:
         logger.info("[DRY RUN] Would generate explainer — skipping")
         return None
 
-    return generate_explainer(item, lang=lang, channel=channel)
+    story_id = generate_explainer(item, lang=lang, channel=channel, batch_id=set_id, batch_ts=batch_ts)
+    if set_id:
+        record_used_items(set_id, story_id, 'explainer', [item])
+    return story_id
 
 
-def run_top5(lang: str, channel: int, dry_run: bool) -> int | None:
+def run_top5(lang: str, channel: int, dry_run: bool, set_id: int | None, batch_ts: int | None = None) -> int | None:
     """Generate a Top 5 Today script (Format 2)."""
     items = select_for_top5(lang=lang)
     if len(items) < 3:
@@ -104,10 +118,13 @@ def run_top5(lang: str, channel: int, dry_run: bool) -> int | None:
         logger.info("[DRY RUN] Would generate top5 — skipping")
         return None
 
-    return generate_top5(items, lang=lang, channel=channel)
+    story_id = generate_top5(items, lang=lang, channel=channel, batch_id=set_id, batch_ts=batch_ts)
+    if set_id:
+        record_used_items(set_id, story_id, 'top5', items)
+    return story_id
 
 
-def run_radar(lang: str, channel: int, dry_run: bool) -> int | None:
+def run_radar(lang: str, channel: int, dry_run: bool, set_id: int | None, batch_ts: int | None = None) -> int | None:
     """Generate 'stories US media ignores' (Format 3)."""
     items = select_for_radar()
     if len(items) < 3:
@@ -120,17 +137,19 @@ def run_radar(lang: str, channel: int, dry_run: bool) -> int | None:
         logger.info("[DRY RUN] Would generate radar — skipping")
         return None
 
-    return generate_radar(items, lang=lang, channel=channel)
+    story_id = generate_radar(items, lang=lang, channel=channel, batch_id=set_id, batch_ts=batch_ts)
+    if set_id:
+        record_used_items(set_id, story_id, 'radar', items)
+    return story_id
 
 
-def run_regional(lang: str, channel: int, dry_run: bool) -> int | None:
+def run_regional(lang: str, channel: int, dry_run: bool, set_id: int | None, batch_ts: int | None = None) -> int | None:
     """Generate regional perspective (Format 4) for the top region with data."""
     regions = get_top_regions_with_data()
     if not regions:
         logger.warning("No regions with enough data for regional — skipping")
         return None
 
-    # Pick the top region
     region_key = regions[0]
     region_name = REGION_NAMES.get(region_key, region_key)
     items = select_for_regional(region=region_key)
@@ -145,10 +164,13 @@ def run_regional(lang: str, channel: int, dry_run: bool) -> int | None:
         logger.info(f"[DRY RUN] Would generate regional ({region_name}) — skipping")
         return None
 
-    return generate_regional(items, region_name=region_name, lang=lang, channel=channel)
+    story_id = generate_regional(items, region_name=region_name, lang=lang, channel=channel, batch_id=set_id, batch_ts=batch_ts)
+    if set_id:
+        record_used_items(set_id, story_id, 'regional', items)
+    return story_id
 
 
-def run_two_takes(lang: str, channel: int, dry_run: bool) -> int | None:
+def run_two_takes(lang: str, channel: int, dry_run: bool, set_id: int | None, batch_ts: int | None = None) -> int | None:
     """Generate framing contrast (Format 5)."""
     items = select_for_two_takes()
     if len(items) < 4:
@@ -161,10 +183,13 @@ def run_two_takes(lang: str, channel: int, dry_run: bool) -> int | None:
         logger.info("[DRY RUN] Would generate two_takes — skipping")
         return None
 
-    return generate_two_takes(items, lang=lang, channel=channel)
+    story_id = generate_two_takes(items, lang=lang, channel=channel, batch_id=set_id, batch_ts=batch_ts)
+    if set_id:
+        record_used_items(set_id, story_id, 'two_takes', items)
+    return story_id
 
 
-def run_pattern(lang: str, channel: int, dry_run: bool) -> int | None:
+def run_pattern(lang: str, channel: int, dry_run: bool, set_id: int | None, batch_ts: int | None = None) -> int | None:
     """Generate cross-region pattern analysis (Format 6)."""
     items = select_for_pattern()
     if len(items) < 6:
@@ -179,10 +204,13 @@ def run_pattern(lang: str, channel: int, dry_run: bool) -> int | None:
         logger.info("[DRY RUN] Would generate pattern — skipping")
         return None
 
-    return generate_pattern(items, lang=lang, channel=channel)
+    story_id = generate_pattern(items, lang=lang, channel=channel, batch_id=set_id, batch_ts=batch_ts)
+    if set_id:
+        record_used_items(set_id, story_id, 'pattern', items)
+    return story_id
 
 
-def run_viral(lang: str, channel: int, dry_run: bool) -> int | None:
+def run_viral(lang: str, channel: int, dry_run: bool, set_id: int | None, batch_ts: int | None = None) -> int | None:
     """Generate 'before it goes viral' (Format 7)."""
     items = select_for_viral()
     if len(items) < 2:
@@ -195,10 +223,13 @@ def run_viral(lang: str, channel: int, dry_run: bool) -> int | None:
         logger.info("[DRY RUN] Would generate viral — skipping")
         return None
 
-    return generate_viral(items, lang=lang, channel=channel)
+    story_id = generate_viral(items, lang=lang, channel=channel, batch_id=set_id, batch_ts=batch_ts)
+    if set_id:
+        record_used_items(set_id, story_id, 'viral', items)
+    return story_id
 
 
-def run_deep_dive(lang: str, channel: int, dry_run: bool) -> int | None:
+def run_deep_dive(lang: str, channel: int, dry_run: bool, set_id: int | None, batch_ts: int | None = None) -> int | None:
     """Generate weekly deep dive (Format 8)."""
     items = select_for_deep_dive(topic='tech')
     if len(items) < 5:
@@ -212,10 +243,13 @@ def run_deep_dive(lang: str, channel: int, dry_run: bool) -> int | None:
         logger.info("[DRY RUN] Would generate deep_dive — skipping")
         return None
 
-    return generate_deep_dive(items, topic='tech', lang=lang, channel=channel)
+    story_id = generate_deep_dive(items, topic='tech', lang=lang, channel=channel, batch_id=set_id, batch_ts=batch_ts)
+    if set_id:
+        record_used_items(set_id, story_id, 'deep_dive', items)
+    return story_id
 
 
-def run_niche(lang: str, channel: int, dry_run: bool) -> int | None:
+def run_niche(lang: str, channel: int, dry_run: bool, set_id: int | None, batch_ts: int | None = None) -> int | None:
     """Generate niche focus (Format 9)."""
     items = select_for_niche(niche='tech')
     if len(items) < 3:
@@ -229,7 +263,10 @@ def run_niche(lang: str, channel: int, dry_run: bool) -> int | None:
         logger.info("[DRY RUN] Would generate niche — skipping")
         return None
 
-    return generate_niche(items, niche='tech', lang=lang, channel=channel)
+    story_id = generate_niche(items, niche='tech', lang=lang, channel=channel, batch_id=set_id, batch_ts=batch_ts)
+    if set_id:
+        record_used_items(set_id, story_id, 'niche', items)
+    return story_id
 
 
 ALL_FORMATS = ['explainer', 'top5', 'radar', 'regional', 'two_takes', 'pattern', 'viral', 'deep_dive', 'niche']
@@ -258,8 +295,15 @@ def main():
     logger.info(f"=== story_engine generation run ===")
     logger.info(f"  lang={args.lang}  channel={args.channel}  format={args.format}  dry_run={args.dry_run}")
 
-    # Initialize DB
+    # Initialize DB (creates tables + migration)
     init_db()
+
+    # Create story set (unless dry run)
+    set_id = None
+    batch_ts = None
+    if not args.dry_run:
+        set_id, batch_ts = create_story_set(lang=args.lang, channel=args.channel)
+        logger.info(f"Created story set #{set_id} (batch_ts={batch_ts})")
 
     formats = ALL_FORMATS if args.format == 'all' else [args.format]
     results = {}
@@ -267,10 +311,16 @@ def main():
     for fmt in formats:
         runner = FORMAT_RUNNERS[fmt]
         try:
-            results[fmt] = runner(args.lang, args.channel, args.dry_run)
+            results[fmt] = runner(args.lang, args.channel, args.dry_run, set_id, batch_ts)
         except Exception as e:
             logger.error(f"{fmt} generation failed: {e}")
             results[fmt] = None
+
+    # Mark story set complete/failed
+    if set_id:
+        status = 'complete' if any(v is not None for v in results.values()) else 'failed'
+        complete_story_set(set_id, status)
+        logger.info(f"Story set #{set_id} marked as '{status}'")
 
     # Summary
     logger.info("=== Generation complete ===")

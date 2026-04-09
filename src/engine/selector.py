@@ -4,9 +4,16 @@ Story selector — picks candidate items from crawler DB per format.
 Each format has its own selection logic (NOT a shared global top-N):
   - Format 1 (explainer): single top item by hotness
   - Format 2 (top5): top 5 with platform diversity
+  - Format 3 (radar): stories US media ignores
+  - Format 4 (regional): what region X is saying
+  - Format 5 (two_takes): framing contrast
+  - Format 6 (pattern): cross-region pattern detection
   - Format 7 (viral): early signals from niche platforms
+  - Format 8 (deep_dive): weekly deep dive
+  - Format 9 (niche): niche focus (tech/finance)
 
 The selector only reads the crawler DB. It never writes.
+All selectors apply _filter_already_used() to avoid reusing items across story sets.
 """
 
 import logging
@@ -16,8 +23,43 @@ from db.crawler_reader import (
     get_early_signals,
     get_regional_items,
 )
+from db.models import get_used_urls_with_hotness
 
 logger = logging.getLogger(__name__)
+
+HOTNESS_REGAIN_FACTOR = 1.3  # item must be 30% hotter to be re-eligible
+
+
+def _filter_already_used(items: list[dict]) -> list[dict]:
+    """
+    Remove items that were already used in a previous story set.
+
+    Dedup is by URL (not crawler_item_id) because the crawler creates
+    multiple rows for the same URL across crawl cycles.
+
+    Exception (Requirement #3): If the item's CURRENT hotness exceeds
+    the hotness at the time it was last used by >= HOTNESS_REGAIN_FACTOR,
+    it is allowed back in (the topic has new momentum).
+    """
+    used = get_used_urls_with_hotness()  # {crawler_url: max_hotness_at_use}
+    if not used:
+        return items
+
+    filtered = []
+    for item in items:
+        url = item['url']
+        if url not in used:
+            filtered.append(item)
+        else:
+            prev_hotness = used[url]
+            current_hotness = item.get('hotness', 0)
+            if current_hotness >= prev_hotness * HOTNESS_REGAIN_FACTOR:
+                filtered.append(item)
+                logger.info(
+                    f"  Re-admitting {url[:60]}: hotness {current_hotness:.1f} "
+                    f"> {prev_hotness:.1f} * {HOTNESS_REGAIN_FACTOR}"
+                )
+    return filtered
 
 
 def select_for_explainer(lang: str = 'en', hours: int = 24) -> dict | None:
@@ -26,7 +68,8 @@ def select_for_explainer(lang: str = 'en', hours: int = 24) -> dict | None:
 
     Strategy: Highest hotness in the last 24 hours, any bucket.
     """
-    items = get_top_items(limit=1, hours=hours)
+    items = get_top_items(limit=10, hours=hours)
+    items = _filter_already_used(items)
     if not items:
         logger.warning("No items found for explainer selection")
         return None
@@ -42,26 +85,14 @@ def select_for_top5(lang: str = 'en', hours: int = 24) -> list[dict]:
     If not enough items in the time window, expand to 48h then 72h.
     """
     for window in [hours, 48, 72]:
-        items = get_diverse_top_items(limit=5, hours=window, max_per_platform=2)
+        items = get_diverse_top_items(limit=20, hours=window, max_per_platform=2)
+        items = _filter_already_used(items)
         if len(items) >= 5:
-            return items
+            return items[:5]
         logger.info(f"Only {len(items)} diverse items in {window}h window, expanding...")
 
     if len(items) < 3:
         logger.warning(f"Only {len(items)} items found for top5 (need at least 3)")
-    return items
-
-
-def select_for_viral(hours: int = 24) -> list[dict]:
-    """
-    Select "before it goes viral" candidates (Format 7).
-
-    Strategy: Items trending on niche platforms (HN, dev.to, lobsters,
-    Papers with Code, GitHub) that haven't hit mainstream news yet.
-    """
-    items = get_early_signals(limit=5, hours=hours)
-    if not items:
-        logger.warning("No early signal items found")
     return items
 
 
@@ -73,6 +104,7 @@ def select_for_radar(hours: int = 24) -> list[dict]:
     (max 1 item per region to show breadth).
     """
     candidates = get_regional_items(exclude_region='us', limit=200, hours=hours)
+    candidates = _filter_already_used(candidates)
     if not candidates:
         logger.warning("No regional items found for radar")
         return []
@@ -98,8 +130,8 @@ def select_for_regional(region: str, hours: int = 24) -> list[dict]:
 
     Strategy: Top items by hotness from the given region, platform-diverse.
     """
-    from db.crawler_reader import get_top_items
     candidates = get_top_items(limit=200, hours=hours)
+    candidates = _filter_already_used(candidates)
 
     # Filter to target region and enforce platform diversity
     selected = []
@@ -129,6 +161,7 @@ def select_for_two_takes(hours: int = 24) -> list[dict]:
     Ensures at least 3 different regions and 3 different platforms.
     """
     candidates = get_top_items(limit=200, hours=hours)
+    candidates = _filter_already_used(candidates)
     if not candidates:
         logger.warning("No items found for two_takes")
         return []
@@ -161,6 +194,7 @@ def select_for_pattern(hours: int = 72) -> list[dict]:
     Deterministic gate: must have items from >=3 distinct regions.
     """
     candidates = get_regional_items(exclude_region='__none__', limit=200, hours=hours)
+    candidates = _filter_already_used(candidates)
     if not candidates:
         logger.warning("No items found for pattern detection")
         return []
@@ -193,13 +227,15 @@ def select_for_viral(hours: int = 48) -> list[dict]:
     Papers with Code, GitHub) that haven't hit mainstream news yet.
     Expand to 48h window for niche platforms which update slower.
     """
-    items = get_early_signals(limit=5, hours=hours)
+    items = get_early_signals(limit=15, hours=hours)
+    items = _filter_already_used(items)
     if not items:
         # Try wider window
-        items = get_early_signals(limit=5, hours=168)
+        items = get_early_signals(limit=15, hours=168)
+        items = _filter_already_used(items)
     if not items:
         logger.warning("No early signal items found")
-    return items
+    return items[:5] if items else []
 
 
 def select_for_deep_dive(topic: str = 'tech', hours: int = 168) -> list[dict]:
@@ -220,13 +256,15 @@ def select_for_deep_dive(topic: str = 'tech', hours: int = 168) -> list[dict]:
     if buckets:
         items = get_top_items(limit=200, hours=hours, buckets=buckets)
     else:
-        # Fallback: use all items
         items = get_top_items(limit=200, hours=hours)
+
+    items = _filter_already_used(items)
 
     if len(items) < 5:
         # Not enough niche items — fall back to all items
         logger.info(f"Only {len(items)} items for topic '{topic}', using all items")
         items = get_top_items(limit=50, hours=hours)
+        items = _filter_already_used(items)
 
     # Take top 15 for the deep dive (enough context for a 5-min script)
     return items[:15]
@@ -247,6 +285,7 @@ def select_for_niche(niche: str = 'tech', hours: int = 24) -> list[dict]:
     buckets = bucket_map.get(niche, ['category_tech'])
 
     items = get_top_items(limit=100, hours=hours, buckets=buckets)
+    items = _filter_already_used(items)
 
     # Platform diversity
     selected = []
@@ -264,6 +303,7 @@ def select_for_niche(niche: str = 'tech', hours: int = 24) -> list[dict]:
         # Not enough niche items, expand to wider buckets
         logger.info(f"Only {len(selected)} items for niche '{niche}', expanding search")
         all_items = get_top_items(limit=200, hours=hours)
+        all_items = _filter_already_used(all_items)
         for item in all_items:
             if item not in selected:
                 selected.append(item)
@@ -278,8 +318,8 @@ def get_top_regions_with_data(hours: int = 24, min_items: int = 3) -> list[str]:
     Get region keys that have enough data for regional stories.
     Excludes US. Returns up to 3 regions with the most items.
     """
-    from db.crawler_reader import get_regional_items
     candidates = get_regional_items(exclude_region='us', limit=100, hours=hours)
+    candidates = _filter_already_used(candidates)
 
     region_counts: dict[str, int] = {}
     for item in candidates:

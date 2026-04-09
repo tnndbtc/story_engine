@@ -169,19 +169,9 @@ generate_stories() {
 
     echo ""
 
-    # Clear old stories before generating (unless dry-run)
+    # Stories are added as a new set — old stories are preserved
     if [ -z "$extra_args" ]; then
-        echo -e "  ${YELLOW}Clearing old stories...${NC}"
-        cd "$SRC_DIR"
-        python -c "
-from db.models import get_connection
-conn = get_connection()
-count = conn.execute('SELECT COUNT(*) FROM stories').fetchone()[0]
-conn.execute('DELETE FROM stories')
-conn.commit()
-conn.close()
-print(f'  Deleted {count} old stories')
-"
+        echo -e "  ${CYAN}Stories will be added as a new set (old stories preserved).${NC}"
     fi
 
     echo -e "  ${CYAN}Generating stories (format=$format_arg, lang=zh)...${NC}"
