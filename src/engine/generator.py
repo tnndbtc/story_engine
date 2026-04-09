@@ -29,6 +29,9 @@ def _call_claude(prompt: str) -> str:
     Uses `claude -p` (pipe mode) which reads from stdin.
     No API key needed — uses the local Claude Code installation.
     """
+    # Append conciseness reminder to prevent truncation
+    prompt = prompt.rstrip() + "\n\nIMPORTANT: Keep your TOTAL JSON response under 500 words. Be concise. Every bullet should be 1-2 sentences max."
+
     try:
         result = subprocess.run(
             ['claude', '-p', '--model', CLAUDE_MODEL],

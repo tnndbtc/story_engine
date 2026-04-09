@@ -32,4 +32,5 @@ RULES:
 - Tone: Revelatory, slightly provocative — "here's what you're missing"
 - DO NOT make up facts. Only use information from the stories provided above.
 - CRITICAL: Each bullet MUST cover a DIFFERENT story from a DIFFERENT region. Never repeat regions.
+- CRITICAL: Keep each bullet to exactly 1-2 sentences (under 40 words per bullet). The entire JSON must be under 400 words total.
 - You CAN read titles/descriptions in any language — your output must be in the specified script language.
