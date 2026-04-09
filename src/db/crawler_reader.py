@@ -190,7 +190,7 @@ def get_regional_items(
     hours: int = 24,
 ) -> list[dict]:
     """
-    Get top items from non-US regions for "stories US media ignores" (Format C).
+    Get top items from non-US regions for "stories US media ignores" (Format 3).
     """
     conn = get_crawler_connection()
 

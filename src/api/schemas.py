@@ -54,15 +54,15 @@ class Script(BaseModel):
 # ---------------------------------------------------------------------------
 
 FormatType = Literal[
-    "explainer",    # Format A — 60-sec explainer
-    "top5",         # Format B — Top 5 today
-    "radar",        # Format C — stories US media ignores
-    "regional",     # Format D — what region X is saying
-    "two_takes",    # Format E — two completely different takes
-    "pattern",      # Format F — pattern/trend analysis
-    "viral",        # Format G — before it goes viral
-    "deep_dive",    # Format H — weekly deep dive
-    "niche",        # Format I — niche focus (tech/finance)
+    "explainer",    # Format 1 — 60-sec explainer
+    "top5",         # Format 2 — Top 5 today
+    "radar",        # Format 3 — stories US media ignores
+    "regional",     # Format 4 — what region X is saying
+    "two_takes",    # Format 5 — two completely different takes
+    "pattern",      # Format 6 — pattern/trend analysis
+    "viral",        # Format 7 — before it goes viral
+    "deep_dive",    # Format 8 — weekly deep dive
+    "niche",        # Format 9 — niche focus (tech/finance)
 ]
 
 ChannelType = Literal[1, 2, 3]

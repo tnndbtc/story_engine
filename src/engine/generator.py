@@ -124,7 +124,7 @@ def _format_source(item: dict) -> dict:
 
 def generate_explainer(item: dict, lang: str = 'en', channel: int = 1) -> int:
     """
-    Generate a 60-second explainer script (Format A).
+    Generate a 60-second explainer script (Format 1).
 
     Args:
         item: Selected crawler item (from selector.select_for_explainer)
@@ -183,7 +183,7 @@ def generate_explainer(item: dict, lang: str = 'en', channel: int = 1) -> int:
 
 def generate_top5(items: list[dict], lang: str = 'en', channel: int = 1) -> int:
     """
-    Generate a Top 5 Today script (Format B).
+    Generate a Top 5 Today script (Format 2).
 
     Args:
         items: List of 5 selected crawler items (from selector.select_for_top5)
@@ -278,7 +278,7 @@ def _build_stories_block(items: list[dict]) -> str:
 
 def generate_radar(items: list[dict], lang: str = 'zh', channel: int = 2) -> int:
     """
-    Generate "stories US media ignores" script (Format C).
+    Generate "stories US media ignores" script (Format 3).
     """
     template = (PROMPTS_DIR / 'radar.txt').read_text()
     prompt = template.format(
@@ -313,7 +313,7 @@ def generate_radar(items: list[dict], lang: str = 'zh', channel: int = 2) -> int
 
 def generate_regional(items: list[dict], region_name: str, lang: str = 'zh', channel: int = 2) -> int:
     """
-    Generate regional perspective script (Format D).
+    Generate regional perspective script (Format 4).
     """
     template = (PROMPTS_DIR / 'regional.txt').read_text()
     prompt = template.format(
@@ -349,7 +349,7 @@ def generate_regional(items: list[dict], region_name: str, lang: str = 'zh', cha
 
 def generate_two_takes(items: list[dict], lang: str = 'zh', channel: int = 2) -> int:
     """
-    Generate framing contrast script (Format E — two takes).
+    Generate framing contrast script (Format 5 — two takes).
     """
     template = (PROMPTS_DIR / 'two_takes.txt').read_text()
     prompt = template.format(
@@ -384,7 +384,7 @@ def generate_two_takes(items: list[dict], lang: str = 'zh', channel: int = 2) ->
 
 def generate_pattern(items: list[dict], lang: str = 'zh', channel: int = 2) -> int:
     """
-    Generate cross-region pattern analysis (Format F).
+    Generate cross-region pattern analysis (Format 6).
     """
     template = (PROMPTS_DIR / 'pattern.txt').read_text()
     prompt = template.format(
@@ -419,7 +419,7 @@ def generate_pattern(items: list[dict], lang: str = 'zh', channel: int = 2) -> i
 
 def generate_viral(items: list[dict], lang: str = 'zh', channel: int = 2) -> int:
     """
-    Generate "before it goes viral" script (Format G).
+    Generate "before it goes viral" script (Format 7).
     """
     template = (PROMPTS_DIR / 'viral.txt').read_text()
     prompt = template.format(
@@ -454,7 +454,7 @@ def generate_viral(items: list[dict], lang: str = 'zh', channel: int = 2) -> int
 
 def generate_deep_dive(items: list[dict], topic: str, lang: str = 'zh', channel: int = 2) -> int:
     """
-    Generate weekly deep dive script (Format H).
+    Generate weekly deep dive script (Format 8).
     """
     template = (PROMPTS_DIR / 'deep_dive.txt').read_text()
     prompt = template.format(
@@ -490,7 +490,7 @@ def generate_deep_dive(items: list[dict], topic: str, lang: str = 'zh', channel:
 
 def generate_niche(items: list[dict], niche: str, lang: str = 'zh', channel: int = 2) -> int:
     """
-    Generate niche focus script (Format I).
+    Generate niche focus script (Format 9).
     """
     template = (PROMPTS_DIR / 'niche.txt').read_text()
     prompt = template.format(

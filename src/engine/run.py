@@ -76,7 +76,7 @@ def _log_items(label: str, items: list[dict]):
 
 
 def run_explainer(lang: str, channel: int, dry_run: bool) -> int | None:
-    """Generate a 60-second explainer (Format A)."""
+    """Generate a 60-second explainer (Format 1)."""
     item = select_for_explainer(lang=lang)
     if not item:
         logger.warning("No item found for explainer — skipping")
@@ -92,7 +92,7 @@ def run_explainer(lang: str, channel: int, dry_run: bool) -> int | None:
 
 
 def run_top5(lang: str, channel: int, dry_run: bool) -> int | None:
-    """Generate a Top 5 Today script (Format B)."""
+    """Generate a Top 5 Today script (Format 2)."""
     items = select_for_top5(lang=lang)
     if len(items) < 3:
         logger.warning(f"Only {len(items)} items for top5 — need at least 3, skipping")
@@ -108,7 +108,7 @@ def run_top5(lang: str, channel: int, dry_run: bool) -> int | None:
 
 
 def run_radar(lang: str, channel: int, dry_run: bool) -> int | None:
-    """Generate 'stories US media ignores' (Format C)."""
+    """Generate 'stories US media ignores' (Format 3)."""
     items = select_for_radar()
     if len(items) < 3:
         logger.warning(f"Only {len(items)} items for radar — need at least 3, skipping")
@@ -124,7 +124,7 @@ def run_radar(lang: str, channel: int, dry_run: bool) -> int | None:
 
 
 def run_regional(lang: str, channel: int, dry_run: bool) -> int | None:
-    """Generate regional perspective (Format D) for the top region with data."""
+    """Generate regional perspective (Format 4) for the top region with data."""
     regions = get_top_regions_with_data()
     if not regions:
         logger.warning("No regions with enough data for regional — skipping")
@@ -149,7 +149,7 @@ def run_regional(lang: str, channel: int, dry_run: bool) -> int | None:
 
 
 def run_two_takes(lang: str, channel: int, dry_run: bool) -> int | None:
-    """Generate framing contrast (Format E)."""
+    """Generate framing contrast (Format 5)."""
     items = select_for_two_takes()
     if len(items) < 4:
         logger.warning(f"Only {len(items)} items for two_takes — need at least 4, skipping")
@@ -165,7 +165,7 @@ def run_two_takes(lang: str, channel: int, dry_run: bool) -> int | None:
 
 
 def run_pattern(lang: str, channel: int, dry_run: bool) -> int | None:
-    """Generate cross-region pattern analysis (Format F)."""
+    """Generate cross-region pattern analysis (Format 6)."""
     items = select_for_pattern()
     if len(items) < 6:
         logger.warning(f"Only {len(items)} items for pattern — need at least 6, skipping")
@@ -183,7 +183,7 @@ def run_pattern(lang: str, channel: int, dry_run: bool) -> int | None:
 
 
 def run_viral(lang: str, channel: int, dry_run: bool) -> int | None:
-    """Generate 'before it goes viral' (Format G)."""
+    """Generate 'before it goes viral' (Format 7)."""
     items = select_for_viral()
     if len(items) < 2:
         logger.warning(f"Only {len(items)} items for viral — need at least 2, skipping")
@@ -199,7 +199,7 @@ def run_viral(lang: str, channel: int, dry_run: bool) -> int | None:
 
 
 def run_deep_dive(lang: str, channel: int, dry_run: bool) -> int | None:
-    """Generate weekly deep dive (Format H)."""
+    """Generate weekly deep dive (Format 8)."""
     items = select_for_deep_dive(topic='tech')
     if len(items) < 5:
         logger.warning(f"Only {len(items)} items for deep_dive — need at least 5, skipping")
@@ -216,7 +216,7 @@ def run_deep_dive(lang: str, channel: int, dry_run: bool) -> int | None:
 
 
 def run_niche(lang: str, channel: int, dry_run: bool) -> int | None:
-    """Generate niche focus (Format I)."""
+    """Generate niche focus (Format 9)."""
     items = select_for_niche(niche='tech')
     if len(items) < 3:
         logger.warning(f"Only {len(items)} items for niche — need at least 3, skipping")

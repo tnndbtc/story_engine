@@ -2,9 +2,9 @@
 Story selector — picks candidate items from crawler DB per format.
 
 Each format has its own selection logic (NOT a shared global top-N):
-  - Format A (explainer): single top item by hotness
-  - Format B (top5): top 5 with platform diversity
-  - Format G (viral): early signals from niche platforms
+  - Format 1 (explainer): single top item by hotness
+  - Format 2 (top5): top 5 with platform diversity
+  - Format 7 (viral): early signals from niche platforms
 
 The selector only reads the crawler DB. It never writes.
 """
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 def select_for_explainer(lang: str = 'en', hours: int = 24) -> dict | None:
     """
-    Select the top story for a 60-second explainer (Format A).
+    Select the top story for a 60-second explainer (Format 1).
 
     Strategy: Highest hotness in the last 24 hours, any bucket.
     """
@@ -35,7 +35,7 @@ def select_for_explainer(lang: str = 'en', hours: int = 24) -> dict | None:
 
 def select_for_top5(lang: str = 'en', hours: int = 24) -> list[dict]:
     """
-    Select top 5 stories for the daily briefing (Format B).
+    Select top 5 stories for the daily briefing (Format 2).
 
     Strategy: Top 5 by hotness with platform diversity
     (max 2 items from any single platform).
@@ -54,7 +54,7 @@ def select_for_top5(lang: str = 'en', hours: int = 24) -> list[dict]:
 
 def select_for_viral(hours: int = 24) -> list[dict]:
     """
-    Select "before it goes viral" candidates (Format G).
+    Select "before it goes viral" candidates (Format 7).
 
     Strategy: Items trending on niche platforms (HN, dev.to, lobsters,
     Papers with Code, GitHub) that haven't hit mainstream news yet.
@@ -67,7 +67,7 @@ def select_for_viral(hours: int = 24) -> list[dict]:
 
 def select_for_radar(hours: int = 24) -> list[dict]:
     """
-    Select "stories US media ignores" (Format C).
+    Select "stories US media ignores" (Format 3).
 
     Strategy: Top items from non-US regions with region diversity
     (max 1 item per region to show breadth).
@@ -94,7 +94,7 @@ def select_for_radar(hours: int = 24) -> list[dict]:
 
 def select_for_regional(region: str, hours: int = 24) -> list[dict]:
     """
-    Select top items from a specific region (Format D — regional perspectives).
+    Select top items from a specific region (Format 4 — regional perspectives).
 
     Strategy: Top items by hotness from the given region, platform-diverse.
     """
@@ -122,7 +122,7 @@ def select_for_regional(region: str, hours: int = 24) -> list[dict]:
 
 def select_for_two_takes(hours: int = 24) -> list[dict]:
     """
-    Select items for framing contrast (Format E — two takes).
+    Select items for framing contrast (Format 5 — two takes).
 
     Strategy: Get top items from diverse platforms/regions. The LLM will
     identify framing differences — we provide a rich, diverse candidate pool.
@@ -154,7 +154,7 @@ def select_for_two_takes(hours: int = 24) -> list[dict]:
 
 def select_for_pattern(hours: int = 72) -> list[dict]:
     """
-    Select items for cross-region pattern detection (Format F).
+    Select items for cross-region pattern detection (Format 6).
 
     Strategy: Get items from 3+ regions spanning 72 hours.
     The LLM identifies the pattern — we provide a diverse, multi-region pool.
@@ -187,7 +187,7 @@ def select_for_pattern(hours: int = 72) -> list[dict]:
 
 def select_for_viral(hours: int = 48) -> list[dict]:
     """
-    Select "before it goes viral" candidates (Format G).
+    Select "before it goes viral" candidates (Format 7).
 
     Strategy: Items trending on niche platforms (HN, dev.to, lobsters,
     Papers with Code, GitHub) that haven't hit mainstream news yet.
@@ -204,7 +204,7 @@ def select_for_viral(hours: int = 48) -> list[dict]:
 
 def select_for_deep_dive(topic: str = 'tech', hours: int = 168) -> list[dict]:
     """
-    Select items for weekly deep dive (Format H).
+    Select items for weekly deep dive (Format 8).
 
     Strategy: Collect all items for a given niche from the past 7 days,
     sorted by hotness. Needs substantial content to analyze.
@@ -234,7 +234,7 @@ def select_for_deep_dive(topic: str = 'tech', hours: int = 168) -> list[dict]:
 
 def select_for_niche(niche: str = 'tech', hours: int = 24) -> list[dict]:
     """
-    Select items for niche focus (Format I — tech/finance daily).
+    Select items for niche focus (Format 9 — tech/finance daily).
 
     Strategy: Filter by category bucket, platform-diverse.
     """
