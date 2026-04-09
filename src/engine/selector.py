@@ -16,7 +16,11 @@ The selector only reads the crawler DB. It never writes.
 All selectors apply _filter_already_used() to avoid reusing items across story sets.
 """
 
+import json
 import logging
+import os
+from pathlib import Path
+
 from db.crawler_reader import (
     get_top_items,
     get_diverse_top_items,
@@ -28,6 +32,110 @@ from db.models import get_used_urls_with_hotness
 logger = logging.getLogger(__name__)
 
 HOTNESS_REGAIN_FACTOR = 1.3  # item must be 30% hotter to be re-eligible
+
+# ---------------------------------------------------------------------------
+# Category mix config — maps config keys to (buckets, platforms)
+# None means no filter on that dimension
+# ---------------------------------------------------------------------------
+
+CATEGORY_MAPPING: dict[str, tuple[list[str] | None, list[str] | None]] = {
+    'tech':          (['category_tech', 'rising'],
+                      ['hackernews', 'devto', 'lobsters', 'github',
+                       'paperswithcode', 'stackoverflow', 'v2ex']),
+    'news':          (['news'], None),
+    'entertainment': (['category_entertainment'],
+                      ['youtube', 'bilibili', 'nicovideo']),
+    'regional':      (None, None),  # special: region_key != 'us'
+    'social':        (['hot_now'],
+                      ['reddit', 'weibo', 'baidu']),
+    'science':       (None, ['paperswithcode', 'arxiv_ai_rss']),
+    'gaming':        (['category_gaming'], None),
+    'finance':       (['news'], None),  # fallback to news bucket for now
+}
+
+DEFAULT_MIX = {
+    'tech':          0.30,
+    'news':          0.25,
+    'entertainment': 0.15,
+    'regional':      0.15,
+    'social':        0.10,
+    'science':       0.05,
+}
+
+STORY_MIX_PATH = os.environ.get(
+    'STORY_MIX_PATH',
+    str(Path(__file__).resolve().parent.parent.parent / 'story_mix.json')
+)
+
+
+def load_category_mix() -> dict[str, float]:
+    """Load category mix ratios from story_mix.json, or use defaults."""
+    if os.path.exists(STORY_MIX_PATH):
+        try:
+            with open(STORY_MIX_PATH) as f:
+                data = json.load(f)
+            mix = data.get('category_mix', DEFAULT_MIX)
+            total = sum(mix.values())
+            if abs(total - 1.0) > 0.01:
+                logger.warning(f"category_mix ratios sum to {total:.2f}, not 1.0")
+            return mix
+        except (json.JSONDecodeError, KeyError) as e:
+            logger.warning(f"Failed to load story_mix.json: {e}, using defaults")
+    return DEFAULT_MIX.copy()
+
+
+def _select_by_mix(total_needed: int, hours: int = 24) -> list[dict]:
+    """
+    Select items across categories according to the configured mix ratios.
+
+    Used by multi-item formats (top5, two_takes, pattern, deep_dive, niche).
+    """
+    mix = load_category_mix()
+    selected = []
+    seen_urls: set[str] = set()
+
+    for category, ratio in mix.items():
+        n = round(total_needed * ratio)
+        if n == 0:
+            continue
+
+        mapping = CATEGORY_MAPPING.get(category)
+        if not mapping:
+            logger.warning(f"Unknown category '{category}' in mix, skipping")
+            continue
+
+        buckets, platforms = mapping
+
+        # Special handling for 'regional' — uses region exclusion, not buckets
+        if category == 'regional':
+            items = get_regional_items(exclude_region='us', limit=n * 5, hours=hours)
+        else:
+            items = get_top_items(limit=n * 5, hours=hours, buckets=buckets, platforms=platforms)
+
+        items = _filter_already_used(items)
+
+        # Take up to n items, deduplicating by URL
+        added = 0
+        for item in items:
+            if item['url'] not in seen_urls:
+                selected.append(item)
+                seen_urls.add(item['url'])
+                added += 1
+                if added >= n:
+                    break
+
+    # Fallback: fill remaining slots with top items by hotness
+    if len(selected) < total_needed:
+        fallback = get_top_items(limit=50, hours=hours)
+        fallback = _filter_already_used(fallback)
+        for item in fallback:
+            if item['url'] not in seen_urls:
+                selected.append(item)
+                seen_urls.add(item['url'])
+                if len(selected) >= total_needed:
+                    break
+
+    return selected[:total_needed]
 
 
 def _filter_already_used(items: list[dict]) -> list[dict]:
@@ -80,16 +188,14 @@ def select_for_top5(lang: str = 'en', hours: int = 24) -> list[dict]:
     """
     Select top 5 stories for the daily briefing (Format 2).
 
-    Strategy: Top 5 by hotness with platform diversity
-    (max 2 items from any single platform).
-    If not enough items in the time window, expand to 48h then 72h.
+    Uses category mix ratios to ensure diverse topic coverage.
+    Falls back to wider time windows if not enough items.
     """
     for window in [hours, 48, 72]:
-        items = get_diverse_top_items(limit=20, hours=window, max_per_platform=2)
-        items = _filter_already_used(items)
+        items = _select_by_mix(total_needed=5, hours=window)
         if len(items) >= 5:
             return items[:5]
-        logger.info(f"Only {len(items)} diverse items in {window}h window, expanding...")
+        logger.info(f"Only {len(items)} mix items in {window}h window, expanding...")
 
     if len(items) < 3:
         logger.warning(f"Only {len(items)} items found for top5 (need at least 3)")
@@ -156,67 +262,30 @@ def select_for_two_takes(hours: int = 24) -> list[dict]:
     """
     Select items for framing contrast (Format 5 — two takes).
 
-    Strategy: Get top items from diverse platforms/regions. The LLM will
-    identify framing differences — we provide a rich, diverse candidate pool.
-    Ensures at least 3 different regions and 3 different platforms.
+    Uses category mix to get diverse items, then the LLM identifies
+    framing differences.
     """
-    candidates = get_top_items(limit=200, hours=hours)
-    candidates = _filter_already_used(candidates)
-    if not candidates:
+    items = _select_by_mix(total_needed=8, hours=hours)
+    if not items:
         logger.warning("No items found for two_takes")
-        return []
-
-    # Select items maximizing region + platform diversity
-    selected = []
-    seen_regions: set[str] = set()
-    seen_platforms: set[str] = set()
-
-    # First pass: prioritize unseen region+platform combos
-    for item in candidates:
-        region = item.get('region_key', '')
-        platform = item['platform']
-        if region not in seen_regions or platform not in seen_platforms:
-            selected.append(item)
-            seen_regions.add(region)
-            seen_platforms.add(platform)
-            if len(selected) >= 8:
-                break
-
-    return selected
+    return items
 
 
 def select_for_pattern(hours: int = 72) -> list[dict]:
     """
     Select items for cross-region pattern detection (Format 6).
 
-    Strategy: Get items from 3+ regions spanning 72 hours.
-    The LLM identifies the pattern — we provide a diverse, multi-region pool.
-    Deterministic gate: must have items from >=3 distinct regions.
+    Uses category mix for diverse topics, then verifies >=3 regions present.
     """
-    candidates = get_regional_items(exclude_region='__none__', limit=200, hours=hours)
-    candidates = _filter_already_used(candidates)
-    if not candidates:
-        logger.warning("No items found for pattern detection")
-        return []
-
-    # Select items maximizing region diversity
-    selected = []
-    region_counts: dict[str, int] = {}
-    for item in candidates:
-        region = item.get('region_key', '')
-        if region_counts.get(region, 0) >= 3:
-            continue
-        selected.append(item)
-        region_counts[region] = region_counts.get(region, 0) + 1
-        if len(selected) >= 12:
-            break
+    items = _select_by_mix(total_needed=12, hours=hours)
 
     # Deterministic gate: need items from >=3 regions
-    if len(region_counts) < 3:
-        logger.warning(f"Pattern needs >=3 regions, only found {len(region_counts)} — skipping")
+    regions = set(i.get('region_key', '') for i in items)
+    if len(regions) < 3:
+        logger.warning(f"Pattern needs >=3 regions, only found {len(regions)} — skipping")
         return []
 
-    return selected
+    return items
 
 
 def select_for_viral(hours: int = 48) -> list[dict]:
@@ -242,49 +311,26 @@ def select_for_deep_dive(topic: str = 'tech', hours: int = 168) -> list[dict]:
     """
     Select items for weekly deep dive (Format 8).
 
-    Strategy: Collect all items for a given niche from the past 7 days,
-    sorted by hotness. Needs substantial content to analyze.
+    Uses category mix for diverse content over 7-day window.
     """
-    bucket_map = {
-        'tech': ['category_tech'],
-        'entertainment': ['category_entertainment'],
-        'finance': ['category_finance'],
-        'gaming': ['category_gaming'],
-    }
-    buckets = bucket_map.get(topic)
-
-    if buckets:
-        items = get_top_items(limit=200, hours=hours, buckets=buckets)
-    else:
-        items = get_top_items(limit=200, hours=hours)
-
-    items = _filter_already_used(items)
+    items = _select_by_mix(total_needed=15, hours=hours)
 
     if len(items) < 5:
-        # Not enough niche items — fall back to all items
-        logger.info(f"Only {len(items)} items for topic '{topic}', using all items")
-        items = get_top_items(limit=50, hours=hours)
-        items = _filter_already_used(items)
+        logger.warning(f"Only {len(items)} items for deep_dive, need at least 5")
 
-    # Take top 15 for the deep dive (enough context for a 5-min script)
-    return items[:15]
+    return items
 
 
 def select_for_niche(niche: str = 'tech', hours: int = 24) -> list[dict]:
     """
     Select items for niche focus (Format 9 — tech/finance daily).
 
-    Strategy: Filter by category bucket, platform-diverse.
+    Uses the specific niche's bucket/platform mapping, not the full category mix.
     """
-    bucket_map = {
-        'tech': ['category_tech', 'rising'],
-        'finance': ['category_finance'],
-        'entertainment': ['category_entertainment'],
-        'gaming': ['category_gaming'],
-    }
-    buckets = bucket_map.get(niche, ['category_tech'])
+    mapping = CATEGORY_MAPPING.get(niche, CATEGORY_MAPPING['tech'])
+    buckets, platforms = mapping
 
-    items = get_top_items(limit=100, hours=hours, buckets=buckets)
+    items = get_top_items(limit=100, hours=hours, buckets=buckets, platforms=platforms)
     items = _filter_already_used(items)
 
     # Platform diversity
@@ -300,17 +346,57 @@ def select_for_niche(niche: str = 'tech', hours: int = 24) -> list[dict]:
             break
 
     if len(selected) < 3:
-        # Not enough niche items, expand to wider buckets
         logger.info(f"Only {len(selected)} items for niche '{niche}', expanding search")
         all_items = get_top_items(limit=200, hours=hours)
         all_items = _filter_already_used(all_items)
+        seen_urls = {s['url'] for s in selected}
         for item in all_items:
-            if item not in selected:
+            if item['url'] not in seen_urls:
                 selected.append(item)
+                seen_urls.add(item['url'])
                 if len(selected) >= 5:
                     break
 
     return selected
+
+
+def select_for_format(format_id: int, hours: int = 24) -> list[dict] | None:
+    """
+    Generic selector for formats 10-46.
+    Uses FORMAT_REGISTRY to determine strategy and item count.
+    """
+    from engine.format_registry import FORMAT_REGISTRY
+
+    if format_id not in FORMAT_REGISTRY:
+        logger.warning(f"Unknown format_id {format_id}")
+        return None
+
+    strategy, _, item_count = FORMAT_REGISTRY[format_id]
+
+    if strategy == 'single':
+        items = get_top_items(limit=10, hours=hours)
+        items = _filter_already_used(items)
+        return [items[0]] if items else None
+
+    elif strategy == 'mix':
+        items = _select_by_mix(total_needed=item_count, hours=hours)
+        return items if items else None
+
+    elif strategy == 'comment':
+        # Prefer platforms with comments (reddit, hackernews, youtube)
+        comment_platforms = ['reddit', 'hackernews', 'youtube']
+        items = get_top_items(limit=item_count * 5, hours=hours, platforms=comment_platforms)
+        items = _filter_already_used(items)
+        if not items:
+            items = _select_by_mix(total_needed=item_count, hours=hours)
+        return items[:item_count] if items else None
+
+    elif strategy == 'topic_match':
+        # Use mix selection — LLM will identify topic overlaps from diverse items
+        items = _select_by_mix(total_needed=item_count, hours=hours)
+        return items if items else None
+
+    return None
 
 
 def get_top_regions_with_data(hours: int = 24, min_items: int = 3) -> list[str]:

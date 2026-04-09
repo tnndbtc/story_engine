@@ -1,0 +1,11 @@
+{
+  "category_mix": {
+    "tech":          0.30,
+    "news":          0.25,
+    "entertainment": 0.15,
+    "regional":      0.15,
+    "social":        0.10,
+    "science":       0.05
+  },
+  "notes": "比例之和应为 1.0，selector 按比例从各 bucket 分配名额"
+}

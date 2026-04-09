@@ -52,6 +52,7 @@ start_service() {
     fi
 
     echo -e "  ${CYAN}Starting story_engine API on port $PORT...${NC}"
+    echo "[$(date -u '+%Y-%m-%d %H:%M:%S UTC')] === Starting story_engine API (port $PORT) ===" >> "$LOG_FILE"
     cd "$SRC_DIR"
     CRAWLER_DB=/home/tnnd/data/code/crawler/db.sqlite3 \
         nohup python -m uvicorn main:app --host 0.0.0.0 --port $PORT \
@@ -80,6 +81,7 @@ start_service() {
 stop_service_quiet() {
     local pid=$(get_pid)
     if [ -n "$pid" ]; then
+        echo "[$(date -u '+%Y-%m-%d %H:%M:%S UTC')] === Stopping story_engine API (PID $pid) ===" >> "$LOG_FILE"
         kill "$pid" 2>/dev/null
         sleep 1
         if kill -0 "$pid" 2>/dev/null; then
@@ -131,59 +133,90 @@ generate_stories() {
     echo ""
     echo -e "  ${BOLD}Generate Stories${NC}"
     echo ""
-    echo "  All 9 formats: A-I"
+    echo "  46 formats (input number directly, or range, or comma-separated)"
     echo ""
-    echo "   1) All formats"
-    echo "   2) Explainer    (1 - 60秒解读)"
-    echo "   3) Top 5        (2 - 今日热点5)"
-    echo "   4) Radar        (3 - 全球雷达)"
-    echo "   5) Regional     (4 - 区域视角)"
-    echo "   6) Two Takes    (5 - 双面观点)"
-    echo "   7) Pattern      (6 - 趋势分析)"
-    echo "   8) Viral        (7 - 即将爆火)"
-    echo "   9) Deep Dive    (8 - 深度报道)"
-    echo "  10) Niche        (9 - 专题聚焦)"
-    echo "  11) Dry run (preview selections only)"
-    echo "   0) Cancel"
+    echo "   0) Cancel         all) All 46 formats     dry) Dry run"
+    echo ""
+    echo "   1) 60秒解读       2) 今日热点5      3) 全球雷达"
+    echo "   4) 区域视角       5) 双面观点       6) 趋势分析"
+    echo "   7) 即将爆火       8) 深度报道       9) 专题聚焦"
+    echo "  10) 反直觉        11) 角色代入      12) 时间线复盘"
+    echo "  13) 谁赢谁输      14) 关键数据      15) 谣言vs真相"
+    echo "  16) 被忽视但重要  17) 背景补课      18) 二选一"
+    echo "  19) 未来会怎样    20) 一句话总结    21) 最离谱新闻"
+    echo "  22) 同类对比      23) 排行榜        24) 错误决策"
+    echo "  25) 连锁反应      26) 情绪解读      27) 第一视角"
+    echo "  28) 极端假设      29) 一分钟故事    30) 黑白对立"
+    echo "  31) 评论精选      32) 误判合集      33) 关键词拆解"
+    echo "  34) 24小时回顾    35) 标题对比      36) 冷知识"
+    echo "  37) 幕后逻辑      38) 失败案例      39) 成功路径"
+    echo "  40) 三点结论      41) 你需要知道的  42) 误区提醒"
+    echo "  43) 对普通人      44) 短问短答      45) 概念解释"
+    echo "  46) 历史对照"
+    echo ""
+    echo ""
+    echo "  Examples: 10  |  10-16  |  10,13,19  |  all  |  dry  |  0"
     echo ""
     read -p "  Select: " gen_choice
 
-    local format_arg=""
     local extra_args=""
 
+    # Map format numbers 1-9 to legacy names
+    declare -A LEGACY_MAP
+    LEGACY_MAP[1]="explainer" LEGACY_MAP[2]="top5" LEGACY_MAP[3]="radar"
+    LEGACY_MAP[4]="regional" LEGACY_MAP[5]="two_takes" LEGACY_MAP[6]="pattern"
+    LEGACY_MAP[7]="viral" LEGACY_MAP[8]="deep_dive" LEGACY_MAP[9]="niche"
+
     case $gen_choice in
-        1) format_arg="all" ;;
-        2) format_arg="explainer" ;;
-        3) format_arg="top5" ;;
-        4) format_arg="radar" ;;
-        5) format_arg="regional" ;;
-        6) format_arg="two_takes" ;;
-        7) format_arg="pattern" ;;
-        8) format_arg="viral" ;;
-        9) format_arg="deep_dive" ;;
-        10) format_arg="niche" ;;
-        11) format_arg="all"; extra_args="--dry-run" ;;
         0) echo -e "  ${YELLOW}Cancelled${NC}"; echo ""; return ;;
-        *) echo -e "  ${RED}Invalid option${NC}"; echo ""; return ;;
+        all) gen_choice="1-46" ;;
+        dry) gen_choice="1-46"; extra_args="--dry-run" ;;
     esac
 
-    echo ""
+    # Parse input: supports single, range (10-16), or list (10,13,19)
+    local formats_to_run=""
+    local expanded=""
+    for part in $(echo "$gen_choice" | tr ',' ' '); do
+        if [[ "$part" =~ ^([0-9]+)-([0-9]+)$ ]]; then
+            local range_start=${BASH_REMATCH[1]}
+            local range_end=${BASH_REMATCH[2]}
+            for ((i=range_start; i<=range_end; i++)); do
+                expanded="$expanded $i"
+            done
+        elif [[ "$part" =~ ^[0-9]+$ ]]; then
+            expanded="$expanded $part"
+        else
+            echo -e "  ${RED}Invalid input: $part${NC}"; echo ""; return
+        fi
+    done
 
-    # Stories are added as a new set — old stories are preserved
-    if [ -z "$extra_args" ]; then
-        echo -e "  ${CYAN}Stories will be added as a new set (old stories preserved).${NC}"
+    # Convert format numbers to run.py format args
+    for num in $expanded; do
+        if [ "$num" -ge 1 ] && [ "$num" -le 9 ] && [ -n "${LEGACY_MAP[$num]}" ]; then
+            formats_to_run="$formats_to_run ${LEGACY_MAP[$num]}"
+        elif [ "$num" -ge 10 ] && [ "$num" -le 46 ]; then
+            formats_to_run="$formats_to_run format_${num}"
+        else
+            echo -e "  ${RED}Invalid format number: $num${NC}"; echo ""; return
+        fi
+    done
+
+    if [ -z "$formats_to_run" ]; then
+        echo -e "  ${RED}No valid formats selected${NC}"; echo ""; return
     fi
 
-    echo -e "  ${CYAN}Generating stories (format=$format_arg, lang=zh)...${NC}"
+    # Run selected formats
+    echo ""
+    echo -e "  ${CYAN}Stories will be added as a new set (old stories preserved).${NC}"
+    echo -e "  ${CYAN}Generating selected formats...${NC}"
     echo ""
 
     cd "$SRC_DIR"
-    python engine/run.py --format "$format_arg" --lang zh --channel 2 $extra_args
+    python engine/run.py --format $formats_to_run --lang zh --channel 2 $extra_args
 
     echo ""
     if [ -z "$extra_args" ]; then
         echo -e "  ${GREEN}Generation complete!${NC}"
-        # Restart API if running so it picks up new stories
         if is_running; then
             echo -e "  ${CYAN}Stories are available via the API immediately.${NC}"
         else
@@ -191,6 +224,7 @@ generate_stories() {
         fi
     fi
     echo ""
+    return
 }
 
 show_urls() {
@@ -213,7 +247,6 @@ show_urls() {
 }
 
 show_menu() {
-    clear
     echo -e "${BOLD}${CYAN}"
     cat << "EOF"
 ╔═══════════════════════════════════════════════════════════╗

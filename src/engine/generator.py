@@ -571,3 +571,64 @@ def generate_niche(items: list[dict], niche: str, lang: str = 'zh', channel: int
         logger.error(f"Failed to generate niche ({niche}): {e}")
         save_failed_story(title=f"Niche: {niche}", format='niche', lang=lang, error=str(e), batch_id=batch_id, batch_ts=batch_ts)
         raise
+
+
+def generate_by_format(
+    format_id: int,
+    items: list[dict],
+    lang: str = 'zh',
+    channel: int = 2,
+    batch_id: int | None = None,
+    batch_ts: int | None = None,
+) -> int:
+    """
+    Generic generator for formats 10-46.
+    Reads the corresponding prompt template and calls Claude.
+    """
+    from engine.format_registry import FORMAT_REGISTRY, FORMAT_NAMES
+
+    if format_id not in FORMAT_REGISTRY:
+        raise ValueError(f"Unknown format_id: {format_id}")
+
+    _, prompt_file, _ = FORMAT_REGISTRY[format_id]
+    format_name = FORMAT_NAMES.get(format_id, f'format_{format_id}')
+    format_key = f'format_{format_id}'
+
+    template_path = PROMPTS_DIR / prompt_file
+    if not template_path.exists():
+        raise FileNotFoundError(f"Prompt template not found: {template_path}")
+
+    template = template_path.read_text()
+    prompt = template.format(
+        stories_block=_build_stories_block(items),
+        lang_instruction=_lang_instruction(lang),
+    )
+
+    logger.info(f"Generating {format_name} (format_{format_id}) from {len(items)} items...")
+
+    try:
+        raw = _call_claude(prompt)
+        script = _parse_json_response(raw)
+
+        story_id = save_story(
+            title=script.get('title', format_name),
+            format=format_key,
+            channel=channel,
+            lang=lang,
+            hook=script.get('hook', ''),
+            bullets=script.get('bullets', []),
+            twist=script.get('twist', ''),
+            sources=[_format_source(item) for item in items],
+            batch_id=batch_id,
+            batch_ts=batch_ts,
+        )
+        logger.info(f"{format_name} saved: story #{story_id} — {script.get('title', '')[:50]}")
+        return story_id
+
+    except Exception as e:
+        logger.error(f"Failed to generate {format_name}: {e}")
+        save_failed_story(
+            title=format_name, format=format_key, lang=lang,
+            error=str(e), batch_id=batch_id, batch_ts=batch_ts,
+        )
+        raise

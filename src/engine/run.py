@@ -269,7 +269,7 @@ def run_niche(lang: str, channel: int, dry_run: bool, set_id: int | None, batch_
     return story_id
 
 
-ALL_FORMATS = ['explainer', 'top5', 'radar', 'regional', 'two_takes', 'pattern', 'viral', 'deep_dive', 'niche']
+LEGACY_FORMATS = ['explainer', 'top5', 'radar', 'regional', 'two_takes', 'pattern', 'viral', 'deep_dive', 'niche']
 
 FORMAT_RUNNERS = {
     'explainer': run_explainer,
@@ -283,12 +283,43 @@ FORMAT_RUNNERS = {
     'niche': run_niche,
 }
 
+# All valid format strings
+ALL_FORMATS = LEGACY_FORMATS + [f'format_{i}' for i in range(10, 47)]
+
+
+def _run_generic_format(format_id: int, lang: str, channel: int, dry_run: bool,
+                        set_id: int | None, batch_ts: int | None) -> int | None:
+    """Generic runner for formats 10-46."""
+    from engine.selector import select_for_format
+    from engine.generator import generate_by_format
+    from engine.format_registry import FORMAT_NAMES
+
+    format_name = FORMAT_NAMES.get(format_id, f'format_{format_id}')
+
+    items = select_for_format(format_id)
+    if not items:
+        logger.warning(f"No items found for {format_name} — skipping")
+        return None
+
+    _log_items(format_name, items if isinstance(items, list) else [items])
+
+    if dry_run:
+        logger.info(f"[DRY RUN] Would generate {format_name} — skipping")
+        return None
+
+    story_id = generate_by_format(format_id, items, lang=lang, channel=channel,
+                                  batch_id=set_id, batch_ts=batch_ts)
+    if set_id:
+        record_used_items(set_id, story_id, f'format_{format_id}', items)
+    return story_id
+
 
 def main():
     parser = argparse.ArgumentParser(description='Generate stories from crawled data')
     parser.add_argument('--lang', choices=['en', 'zh'], default='en', help='Output language')
     parser.add_argument('--channel', type=int, choices=[1, 2, 3], default=1, help='Output channel')
-    parser.add_argument('--format', choices=ALL_FORMATS + ['all'], default='all', help='Which format to generate')
+    parser.add_argument('--format', nargs='+', default=['all'],
+                        help='Formats to generate (space-separated): all, all_extended, explainer, top5, format_10, ...')
     parser.add_argument('--dry-run', action='store_true', help='Show selections without generating')
     args = parser.parse_args()
 
@@ -305,11 +336,36 @@ def main():
         set_id, batch_ts = create_story_set(lang=args.lang, channel=args.channel)
         logger.info(f"Created story set #{set_id} (batch_ts={batch_ts})")
 
-    formats = ALL_FORMATS if args.format == 'all' else [args.format]
+    # Determine which formats to run
+    # args.format is now a list (nargs='+')
+    formats = []
+    for f in args.format:
+        if f == 'all':
+            formats.extend(LEGACY_FORMATS)
+        elif f == 'all_extended':
+            formats.extend(ALL_FORMATS)
+        else:
+            formats.append(f)
     results = {}
 
     for fmt in formats:
-        runner = FORMAT_RUNNERS[fmt]
+        # Check if it's a generic format (10-46)
+        if fmt.startswith('format_') and fmt[7:].isdigit():
+            format_id = int(fmt[7:])
+            try:
+                results[fmt] = _run_generic_format(format_id, args.lang, args.channel,
+                                                   args.dry_run, set_id, batch_ts)
+            except Exception as e:
+                logger.error(f"{fmt} generation failed: {e}")
+                results[fmt] = None
+            continue
+
+        # Legacy format (1-9)
+        runner = FORMAT_RUNNERS.get(fmt)
+        if not runner:
+            logger.error(f"Unknown format: {fmt}")
+            results[fmt] = None
+            continue
         try:
             results[fmt] = runner(args.lang, args.channel, args.dry_run, set_id, batch_ts)
         except Exception as e:

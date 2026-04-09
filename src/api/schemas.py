@@ -53,17 +53,8 @@ class Script(BaseModel):
 # Format and channel literals
 # ---------------------------------------------------------------------------
 
-FormatType = Literal[
-    "explainer",    # Format 1 — 60-sec explainer
-    "top5",         # Format 2 — Top 5 today
-    "radar",        # Format 3 — stories US media ignores
-    "regional",     # Format 4 — what region X is saying
-    "two_takes",    # Format 5 — two completely different takes
-    "pattern",      # Format 6 — pattern/trend analysis
-    "viral",        # Format 7 — before it goes viral
-    "deep_dive",    # Format 8 — weekly deep dive
-    "niche",        # Format 9 — niche focus (tech/finance)
-]
+# Formats 1-9 (legacy names) + formats 10-46 (format_N)
+FormatType = str  # accepts any format string: 'explainer', 'top5', ..., 'format_10', ..., 'format_46'
 
 ChannelType = Literal[1, 2, 3]
 LangType = Literal["en", "zh"]

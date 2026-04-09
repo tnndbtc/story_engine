@@ -34,6 +34,7 @@ def get_top_items(
     buckets: list[str] | None = None,
     lang_group: str | None = None,
     exclude_platforms: list[str] | None = None,
+    platforms: list[str] | None = None,
 ) -> list[dict]:
     """
     Get the top items by hotness from the last N hours.
@@ -44,6 +45,7 @@ def get_top_items(
         buckets: Filter to specific buckets (e.g., ['hot_now', 'news'])
         lang_group: Filter to specific language group (e.g., 'en')
         exclude_platforms: Platforms to exclude
+        platforms: Only include these platforms (e.g., ['hackernews', 'devto'])
     """
     conn = get_crawler_connection()
 
@@ -66,6 +68,11 @@ def get_top_items(
         placeholders = ",".join("?" * len(exclude_platforms))
         conditions.append(f"ts.platform NOT IN ({placeholders})")
         params.extend(exclude_platforms)
+
+    if platforms:
+        placeholders = ",".join("?" * len(platforms))
+        conditions.append(f"ts.platform IN ({placeholders})")
+        params.extend(platforms)
 
     where = " AND ".join(conditions)
     params.append(limit)

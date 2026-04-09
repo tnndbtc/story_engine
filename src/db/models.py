@@ -72,19 +72,21 @@ CREATE INDEX IF NOT EXISTS idx_used_items_story_set ON used_items(story_set_id);
 
 
 def _now() -> int:
-    """Current time as UNIX epoch seconds."""
-    return int(time.time())
+    """Current time as UNIX epoch milliseconds. Avoids UNIQUE collisions within the same second."""
+    return int(time.time() * 1000)
 
 
 def _ts_to_iso(ts) -> str | None:
-    """Convert a UNIX timestamp (int/str) or ISO string to ISO string for API display."""
+    """Convert a UNIX timestamp (ms or seconds) to ISO string for API display."""
     if ts is None:
         return None
-    if isinstance(ts, (int, float)):
-        return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
-    # String — could be numeric string from SQLite TEXT column or ISO string
     if isinstance(ts, str) and ts.isdigit():
-        return datetime.fromtimestamp(int(ts), tz=timezone.utc).isoformat()
+        ts = int(ts)
+    if isinstance(ts, (int, float)):
+        # If value > year 2100 in seconds, it's milliseconds
+        if ts > 4102444800:
+            ts = ts / 1000.0
+        return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
     return str(ts)
 
 
@@ -236,6 +238,7 @@ def get_story_sets(limit: int = 20) -> list[dict]:
            FROM story_sets ss
            LEFT JOIN stories s ON s.batch_id = ss.id
            GROUP BY ss.id
+           HAVING story_count > 0
            ORDER BY ss.id DESC
            LIMIT ?""",
         (limit,)

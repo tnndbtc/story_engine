@@ -1,13 +1,19 @@
 #!/bin/bash
 # story_engine daily generation script
 #
-# Add to crontab for daily automation:
-#   0 6 * * * /home/tnnd/data/code/story_engine/run_generate.sh >> /home/tnnd/data/code/story_engine/logs/generate.log 2>&1
+# Usage:
+#   ./run_generate.sh              # Default formats (1-9)
+#   ./run_generate.sh 1-9          # Formats 1 to 9
+#   ./run_generate.sh 10-20        # Formats 10 to 20
+#   ./run_generate.sh 1,5,10,15    # Specific formats
+#   ./run_generate.sh all          # All 46 formats
+#   ./run_generate.sh --dry-run    # Preview only (no generation)
 #
-# Or run manually:
-#   ./run_generate.sh              # English, all formats
-#   ./run_generate.sh --lang zh    # Chinese, all formats
-#   ./run_generate.sh --dry-run    # Preview selections only
+# Crontab examples (rotate formats across hours):
+#   0 6 * * * /home/tnnd/data/code/story_engine/run_generate.sh 1-9
+#   0 12 * * * /home/tnnd/data/code/story_engine/run_generate.sh 10-20
+#   0 18 * * * /home/tnnd/data/code/story_engine/run_generate.sh 21-30
+#   0 22 * * * /home/tnnd/data/code/story_engine/run_generate.sh 31-46
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
@@ -20,25 +26,62 @@ fi
 # Create logs directory
 mkdir -p "$SCRIPT_DIR/logs"
 
+# Map format numbers 1-9 to legacy names
+declare -A LEGACY_MAP
+LEGACY_MAP[1]="explainer" LEGACY_MAP[2]="top5" LEGACY_MAP[3]="radar"
+LEGACY_MAP[4]="regional" LEGACY_MAP[5]="two_takes" LEGACY_MAP[6]="pattern"
+LEGACY_MAP[7]="viral" LEGACY_MAP[8]="deep_dive" LEGACY_MAP[9]="niche"
+
+# Parse arguments
+FORMAT_INPUT="${1:-1-9}"
+EXTRA_ARGS=""
+
+if [ "$FORMAT_INPUT" = "--dry-run" ]; then
+    FORMAT_INPUT="1-9"
+    EXTRA_ARGS="--dry-run"
+elif [ "$2" = "--dry-run" ]; then
+    EXTRA_ARGS="--dry-run"
+fi
+
+# Expand format input to run.py format args
+FORMATS=""
+for part in $(echo "$FORMAT_INPUT" | tr ',' ' '); do
+    if [[ "$part" =~ ^([0-9]+)-([0-9]+)$ ]]; then
+        for ((i=${BASH_REMATCH[1]}; i<=${BASH_REMATCH[2]}; i++)); do
+            if [ "$i" -ge 1 ] && [ "$i" -le 9 ] && [ -n "${LEGACY_MAP[$i]}" ]; then
+                FORMATS="$FORMATS ${LEGACY_MAP[$i]}"
+            elif [ "$i" -ge 10 ] && [ "$i" -le 46 ]; then
+                FORMATS="$FORMATS format_${i}"
+            fi
+        done
+    elif [ "$part" = "all" ]; then
+        FORMATS="all_extended"
+        break
+    elif [[ "$part" =~ ^[0-9]+$ ]]; then
+        i=$part
+        if [ "$i" -ge 1 ] && [ "$i" -le 9 ] && [ -n "${LEGACY_MAP[$i]}" ]; then
+            FORMATS="$FORMATS ${LEGACY_MAP[$i]}"
+        elif [ "$i" -ge 10 ] && [ "$i" -le 46 ]; then
+            FORMATS="$FORMATS format_${i}"
+        fi
+    fi
+done
+
+if [ -z "$FORMATS" ]; then
+    echo "Error: no valid formats from input '$FORMAT_INPUT'"
+    exit 1
+fi
+
 echo "========================================="
 echo "  story_engine — Generation Run"
 echo "  $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+echo "  Formats: $FORMAT_INPUT"
 echo "========================================="
-
-# ─── Language config ─────────────────────────────────────
-# Comment/uncomment lines below to enable/disable languages.
-# To bring English back, just uncomment the EN line.
-# ─────────────────────────────────────────────────────────
-
-# Generate English stories (Channel 1)
-#echo ""
-#echo "--- Generating English stories ---"
-#python "$SCRIPT_DIR/src/engine/run.py" --lang en --channel 1 "$@"
 
 # Generate Chinese stories (Channel 2)
 echo ""
 echo "--- Generating Chinese stories ---"
-python "$SCRIPT_DIR/src/engine/run.py" --lang zh --channel 2 "$@"
+python "$SCRIPT_DIR/src/engine/run.py" --format $FORMATS --lang zh --channel 2 $EXTRA_ARGS
 
 # Show summary
 echo ""
