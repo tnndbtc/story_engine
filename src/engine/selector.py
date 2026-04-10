@@ -19,6 +19,7 @@ All selectors apply _filter_already_used() to avoid reusing items across story s
 import json
 import logging
 import os
+from collections import defaultdict
 from pathlib import Path
 
 from db.crawler_reader import (
@@ -26,6 +27,7 @@ from db.crawler_reader import (
     get_diverse_top_items,
     get_early_signals,
     get_regional_items,
+    get_known_surface_keys,
 )
 from db.models import get_used_urls_with_hotness
 
@@ -33,64 +35,234 @@ logger = logging.getLogger(__name__)
 
 HOTNESS_REGAIN_FACTOR = 1.3  # item must be 30% hotter to be re-eligible
 
-# ---------------------------------------------------------------------------
-# Category mix config — maps config keys to (buckets, platforms)
-# None means no filter on that dimension
-# ---------------------------------------------------------------------------
-
-CATEGORY_MAPPING: dict[str, tuple[list[str] | None, list[str] | None]] = {
-    'tech':          (['category_tech', 'rising'],
-                      ['hackernews', 'devto', 'lobsters', 'github',
-                       'paperswithcode', 'stackoverflow', 'v2ex']),
-    'news':          (['news'], None),
-    'entertainment': (['category_entertainment'],
-                      ['youtube', 'bilibili', 'nicovideo']),
-    'regional':      (None, None),  # special: region_key != 'us'
-    'social':        (['hot_now'],
-                      ['reddit', 'weibo', 'baidu']),
-    'science':       (None, ['paperswithcode', 'arxiv_ai_rss']),
-    'gaming':        (['category_gaming'], None),
-    'finance':       (['news'], None),  # fallback to news bucket for now
-}
-
-DEFAULT_MIX = {
-    'tech':          0.30,
-    'news':          0.25,
-    'entertainment': 0.15,
-    'regional':      0.15,
-    'social':        0.10,
-    'science':       0.05,
-}
-
 STORY_MIX_PATH = os.environ.get(
     'STORY_MIX_PATH',
     str(Path(__file__).resolve().parent.parent.parent / 'story_mix.json')
 )
 
+# ---------------------------------------------------------------------------
+# Defaults — used when story_mix.json is absent or malformed.
+# category_sources replaces the former hardcoded CATEGORY_MAPPING constant;
+# it is now the authoritative config, read from story_mix.json at runtime.
+# ---------------------------------------------------------------------------
+
+DEFAULT_CATEGORY_MIX: dict[str, float] = {
+    'tech':          0.20,
+    'news':          0.15,
+    'politics':      0.10,
+    'finance':       0.08,
+    'ai':            0.07,
+    'regional':      0.15,
+    'entertainment': 0.10,
+    'social':        0.05,
+    'science':       0.05,
+    'business':      0.05,
+}
+
+DEFAULT_CATEGORY_SOURCES: dict[str, dict] = {
+    'tech':          {'buckets': ['category_tech', 'rising'],
+                      'platforms': ['hackernews', 'devto', 'lobsters', 'github',
+                                    'paperswithcode', 'stackoverflow', 'v2ex']},
+    'news':          {'buckets': ['news'], 'platforms': None},
+    'politics':      {'buckets': ['category_politics', 'news'], 'platforms': None,
+                      'prefer_topics': ['politics']},
+    'finance':       {'buckets': ['category_finance', 'news'], 'platforms': None,
+                      'prefer_topics': ['finance']},
+    'ai':            {'buckets': ['category_tech', 'rising'],
+                      'platforms': ['hackernews', 'paperswithcode', 'arxiv_ai_rss', 'devto'],
+                      'prefer_topics': ['ai']},
+    'regional':      {'buckets': None, 'platforms': None, 'exclude_region': 'us'},
+    'entertainment': {'buckets': ['category_entertainment'],
+                      'platforms': ['youtube', 'bilibili', 'nicovideo']},
+    'social':        {'buckets': ['hot_now'], 'platforms': ['reddit', 'weibo', 'baidu']},
+    'science':       {'buckets': None, 'platforms': ['paperswithcode', 'arxiv_ai_rss']},
+    'business':      {'buckets': ['news'], 'platforms': None,
+                      'prefer_topics': ['business']},
+}
+
+# One-time startup flag — surface key validation runs once per process lifetime
+_surface_key_check_done = False
+
+
+# ---------------------------------------------------------------------------
+# Config loading
+# ---------------------------------------------------------------------------
+
+def load_story_mix_config() -> dict:
+    """
+    Load the full story_mix.json config.
+
+    Returns a dict with keys:
+      category_mix, category_sources, platform_caps,
+      topic_boosts, surface_weight_overrides, min_slots_per_format.
+
+    Falls back to defaults on missing file or parse error.
+    On first call, validates surface_weight_overrides keys against DB and
+    logs warnings for any that don't match a real TrendSurface.key.
+    """
+    global _surface_key_check_done
+
+    defaults = {
+        'category_mix':             DEFAULT_CATEGORY_MIX,
+        'category_sources':         DEFAULT_CATEGORY_SOURCES,
+        'platform_caps':            {},
+        'topic_boosts':             {},
+        'surface_weight_overrides': {},
+        'min_slots_per_format':     {},
+    }
+
+    if not os.path.exists(STORY_MIX_PATH):
+        return defaults
+
+    try:
+        with open(STORY_MIX_PATH) as f:
+            data = json.load(f)
+    except json.JSONDecodeError as e:
+        logger.warning(f"Failed to parse story_mix.json: {e} — using defaults")
+        return defaults
+
+    config = {
+        'category_mix':             data.get('category_mix', DEFAULT_CATEGORY_MIX),
+        'category_sources':         data.get('category_sources', DEFAULT_CATEGORY_SOURCES),
+        'platform_caps':            data.get('platform_caps', {}),
+        'topic_boosts':             data.get('topic_boosts', {}),
+        'surface_weight_overrides': data.get('surface_weight_overrides', {}),
+        'min_slots_per_format':     data.get('min_slots_per_format', {}),
+    }
+
+    total = sum(config['category_mix'].values())
+    if abs(total - 1.0) > 0.01:
+        logger.warning(f"category_mix ratios sum to {total:.2f}, expected 1.0")
+
+    # One-time validation: warn for surface keys not present in DB
+    if not _surface_key_check_done and config['surface_weight_overrides']:
+        _surface_key_check_done = True
+        try:
+            known = get_known_surface_keys()
+            for key in config['surface_weight_overrides']:
+                if key not in known:
+                    logger.warning(
+                        f"surface_weight_overrides key '{key}' has no matching "
+                        f"TrendSurface.key in DB — override will be ignored. "
+                        f"Run: SELECT DISTINCT key FROM crawler_admin_trendsurface "
+                        f"WHERE is_enabled=1"
+                    )
+        except Exception as e:
+            logger.warning(f"Could not verify surface_weight_overrides keys: {e}")
+
+    return config
+
 
 def load_category_mix() -> dict[str, float]:
-    """Load category mix ratios from story_mix.json, or use defaults."""
-    if os.path.exists(STORY_MIX_PATH):
-        try:
-            with open(STORY_MIX_PATH) as f:
-                data = json.load(f)
-            mix = data.get('category_mix', DEFAULT_MIX)
-            total = sum(mix.values())
-            if abs(total - 1.0) > 0.01:
-                logger.warning(f"category_mix ratios sum to {total:.2f}, not 1.0")
-            return mix
-        except (json.JSONDecodeError, KeyError) as e:
-            logger.warning(f"Failed to load story_mix.json: {e}, using defaults")
-    return DEFAULT_MIX.copy()
+    """Backward-compatible wrapper — returns just the category_mix ratios."""
+    return load_story_mix_config()['category_mix']
+
+
+# ---------------------------------------------------------------------------
+# Selection helpers
+# ---------------------------------------------------------------------------
+
+def _apply_topic_boost(
+    items: list[dict],
+    topic_boosts: dict[str, float],
+    surface_weight_overrides: dict[str, float],
+) -> list[dict]:
+    """
+    Apply surface weight and topic boost multipliers to item hotness scores.
+
+    Both multipliers are combined into a single bounded effective_multiplier
+    to prevent compounding instability. Bounds: [0.3, 3.0].
+
+    - surface_weight_overrides: keyed by TrendSurface.key (surface_key field)
+    - topic_boosts: keyed by topic label (e.g. "politics", "finance")
+    - Items without topic_tags (pre-Phase-2) get topic_mult=1.0 — safe no-op.
+
+    Sorted by effective_hotness descending.
+    Original item["hotness"] is preserved — UsedItem.hotness_at_use must use
+    item["hotness"] (original), never item["effective_hotness"].
+    """
+    if not topic_boosts and not surface_weight_overrides:
+        return items
+
+    for item in items:
+        tags = item.get('topic_tags') or []
+        topic_mult = max(
+            (topic_boosts.get(tag, 1.0) for tag in tags),
+            default=1.0,
+        )
+        surface_mult = surface_weight_overrides.get(item.get('surface_key', ''), 1.0)
+        # Bound the combined multiplier to prevent runaway stacking
+        effective_multiplier = max(0.3, min(surface_mult * topic_mult, 3.0))
+        item['effective_hotness'] = item['hotness'] * effective_multiplier
+
+    return sorted(
+        items,
+        key=lambda x: x.get('effective_hotness', x.get('hotness', 0)),
+        reverse=True,
+    )
+
+
+def _enforce_platform_caps(
+    items: list[dict],
+    caps: dict[str, float],
+    total_slots: int,
+) -> list[dict]:
+    """
+    Enforce per-platform caps as a fraction of total_slots.
+
+    Items from a platform that exceed their cap are moved to overflow and
+    used only to backfill remaining slots after all caps are respected.
+    Ensures no single high-volume platform dominates the final selection.
+
+    Example: bilibili cap=0.15, total_slots=5 → max 1 bilibili item.
+    """
+    if not caps:
+        return items
+
+    platform_counts: dict[str, int] = defaultdict(int)
+    result = []
+    overflow = []
+
+    for item in items:
+        platform = item.get('platform', '')
+        cap_frac = caps.get(platform)
+        if cap_frac is not None:
+            max_allowed = max(1, int(total_slots * cap_frac))
+            if platform_counts[platform] >= max_allowed:
+                overflow.append(item)
+                continue
+        platform_counts[platform] += 1
+        result.append(item)
+
+    # Backfill with overflow items if slots remain
+    for item in overflow:
+        if len(result) >= total_slots:
+            break
+        result.append(item)
+
+    return result[:total_slots]
 
 
 def _select_by_mix(total_needed: int, hours: int = 24) -> list[dict]:
     """
-    Select items across categories according to the configured mix ratios.
+    Select items across categories according to story_mix.json ratios.
 
-    Used by multi-item formats (top5, two_takes, pattern, deep_dive, niche).
+    Category sources (bucket + platform filters) are read from story_mix.json
+    category_sources — no longer hardcoded. Surface weights and topic boosts
+    are applied after fetching to re-rank candidates within each category.
+
+    Constraint priority order:
+      1. platform_caps (hard ceiling — applied after all categories assembled)
+      2. category_mix  (soft target — proportional slot allocation per category)
+    min_slots (guaranteed category slots) will be added in Phase 3.
     """
-    mix = load_category_mix()
+    config = load_story_mix_config()
+    mix = config['category_mix']
+    category_sources = config['category_sources']
+    platform_caps = config.get('platform_caps', {})
+    topic_boosts = config.get('topic_boosts', {})
+    surface_weight_overrides = config.get('surface_weight_overrides', {})
+
     selected = []
     seen_urls: set[str] = set()
 
@@ -99,22 +271,27 @@ def _select_by_mix(total_needed: int, hours: int = 24) -> list[dict]:
         if n == 0:
             continue
 
-        mapping = CATEGORY_MAPPING.get(category)
-        if not mapping:
-            logger.warning(f"Unknown category '{category}' in mix, skipping")
+        src = category_sources.get(category)
+        if not src:
+            logger.warning(f"No category_sources entry for '{category}', skipping")
             continue
 
-        buckets, platforms = mapping
+        buckets = src.get('buckets')
+        platforms = src.get('platforms')
+        exclude_region = src.get('exclude_region')
 
-        # Special handling for 'regional' — uses region exclusion, not buckets
-        if category == 'regional':
-            items = get_regional_items(exclude_region='us', limit=n * 5, hours=hours)
+        if exclude_region:
+            items = get_regional_items(
+                exclude_region=exclude_region, limit=n * 5, hours=hours
+            )
         else:
-            items = get_top_items(limit=n * 5, hours=hours, buckets=buckets, platforms=platforms)
+            items = get_top_items(
+                limit=n * 5, hours=hours, buckets=buckets, platforms=platforms
+            )
 
         items = _filter_already_used(items)
+        items = _apply_topic_boost(items, topic_boosts, surface_weight_overrides)
 
-        # Take up to n items, deduplicating by URL
         added = 0
         for item in items:
             if item['url'] not in seen_urls:
@@ -124,14 +301,19 @@ def _select_by_mix(total_needed: int, hours: int = 24) -> list[dict]:
                 if added >= n:
                     break
 
+    # Apply platform caps across the full assembled list
+    selected = _enforce_platform_caps(selected, platform_caps, total_needed)
+
     # Fallback: fill remaining slots with top items by hotness
     if len(selected) < total_needed:
         fallback = get_top_items(limit=50, hours=hours)
         fallback = _filter_already_used(fallback)
+        fallback = _apply_topic_boost(fallback, topic_boosts, surface_weight_overrides)
+        seen_urls_current = {item['url'] for item in selected}
         for item in fallback:
-            if item['url'] not in seen_urls:
+            if item['url'] not in seen_urls_current:
                 selected.append(item)
-                seen_urls.add(item['url'])
+                seen_urls_current.add(item['url'])
                 if len(selected) >= total_needed:
                     break
 
@@ -148,6 +330,9 @@ def _filter_already_used(items: list[dict]) -> list[dict]:
     Exception (Requirement #3): If the item's CURRENT hotness exceeds
     the hotness at the time it was last used by >= HOTNESS_REGAIN_FACTOR,
     it is allowed back in (the topic has new momentum).
+
+    NOTE: Uses item["hotness"] (original, pre-boost) for the regain check —
+    never item["effective_hotness"] — so editorial boosts don't distort dedup.
     """
     used = get_used_urls_with_hotness()  # {crawler_url: max_hotness_at_use}
     if not used:
@@ -160,7 +345,7 @@ def _filter_already_used(items: list[dict]) -> list[dict]:
             filtered.append(item)
         else:
             prev_hotness = used[url]
-            current_hotness = item.get('hotness', 0)
+            current_hotness = item.get('hotness', 0)  # original, not effective
             if current_hotness >= prev_hotness * HOTNESS_REGAIN_FACTOR:
                 filtered.append(item)
                 logger.info(
@@ -169,6 +354,10 @@ def _filter_already_used(items: list[dict]) -> list[dict]:
                 )
     return filtered
 
+
+# ---------------------------------------------------------------------------
+# Format-specific selectors
+# ---------------------------------------------------------------------------
 
 def select_for_explainer(lang: str = 'en', hours: int = 24) -> dict | None:
     """
@@ -331,23 +520,31 @@ def select_for_niche(niche: str = 'tech', hours: int = 24) -> list[dict]:
     """
     Select items for niche focus (Format 9 — tech/finance daily).
 
-    Uses the specific niche's bucket/platform mapping, not the full category mix.
+    Uses the specific niche's bucket/platform mapping from story_mix.json
+    category_sources (no longer hardcoded).
     """
-    mapping = CATEGORY_MAPPING.get(niche, CATEGORY_MAPPING['tech'])
-    buckets, platforms = mapping
+    config = load_story_mix_config()
+    category_sources = config['category_sources']
+    topic_boosts = config.get('topic_boosts', {})
+    surface_weight_overrides = config.get('surface_weight_overrides', {})
+
+    src = category_sources.get(niche, category_sources.get('tech', {}))
+    buckets = src.get('buckets')
+    platforms = src.get('platforms')
 
     items = get_top_items(limit=100, hours=hours, buckets=buckets, platforms=platforms)
     items = _filter_already_used(items)
+    items = _apply_topic_boost(items, topic_boosts, surface_weight_overrides)
 
-    # Platform diversity
+    # Platform diversity — max 2 per platform
     selected = []
-    platform_counts: dict[str, int] = {}
+    platform_counts: dict[str, int] = defaultdict(int)
     for item in items:
-        platform = item['platform']
-        if platform_counts.get(platform, 0) >= 2:
+        platform = item.get('platform', '')
+        if platform_counts[platform] >= 2:
             continue
         selected.append(item)
-        platform_counts[platform] = platform_counts.get(platform, 0) + 1
+        platform_counts[platform] += 1
         if len(selected) >= 5:
             break
 
@@ -355,6 +552,7 @@ def select_for_niche(niche: str = 'tech', hours: int = 24) -> list[dict]:
         logger.info(f"Only {len(selected)} items for niche '{niche}', expanding search")
         all_items = get_top_items(limit=200, hours=hours)
         all_items = _filter_already_used(all_items)
+        all_items = _apply_topic_boost(all_items, topic_boosts, surface_weight_overrides)
         seen_urls = {s['url'] for s in selected}
         for item in all_items:
             if item['url'] not in seen_urls:

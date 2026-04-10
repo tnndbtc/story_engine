@@ -258,6 +258,21 @@ def get_item_count(hours: int = 24) -> int:
     return row['cnt'] if row else 0
 
 
+def get_known_surface_keys() -> set[str]:
+    """
+    Return the set of TrendSurface.key values for all enabled surfaces.
+
+    Used by the selector to validate surface_weight_overrides config keys
+    at startup and warn about any that don't match a real surface.
+    """
+    conn = get_crawler_connection()
+    rows = conn.execute(
+        "SELECT DISTINCT key FROM crawler_admin_trendsurface WHERE is_enabled = 1"
+    ).fetchall()
+    conn.close()
+    return {row['key'] for row in rows}
+
+
 def _item_to_dict(row: sqlite3.Row) -> dict:
     """Convert a crawler item row to a dictionary."""
     d = dict(row)
