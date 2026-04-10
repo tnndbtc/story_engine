@@ -153,6 +153,55 @@ def _format_source(item: dict) -> dict:
     }
 
 
+def _extract_comments(item: dict, max_comments: int = 5) -> list[str]:
+    """
+    Extract top_comments from item's raw_payload.
+
+    Comments may be stored as plain strings or dicts with a 'text'/'body' key
+    depending on the collector. Returns a list of plain text strings, truncated
+    to 300 chars each.
+    """
+    payload = item.get('raw_payload') or {}
+    raw = payload.get('top_comments', [])
+    if not raw:
+        return []
+
+    texts = []
+    for c in raw[:max_comments]:
+        if isinstance(c, str):
+            texts.append(c.strip())
+        elif isinstance(c, dict):
+            text = c.get('text') or c.get('body') or c.get('content') or ''
+            if text:
+                texts.append(str(text).strip())
+    return [t[:300] for t in texts if t]
+
+
+def _format_comments_block(item: dict, max_comments: int = 5) -> str:
+    """
+    Format top_comments for inclusion in a prompt stories_block.
+
+    Returns an empty string when no comments are available so callers
+    can append it unconditionally without adding blank lines.
+    """
+    texts = _extract_comments(item, max_comments)
+    if not texts:
+        return ''
+    lines = '\n'.join(f"    {i + 1}. {t}" for i, t in enumerate(texts))
+    return f"  Top Comments ({len(texts)}):\n{lines}"
+
+
+def _collect_comments_used(items: list[dict], max_per_item: int = 5) -> list[dict]:
+    """
+    Collect all comments included in the prompt, for storage in comments_used.
+    """
+    used = []
+    for item in items:
+        for text in _extract_comments(item, max_per_item):
+            used.append({'text': text, 'platform': item['platform']})
+    return used
+
+
 def generate_explainer(item: dict, lang: str = 'en', channel: int = 1, batch_id: int | None = None, batch_ts: int | None = None) -> int:
     """
     Generate a 60-second explainer script (Format 1).
@@ -283,7 +332,12 @@ def generate_top5(items: list[dict], lang: str = 'en', channel: int = 1, batch_i
 
 
 def _build_stories_block(items: list[dict]) -> str:
-    """Build the stories_block text for multi-item prompts."""
+    """Build the stories_block text for multi-item prompts.
+
+    Includes top_comments from raw_payload when available. Format 26 (情绪解读)
+    and format 31 (热门评论精选) explicitly instruct the LLM to prioritize
+    comment content when present; other formats benefit from the added context.
+    """
     lines = []
     for i, item in enumerate(items, 1):
         signals = item.get('engagement_signals', {})
@@ -299,7 +353,8 @@ def _build_stories_block(items: list[dict]) -> str:
         title = item.get('canonical_title') or item['title_original']
         desc = item.get('description_original') or 'No description available'
         region = item.get('region_name', item.get('region_key', 'unknown'))
-        lines.append(
+
+        block = (
             f"Story {i}:\n"
             f"  Title: {title}\n"
             f"  Source: {item['platform']} ({region})\n"
@@ -308,6 +363,12 @@ def _build_stories_block(items: list[dict]) -> str:
             f"  Engagement: {engagement_str}\n"
             f"  URL: {item['url']}"
         )
+
+        comments_block = _format_comments_block(item)
+        if comments_block:
+            block += f"\n{comments_block}"
+
+        lines.append(block)
     return '\n\n'.join(lines)
 
 
@@ -584,6 +645,10 @@ def generate_by_format(
     """
     Generic generator for formats 10-46.
     Reads the corresponding prompt template and calls Claude.
+
+    Comments from raw_payload are included in stories_block automatically via
+    _build_stories_block(). Format 26 (情绪解读) and format 31 (热门评论精选)
+    instruct the LLM to prioritize comment content when present.
     """
     from engine.format_registry import FORMAT_REGISTRY, FORMAT_NAMES
 
@@ -599,10 +664,16 @@ def generate_by_format(
         raise FileNotFoundError(f"Prompt template not found: {template_path}")
 
     template = template_path.read_text()
+    stories_block = _build_stories_block(items)  # includes top_comments when available
     prompt = template.format(
-        stories_block=_build_stories_block(items),
+        stories_block=stories_block,
         lang_instruction=_lang_instruction(lang),
     )
+
+    # Collect all comments that appear in the prompt for auditing
+    comments_used = _collect_comments_used(items)
+    if comments_used:
+        logger.debug(f"{format_name}: {len(comments_used)} comments included in prompt")
 
     logger.info(f"Generating {format_name} (format_{format_id}) from {len(items)} items...")
 
@@ -619,6 +690,7 @@ def generate_by_format(
             bullets=script.get('bullets', []),
             twist=script.get('twist', ''),
             sources=[_format_source(item) for item in items],
+            comments_used=comments_used or None,
             batch_id=batch_id,
             batch_ts=batch_ts,
         )

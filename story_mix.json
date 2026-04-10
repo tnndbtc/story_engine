@@ -64,8 +64,8 @@
     "bilibili": 0.15,
     "reddit":   0.15,
     "youtube":  0.20,
-    "weibo":    0.10,
-    "baidu":    0.10,
+    "weibo":    0.05,
+    "baidu":    0.05,
     "twitter":  0.15
   },
   "topic_boosts": {
@@ -79,6 +79,8 @@
   },
   "surface_weight_overrides": {
     "bilibili_trending":       0.60,
+    "baidu_hot":               0.30,
+    "weibo_hot":               0.30,
     "reddit_hot_r_worldnews":  1.20,
     "reddit_hot_r_technology": 1.20,
     "reddit_hot_r_finance":    1.20,
