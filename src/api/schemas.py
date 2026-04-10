@@ -27,7 +27,7 @@ class SourceItem(BaseModel):
 class CommentItem(BaseModel):
     """One comment fetched on-demand during enrichment."""
     text: str
-    likes: int
+    likes: int = 0          # optional — not all platforms provide like counts
     platform: str           # reddit / hackernews / youtube
 
 

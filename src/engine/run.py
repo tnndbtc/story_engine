@@ -372,11 +372,18 @@ def main():
             logger.error(f"{fmt} generation failed: {e}")
             results[fmt] = None
 
-    # Mark story set complete/failed
+    # Mark story set complete / partial / failed
     if set_id:
-        status = 'complete' if any(v is not None for v in results.values()) else 'failed'
+        succeeded = sum(1 for v in results.values() if v is not None)
+        total = len(results)
+        if succeeded == total:
+            status = 'complete'
+        elif succeeded > 0:
+            status = 'partial'
+        else:
+            status = 'failed'
         complete_story_set(set_id, status)
-        logger.info(f"Story set #{set_id} marked as '{status}'")
+        logger.info(f"Story set #{set_id} marked as '{status}' ({succeeded}/{total} formats succeeded)")
 
     # Summary
     logger.info("=== Generation complete ===")

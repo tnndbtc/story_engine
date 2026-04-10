@@ -257,7 +257,7 @@ def get_stories_by_set(set_id: int) -> list[dict]:
     """Get all stories in a specific story set."""
     conn = get_connection()
     rows = conn.execute(
-        "SELECT * FROM stories WHERE batch_id = ? ORDER BY id",
+        "SELECT * FROM stories WHERE batch_id = ? AND status = 'ready' ORDER BY id",
         (set_id,)
     ).fetchall()
     conn.close()

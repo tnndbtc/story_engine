@@ -52,6 +52,11 @@ FORMAT_REGISTRY: dict[int, tuple[str, str, int]] = {
     46: ('single',      'format_46.txt', 1),    # 历史对照
 }
 
+# Formats that require real-world news events as source material.
+# Entertainment items (anime trailers, game PVs, music videos) are filtered
+# out during selection for these formats. See selector._is_entertainment().
+FORMAT_REQUIRES_NEWS: set[int] = {11, 16, 17, 18}
+
 # Human-readable names for display
 FORMAT_NAMES: dict[int, str] = {
     10: '反直觉', 11: '角色代入', 12: '时间线复盘', 13: '谁赢谁输',

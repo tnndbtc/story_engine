@@ -267,7 +267,7 @@ def get_known_surface_keys() -> set[str]:
     """
     conn = get_crawler_connection()
     rows = conn.execute(
-        "SELECT DISTINCT key FROM crawler_admin_trendsurface WHERE is_enabled = 1"
+        "SELECT DISTINCT key FROM crawler_admin_trendsurface WHERE enabled = 1"
     ).fetchall()
     conn.close()
     return {row['key'] for row in rows}

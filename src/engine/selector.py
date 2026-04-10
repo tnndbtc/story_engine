@@ -19,6 +19,7 @@ All selectors apply _filter_already_used() to avoid reusing items across story s
 import json
 import logging
 import os
+import re
 from collections import defaultdict
 from pathlib import Path
 
@@ -83,6 +84,16 @@ DEFAULT_CATEGORY_SOURCES: dict[str, dict] = {
 # One-time startup flag — surface key validation runs once per process lifetime
 _surface_key_check_done = False
 
+# ---------------------------------------------------------------------------
+# Entertainment content filter — for formats that require real news events
+# ---------------------------------------------------------------------------
+_ENTERTAINMENT_PLATFORMS = frozenset({'bilibili', 'youtube', 'nicovideo'})
+_ENTERTAINMENT_PATTERN = re.compile(
+    r'动画|原创动画|概念PV|角色PV|角色短片|官方MV|主题曲|片头曲'
+    r'|[Oo]fficial\s*[Vv]ideo|[Oo]fficial\s*[Mm][Vv]|[Tt]railer|[Cc]oncept\s*[Pp][Vv]'
+    r'|\bPV\b|\bMV\b'
+)
+
 
 # ---------------------------------------------------------------------------
 # Config loading
@@ -145,7 +156,7 @@ def load_story_mix_config() -> dict:
                         f"surface_weight_overrides key '{key}' has no matching "
                         f"TrendSurface.key in DB — override will be ignored. "
                         f"Run: SELECT DISTINCT key FROM crawler_admin_trendsurface "
-                        f"WHERE is_enabled=1"
+                        f"WHERE enabled=1"
                     )
         except Exception as e:
             logger.warning(f"Could not verify surface_weight_overrides keys: {e}")
@@ -318,6 +329,19 @@ def _select_by_mix(total_needed: int, hours: int = 24) -> list[dict]:
                     break
 
     return selected[:total_needed]
+
+
+def _is_entertainment(item: dict) -> bool:
+    """Return True if item appears to be entertainment media rather than a news event.
+
+    Used to filter unsuitable items for formats that require real-world news events
+    (e.g., 角色代入 needs real people making choices, not anime game trailers).
+    Falls back to False for non-video platforms.
+    """
+    if item.get('platform') not in _ENTERTAINMENT_PLATFORMS:
+        return False
+    title = item.get('canonical_title') or item.get('title_original') or ''
+    return bool(_ENTERTAINMENT_PATTERN.search(title))
 
 
 def _filter_already_used(items: list[dict]) -> list[dict]:
@@ -578,9 +602,29 @@ def select_for_format(format_id: int, hours: int = 24) -> list[dict] | None:
     strategy, _, item_count = FORMAT_REGISTRY[format_id]
 
     if strategy == 'single':
-        items = get_top_items(limit=10, hours=hours)
-        items = _filter_already_used(items)
-        return [items[0]] if items else None
+        from engine.format_registry import FORMAT_REQUIRES_NEWS
+        requires_news = format_id in FORMAT_REQUIRES_NEWS
+        best_items = None
+        for window in [hours, 48, 72, 168]:
+            candidates = get_top_items(limit=50, hours=window)
+            candidates = _filter_already_used(candidates)
+            if not candidates:
+                continue
+            if requires_news:
+                news_only = [i for i in candidates if not _is_entertainment(i)]
+                if news_only:
+                    best_items = news_only
+                    break
+                # No news items in this window — keep as fallback, try wider
+                if best_items is None:
+                    best_items = candidates
+                logger.info(
+                    f"  format_{format_id}: top items are entertainment in {window}h window, expanding..."
+                )
+            else:
+                best_items = candidates
+                break
+        return [best_items[0]] if best_items else None
 
     elif strategy == 'mix':
         items = _select_by_mix(total_needed=item_count, hours=hours)

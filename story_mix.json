@@ -1,6 +1,6 @@
 {
   "_version": 2,
-  "_notes": "category_mix ratios must sum to 1.0. surface_weight_overrides keys must match TrendSurface.key values in Django admin DB — verify with: SELECT DISTINCT key FROM crawler_admin_trendsurface WHERE is_enabled=1",
+  "_notes": "category_mix ratios must sum to 1.0. surface_weight_overrides keys must match TrendSurface.key values in Django admin DB — verify with: SELECT DISTINCT key FROM crawler_admin_trendsurface WHERE enabled=1",
   "category_mix": {
     "tech":          0.20,
     "news":          0.15,

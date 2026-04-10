@@ -29,12 +29,16 @@ def _call_claude(prompt: str) -> str:
     Uses `claude -p` (pipe mode) which reads from stdin.
     No API key needed — uses the local Claude Code installation.
     """
-    # Append conciseness and formatting reminders
+    # Append conciseness, formatting, and JSON enforcement reminders
     prompt = prompt.rstrip() + (
         "\n\nIMPORTANT: Keep your TOTAL JSON response under 500 words. Be concise. Every bullet should be 1-2 sentences max."
         "\n\nCRITICAL JSON RULE: Inside JSON string values, NEVER use ASCII double quotes (\"). "
         "Use Chinese quotation marks \u300c\u300d or \u201c\u201d instead. "
         "ASCII double quotes inside strings will break the JSON parser."
+        "\n\nYOU MUST RETURN VALID JSON ONLY. Do not ask questions. Do not explain. "
+        "Do not add any text outside the JSON object. Your response must start with { "
+        "and end with }. If you cannot generate the story, return: "
+        "{\"hook\": \"\", \"bullets\": [], \"twist\": \"\"}"
     )
 
     try:
@@ -134,6 +138,27 @@ def _parse_json_response(text: str) -> dict:
         f"=== FULL RAW RESPONSE START ===\n{text}\n=== FULL RAW RESPONSE END ==="
     )
     raise ValueError(f"Could not parse JSON from Claude response (length={len(text)})")
+
+
+def _generate_script(prompt: str) -> dict:
+    """
+    Call Claude and parse the JSON response, with one retry on parse failure.
+
+    On first failure, appends a stricter JSON instruction and retries once.
+    This handles cases where Claude returns clarification text instead of JSON.
+    """
+    try:
+        raw = _call_claude(prompt)
+        return _parse_json_response(raw)
+    except ValueError:
+        logger.warning("JSON parse failed on first attempt — retrying with stricter instruction")
+        retry_prompt = prompt + (
+            "\n\nYour previous response could not be parsed as JSON. "
+            "Return ONLY a valid JSON object. Start your response with { and end with }. "
+            "No explanations, no questions, no text outside the JSON object."
+        )
+        raw = _call_claude(retry_prompt)
+        return _parse_json_response(raw)
 
 
 def _lang_instruction(lang: str) -> str:
@@ -678,8 +703,7 @@ def generate_by_format(
     logger.info(f"Generating {format_name} (format_{format_id}) from {len(items)} items...")
 
     try:
-        raw = _call_claude(prompt)
-        script = _parse_json_response(raw)
+        script = _generate_script(prompt)
 
         story_id = save_story(
             title=script.get('title', format_name),
