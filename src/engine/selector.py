@@ -215,11 +215,11 @@ def select_for_radar(hours: int = 24) -> list[dict]:
         logger.warning("No regional items found for radar")
         return []
 
-    # Enforce region diversity — max 1 per region
+    # Enforce region diversity — max 1 per effective_region (content-based)
     selected = []
     seen_regions: set[str] = set()
     for item in candidates:
-        region = item.get('region_key', '')
+        region = item.get('effective_region') or item.get('region_key', '')
         if region in seen_regions:
             continue
         selected.append(item)
@@ -234,16 +234,22 @@ def select_for_regional(region: str, hours: int = 24) -> list[dict]:
     """
     Select top items from a specific region (Format 4 — regional perspectives).
 
-    Strategy: Top items by hotness from the given region, platform-diverse.
+    Strategy: Top items where content is ABOUT the given region (primary_region
+    or content_regions), with source-region fallback for unclassified items.
+    Platform-diverse selection.
     """
-    candidates = get_top_items(limit=200, hours=hours)
+    candidates = get_top_items(limit=500, hours=hours)
     candidates = _filter_already_used(candidates)
 
-    # Filter to target region and enforce platform diversity
+    # Filter to items where content is about the target region
     selected = []
     platform_counts: dict[str, int] = {}
     for item in candidates:
-        if item.get('region_key') != region:
+        # Match on effective_region (primary_region with source fallback)
+        # OR if region appears in content_regions multi-label list
+        effective = item.get('effective_region') or item.get('region_key', '')
+        content_regions = item.get('content_regions') or []
+        if effective != region and region not in content_regions:
             continue
         platform = item['platform']
         if platform_counts.get(platform, 0) >= 2:
@@ -409,7 +415,10 @@ def get_top_regions_with_data(hours: int = 24, min_items: int = 3) -> list[str]:
 
     region_counts: dict[str, int] = {}
     for item in candidates:
-        region = item.get('region_key', '')
+        # Use effective_region (content-based with fallback) for accurate counts
+        region = item.get('effective_region') or item.get('region_key', '')
+        if region == 'us':
+            continue  # still exclude US
         region_counts[region] = region_counts.get(region, 0) + 1
 
     # Return regions with enough items, sorted by count

@@ -92,10 +92,13 @@ def get_top_items(
             ti.collected_at,
             ti.lang_group,
             ti.original_locale,
+            ti.content_regions,
+            ti.primary_region,
             ts.platform,
             ts.key as surface_key,
             r.key as region_key,
-            r.name as region_name
+            r.name as region_name,
+            COALESCE(ti.primary_region, r.key) as effective_region
         FROM crawler_admin_trenditem ti
         JOIN crawler_admin_trendsurface ts ON ti.surface_id = ts.id
         JOIN crawler_admin_region r ON ti.region_id = r.id
@@ -169,10 +172,13 @@ def get_early_signals(limit: int = 5, hours: int = 24) -> list[dict]:
             ti.collected_at,
             ti.lang_group,
             ti.original_locale,
+            ti.content_regions,
+            ti.primary_region,
             ts.platform,
             ts.key as surface_key,
             r.key as region_key,
-            r.name as region_name
+            r.name as region_name,
+            COALESCE(ti.primary_region, r.key) as effective_region
         FROM crawler_admin_trenditem ti
         JOIN crawler_admin_trendsurface ts ON ti.surface_id = ts.id
         JOIN crawler_admin_region r ON ti.region_id = r.id
@@ -198,6 +204,8 @@ def get_regional_items(
 ) -> list[dict]:
     """
     Get top items from non-US regions for "stories US media ignores" (Format 3).
+
+    Uses content-based primary_region if available, falls back to source region.
     """
     conn = get_crawler_connection()
 
@@ -216,16 +224,19 @@ def get_regional_items(
             ti.collected_at,
             ti.lang_group,
             ti.original_locale,
+            ti.content_regions,
+            ti.primary_region,
             ts.platform,
             ts.key as surface_key,
             r.key as region_key,
-            r.name as region_name
+            r.name as region_name,
+            COALESCE(ti.primary_region, r.key) as effective_region
         FROM crawler_admin_trenditem ti
         JOIN crawler_admin_trendsurface ts ON ti.surface_id = ts.id
         JOIN crawler_admin_region r ON ti.region_id = r.id
         WHERE ti.hotness IS NOT NULL
           AND ti.collected_at >= datetime('now', '-' || ? || ' hours')
-          AND r.key != ?
+          AND COALESCE(ti.primary_region, r.key) != ?
         ORDER BY ti.hotness DESC
         LIMIT ?
         """,
@@ -261,4 +272,11 @@ def _item_to_dict(row: sqlite3.Row) -> dict:
             d['raw_payload'] = json.loads(d['raw_payload'])
         except (json.JSONDecodeError, TypeError):
             d['raw_payload'] = {}
+    if d.get('content_regions'):
+        try:
+            d['content_regions'] = json.loads(d['content_regions'])
+        except (json.JSONDecodeError, TypeError):
+            d['content_regions'] = []
+    else:
+        d['content_regions'] = []
     return d

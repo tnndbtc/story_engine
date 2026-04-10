@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 PROMPTS_DIR = Path(__file__).resolve().parent.parent / 'prompts'
 CLAUDE_TIMEOUT = 120  # seconds
-CLAUDE_MODEL = os.environ.get('CLAUDE_MODEL', 'opus')  # opus / sonnet / haiku
+CLAUDE_MODEL = os.environ.get('CLAUDE_MODEL', 'sonnet')  # opus / sonnet / haiku
 
 
 def _call_claude(prompt: str) -> str:
