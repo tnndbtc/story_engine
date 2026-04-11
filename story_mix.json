@@ -1,6 +1,6 @@
 {
-  "_version": 2,
-  "_notes": "category_mix ratios must sum to 1.0. surface_weight_overrides keys must match TrendSurface.key values in Django admin DB — verify with: SELECT DISTINCT key FROM crawler_admin_trendsurface WHERE enabled=1",
+  "_version": 3,
+  "_notes": "category_mix ratios must sum to 1.0. surface_weight_overrides keys must match TrendSurface.key values in Django admin DB — verify with: SELECT DISTINCT key FROM crawler_admin_trendsurface WHERE enabled=1. platform_default_weights is a fallback tier applied to any surface whose key is not in surface_weight_overrides.",
   "category_mix": {
     "tech":          0.20,
     "news":          0.15,
@@ -40,7 +40,8 @@
     "regional": {
       "buckets": null,
       "platforms": null,
-      "exclude_region": "us"
+      "exclude_region": "us",
+      "exclude_platforms": ["bilibili", "nicovideo"]
     },
     "entertainment": {
       "buckets": ["category_entertainment"],
@@ -60,6 +61,7 @@
       "prefer_topics": ["business"]
     }
   },
+  "comment_platforms": ["hackernews", "youtube", "reddit"],
   "platform_caps": {
     "bilibili": 0.15,
     "reddit":   0.15,
@@ -67,6 +69,13 @@
     "weibo":    0.05,
     "baidu":    0.05,
     "twitter":  0.15
+  },
+  "platform_default_weights": {
+    "reddit":   0.28,
+    "bilibili": 0.60,
+    "youtube":  0.50,
+    "weibo":    0.30,
+    "baidu":    0.30
   },
   "topic_boosts": {
     "politics":      1.5,
@@ -78,18 +87,50 @@
     "social":        0.7
   },
   "surface_weight_overrides": {
-    "bilibili_trending":       0.60,
-    "baidu_hot":               0.30,
-    "weibo_hot":               0.30,
-    "reddit_hot_r_worldnews":  1.20,
-    "reddit_hot_r_technology": 1.20,
-    "reddit_hot_r_finance":    1.20,
-    "bloomberg_rss":           1.40,
-    "reuters_rss":             1.40,
-    "ap_news_rss":             1.40,
-    "hackernews":              1.30,
-    "paperswithcode":          1.30,
-    "arxiv_ai_rss":            1.30
+    "bilibili_trending":    0.60,
+    "youtube_trending":     0.50,
+    "youtube_bbc":          0.61,
+    "weibo_hot":            0.30,
+    "baidu_hot":            0.30,
+    "reddit_hot":           0.25,
+    "reddit_news":          0.22,
+    "reddit_worldnews":     0.25,
+    "reddit_technology":    0.25,
+    "reddit_economics":     0.28,
+    "reddit_geopolitics":   0.28,
+    "reddit_europe":        0.28,
+    "reddit_australia":     0.30,
+    "reddit_canada":        0.30,
+    "reddit_unitedkingdom": 0.30,
+    "reddit_ukraine":       0.28,
+    "reddit_africa":        0.30,
+    "reddit_philippines":   0.30,
+    "reddit_malaysia":      0.31,
+    "reddit_sweden":        0.31,
+    "reddit_india":         0.31,
+    "reddit_brasil":        0.31,
+    "reddit_france":        0.31,
+    "reddit_de":            0.31,
+    "reddit_mexico":        0.31,
+    "reddit_argentina":     0.31,
+    "hackernews":           3.00,
+    "bloomberg_news":       2.50,
+    "reuters_news":         2.50,
+    "wenxuecity_news":      2.50,
+    "ft_news":              2.50,
+    "wsj_news":             2.50,
+    "economist_news":       2.50,
+    "cnbc_news":            2.00,
+    "arxiv_ai_rss":         2.00,
+    "lemonde_rss":          2.00,
+    "spiegel_rss":          2.00,
+    "elpais_rss":           2.00,
+    "scmp_rss":             2.00,
+    "theverge_rss":         2.00,
+    "arstechnica_rss":      2.00,
+    "techcrunch_rss":       2.00,
+    "aljazeera":            1.80,
+    "bbc":                  1.80
   },
   "min_slots_per_format": {
     "top5":      {"politics": 1, "finance": 1},

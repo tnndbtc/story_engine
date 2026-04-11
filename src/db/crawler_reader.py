@@ -205,16 +205,30 @@ def get_regional_items(
     exclude_region: str = 'us',
     limit: int = 10,
     hours: int = 24,
+    exclude_platforms: list[str] | None = None,
 ) -> list[dict]:
     """
     Get top items from non-US regions for "stories US media ignores" (Format 3).
 
     Uses content-based primary_region if available, falls back to source region.
+
+    Args:
+        exclude_platforms: Optional list of platform names to exclude (e.g.
+                           ["bilibili", "reddit"]).  Prevents high-volume
+                           platforms from dominating via raw hotness.
     """
     conn = get_crawler_connection()
 
+    platform_clause = ''
+    params: list = [hours, exclude_region]
+    if exclude_platforms:
+        placeholders = ','.join('?' * len(exclude_platforms))
+        platform_clause = f'AND ts.platform NOT IN ({placeholders})'
+        params.extend(exclude_platforms)
+    params.append(limit)
+
     rows = conn.execute(
-        """
+        f"""
         SELECT
             ti.id,
             ti.title_original,
@@ -243,10 +257,11 @@ def get_regional_items(
         WHERE ti.hotness IS NOT NULL
           AND ti.collected_at >= datetime('now', '-' || ? || ' hours')
           AND COALESCE(ti.primary_region, r.key) != ?
+          {platform_clause}
         ORDER BY ti.hotness DESC
         LIMIT ?
         """,
-        (hours, exclude_region, limit),
+        params,
     ).fetchall()
 
     conn.close()

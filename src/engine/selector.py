@@ -105,7 +105,8 @@ def load_story_mix_config() -> dict:
 
     Returns a dict with keys:
       category_mix, category_sources, platform_caps,
-      topic_boosts, surface_weight_overrides, min_slots_per_format.
+      topic_boosts, surface_weight_overrides, platform_default_weights,
+      min_slots_per_format.
 
     Falls back to defaults on missing file or parse error.
     On first call, validates surface_weight_overrides keys against DB and
@@ -119,6 +120,7 @@ def load_story_mix_config() -> dict:
         'platform_caps':            {},
         'topic_boosts':             {},
         'surface_weight_overrides': {},
+        'platform_default_weights': {},
         'min_slots_per_format':     {},
     }
 
@@ -138,6 +140,7 @@ def load_story_mix_config() -> dict:
         'platform_caps':            data.get('platform_caps', {}),
         'topic_boosts':             data.get('topic_boosts', {}),
         'surface_weight_overrides': data.get('surface_weight_overrides', {}),
+        'platform_default_weights': data.get('platform_default_weights', {}),
         'min_slots_per_format':     data.get('min_slots_per_format', {}),
     }
 
@@ -177,6 +180,7 @@ def _apply_topic_boost(
     items: list[dict],
     topic_boosts: dict[str, float],
     surface_weight_overrides: dict[str, float],
+    platform_default_weights: dict[str, float] | None = None,
 ) -> list[dict]:
     """
     Apply surface weight and topic boost multipliers to item hotness scores.
@@ -186,33 +190,51 @@ def _apply_topic_boost(
 
     - surface_weight_overrides: keyed by TrendSurface.key (surface_key field)
     - topic_boosts: keyed by topic label (e.g. "politics", "finance")
-    - Items without topic_tags (pre-Phase-2) get topic_mult=1.0 — safe no-op.
+    - platform_default_weights: fallback tier — applied when a surface key is
+      not in surface_weight_overrides but its platform has a default weight.
+      Prevents new surfaces on high-volume platforms (reddit, bilibili) from
+      defaulting to 1.0 until compute_weights.py adds them explicitly.
+    - Items without topic_tags get topic_mult=1.0 — safe no-op.
 
-    Phase 4 D2 merge: surface_weight_overrides in story_mix.json takes
-    precedence. If no override is set for a surface key, the DB field
-    item['selection_weight'] (TrendSurface.selection_weight) is used as the
-    base multiplier. This lets operators tune weights via admin UI without
-    touching story_mix.json.
+    Surface weight lookup priority (three-tier):
+      1. surface_weight_overrides[surface_key]  — explicit per-surface
+      2. platform_default_weights[platform]     — platform-level fallback
+      3. item['selection_weight']               — DB admin field (default 1.0)
+
+    topic_mult is the PRODUCT of all matching tag boosts (not the max), so an
+    item tagged ["politics", "finance"] gets 1.5 × 1.4 = 2.1× before clamping.
 
     Sorted by effective_hotness descending.
     Original item["hotness"] is preserved — UsedItem.hotness_at_use must use
     item["hotness"] (original), never item["effective_hotness"].
     """
-    if not topic_boosts and not surface_weight_overrides:
+    if platform_default_weights is None:
+        platform_default_weights = {}
+
+    if not topic_boosts and not surface_weight_overrides and not platform_default_weights:
         return items
 
     for item in items:
         tags = item.get('topic_tags') or []
-        topic_mult = max(
-            (topic_boosts.get(tag, 1.0) for tag in tags),
-            default=1.0,
-        )
-        # D2 merge: json override → DB selection_weight → 1.0 default
+        # Multiply boosts across all matching tags (not max) so multi-topic
+        # items are rewarded proportionally.
+        topic_mult = 1.0
+        for tag in tags:
+            topic_mult *= topic_boosts.get(tag, 1.0)
+
+        # Three-tier surface weight lookup:
+        # 1. explicit per-surface override (story_mix.json)
+        # 2. platform-level fallback (platform_default_weights in story_mix.json)
+        # 3. DB admin field (TrendSurface.selection_weight, default 1.0)
         surface_key = item.get('surface_key', '')
+        platform = item.get('platform', '')
         if surface_key in surface_weight_overrides:
             surface_mult = surface_weight_overrides[surface_key]
+        elif platform in platform_default_weights:
+            surface_mult = platform_default_weights[platform]
         else:
             surface_mult = item.get('selection_weight', 1.0)
+
         # Bound the combined multiplier to prevent runaway stacking
         effective_multiplier = max(0.3, min(surface_mult * topic_mult, 3.0))
         item['effective_hotness'] = item['hotness'] * effective_multiplier
@@ -236,10 +258,26 @@ def _enforce_platform_caps(
     used only to backfill remaining slots after all caps are respected.
     Ensures no single high-volume platform dominates the final selection.
 
-    Example: bilibili cap=0.15, total_slots=5 → max 1 bilibili item.
+    Hard-excluded platforms (cap rounds to 0 for this total_slots value) are
+    never used for backfill — they are excluded completely regardless of how
+    many slots remain unfilled. This prevents platforms with cap=0.15 from
+    sneaking back in when total_slots is small (e.g. 5 slots: 0.15×5=0.75→0).
+
+    Min-supply guard: if hard exclusions leave fewer than min(3, total_slots)
+    items, caps are relaxed and a warning is logged so the system stays
+    functional even with very sparse data.
+
+    Example: bilibili cap=0.15, total_slots=5 → int(0.75)=0 → hard excluded.
+    Example: reddit cap=0.15, total_slots=10 → int(1.5)=1 → max 1 item.
     """
     if not caps:
         return items
+
+    # Pre-compute hard-excluded platforms: those whose cap rounds to 0 slots.
+    hard_excluded: set[str] = {
+        platform for platform, frac in caps.items()
+        if int(total_slots * frac) == 0
+    }
 
     platform_counts: dict[str, int] = defaultdict(int)
     result = []
@@ -249,18 +287,34 @@ def _enforce_platform_caps(
         platform = item.get('platform', '')
         cap_frac = caps.get(platform)
         if cap_frac is not None:
-            max_allowed = max(1, int(total_slots * cap_frac))
+            max_allowed = int(total_slots * cap_frac)
             if platform_counts[platform] >= max_allowed:
                 overflow.append(item)
                 continue
         platform_counts[platform] += 1
         result.append(item)
 
-    # Backfill with overflow items if slots remain
+    # Backfill: only non-hard-excluded platforms may fill remaining slots.
     for item in overflow:
         if len(result) >= total_slots:
             break
-        result.append(item)
+        if item.get('platform', '') not in hard_excluded:
+            result.append(item)
+
+    # Min-supply guard: if strict caps produce too few items, relax and warn.
+    min_supply = min(3, total_slots)
+    if len(result) < min_supply:
+        logger.warning(
+            f"_enforce_platform_caps: only {len(result)} items after caps "
+            f"(hard_excluded={hard_excluded}), need {min_supply} — relaxing caps"
+        )
+        seen_urls = {i['url'] for i in result}
+        for item in overflow:
+            if len(result) >= min_supply:
+                break
+            if item['url'] not in seen_urls:
+                result.append(item)
+                seen_urls.add(item['url'])
 
     return result[:total_slots]
 
@@ -331,6 +385,7 @@ def _select_by_mix(
     platform_caps = config.get('platform_caps', {})
     topic_boosts = config.get('topic_boosts', {})
     surface_weight_overrides = config.get('surface_weight_overrides', {})
+    platform_default_weights = config.get('platform_default_weights', {})
     min_slots_per_format = config.get('min_slots_per_format', {})
 
     # --- Step 1: Fetch and score candidates per category ---
@@ -345,18 +400,38 @@ def _select_by_mix(
         buckets = src.get('buckets')
         platforms = src.get('platforms')
         exclude_region = src.get('exclude_region')
+        exclude_platforms = src.get('exclude_platforms')
+        prefer_topics = src.get('prefer_topics')
 
         if exclude_region:
             items = get_regional_items(
-                exclude_region=exclude_region, limit=total_needed * 5, hours=hours
+                exclude_region=exclude_region, limit=total_needed * 5, hours=hours,
+                exclude_platforms=exclude_platforms,
             )
         else:
             items = get_top_items(
-                limit=total_needed * 5, hours=hours, buckets=buckets, platforms=platforms
+                limit=total_needed * 5, hours=hours, buckets=buckets, platforms=platforms,
+                exclude_platforms=exclude_platforms,
             )
 
         items = _filter_already_used(items)
-        items = _apply_topic_boost(items, topic_boosts, surface_weight_overrides)
+        items = _apply_topic_boost(
+            items, topic_boosts, surface_weight_overrides, platform_default_weights
+        )
+
+        # BUG 3 fix: promote items whose topic_tags intersect prefer_topics to the
+        # front of the candidate list (within-category priority before proportional fill).
+        # Relative hotness order is preserved within each partition.
+        if prefer_topics:
+            prefer_set = set(prefer_topics)
+            items = sorted(
+                items,
+                key=lambda x: (
+                    0 if prefer_set.intersection(x.get('topic_tags') or []) else 1,
+                    -x.get('effective_hotness', x.get('hotness', 0)),
+                ),
+            )
+
         candidates_by_category[category] = items
 
     # --- Step 2: Guarantee min_slots for this format (Phase 3) ---
@@ -399,7 +474,9 @@ def _select_by_mix(
     if len(selected) < total_needed:
         fallback = get_top_items(limit=50, hours=hours)
         fallback = _filter_already_used(fallback)
-        fallback = _apply_topic_boost(fallback, topic_boosts, surface_weight_overrides)
+        fallback = _apply_topic_boost(
+            fallback, topic_boosts, surface_weight_overrides, platform_default_weights
+        )
         seen_urls_current = {item['url'] for item in selected}
         for item in fallback:
             if item['url'] not in seen_urls_current:
@@ -407,6 +484,11 @@ def _select_by_mix(
                 seen_urls_current.add(item['url'])
                 if len(selected) >= total_needed:
                     break
+
+        # BUG 2 fix: re-enforce platform caps after fallback additions.
+        # Fallback items are drawn from an unfiltered hotness pool; caps must
+        # run again so reddit/bilibili cannot fill remaining slots unchecked.
+        selected = _enforce_platform_caps(selected, platform_caps, total_needed)
 
     return selected[:total_needed]
 
@@ -467,12 +549,30 @@ def select_for_explainer(lang: str = 'en', hours: int = 24) -> dict | None:
     """
     Select the top story for a 60-second explainer (Format 1).
 
-    Strategy: Highest hotness in the last 24 hours, any bucket.
+    Strategy: Highest effective hotness (topic boosts + surface weights applied)
+    in the last 24 hours, with platform caps respected so a single high-volume
+    platform cannot monopolise the slot.
     """
-    items = get_top_items(limit=10, hours=hours)
+    config = load_story_mix_config()
+    topic_boosts = config.get('topic_boosts', {})
+    surface_weight_overrides = config.get('surface_weight_overrides', {})
+    platform_default_weights = config.get('platform_default_weights', {})
+    platform_caps = config.get('platform_caps', {})
+
+    items = get_top_items(limit=20, hours=hours)
     items = _filter_already_used(items)
     if not items:
         logger.warning("No items found for explainer selection")
+        return None
+
+    items = _apply_topic_boost(
+        items, topic_boosts, surface_weight_overrides, platform_default_weights
+    )
+    # BUG 6 fix: enforce caps before picking items[0] so a capped platform
+    # (bilibili, reddit) cannot win purely by raw hotness volume.
+    items = _enforce_platform_caps(items, platform_caps, total_slots=1)
+    if not items:
+        logger.warning("No items remain for explainer after platform cap enforcement")
         return None
     return items[0]
 
@@ -631,6 +731,7 @@ def select_for_niche(niche: str = 'tech', hours: int = 24) -> list[dict]:
     category_sources = config['category_sources']
     topic_boosts = config.get('topic_boosts', {})
     surface_weight_overrides = config.get('surface_weight_overrides', {})
+    platform_default_weights = config.get('platform_default_weights', {})
 
     src = category_sources.get(niche, category_sources.get('tech', {}))
     buckets = src.get('buckets')
@@ -638,7 +739,9 @@ def select_for_niche(niche: str = 'tech', hours: int = 24) -> list[dict]:
 
     items = get_top_items(limit=100, hours=hours, buckets=buckets, platforms=platforms)
     items = _filter_already_used(items)
-    items = _apply_topic_boost(items, topic_boosts, surface_weight_overrides)
+    items = _apply_topic_boost(
+        items, topic_boosts, surface_weight_overrides, platform_default_weights
+    )
 
     # Platform diversity — max 2 per platform
     selected = []
@@ -656,7 +759,9 @@ def select_for_niche(niche: str = 'tech', hours: int = 24) -> list[dict]:
         logger.info(f"Only {len(selected)} items for niche '{niche}', expanding search")
         all_items = get_top_items(limit=200, hours=hours)
         all_items = _filter_already_used(all_items)
-        all_items = _apply_topic_boost(all_items, topic_boosts, surface_weight_overrides)
+        all_items = _apply_topic_boost(
+            all_items, topic_boosts, surface_weight_overrides, platform_default_weights
+        )
         seen_urls = {s['url'] for s in selected}
         for item in all_items:
             if item['url'] not in seen_urls:
@@ -711,12 +816,28 @@ def select_for_format(format_id: int, hours: int = 24) -> list[dict] | None:
         return items if items else None
 
     elif strategy == 'comment':
-        # Prefer platforms with comments (reddit, hackernews, youtube)
-        comment_platforms = ['reddit', 'hackernews', 'youtube']
+        # BUG 5 fix: comment_platforms moved to story_mix.json (configurable).
+        # Topic boosts and platform caps are now applied before selection so
+        # reddit cannot win every slot purely by raw engagement volume.
+        comment_config = load_story_mix_config()
+        comment_platforms = comment_config.get(
+            'comment_platforms', ['hackernews', 'youtube', 'reddit']
+        )
+        topic_boosts = comment_config.get('topic_boosts', {})
+        surface_weight_overrides = comment_config.get('surface_weight_overrides', {})
+        platform_default_weights = comment_config.get('platform_default_weights', {})
+        platform_caps = comment_config.get('platform_caps', {})
+
         items = get_top_items(limit=item_count * 5, hours=hours, platforms=comment_platforms)
         items = _filter_already_used(items)
         if not items:
             items = _select_by_mix(total_needed=item_count, hours=hours)
+            return items[:item_count] if items else None
+
+        items = _apply_topic_boost(
+            items, topic_boosts, surface_weight_overrides, platform_default_weights
+        )
+        items = _enforce_platform_caps(items, platform_caps, total_slots=item_count)
         return items[:item_count] if items else None
 
     elif strategy == 'topic_match':
