@@ -188,6 +188,12 @@ def _apply_topic_boost(
     - topic_boosts: keyed by topic label (e.g. "politics", "finance")
     - Items without topic_tags (pre-Phase-2) get topic_mult=1.0 — safe no-op.
 
+    Phase 4 D2 merge: surface_weight_overrides in story_mix.json takes
+    precedence. If no override is set for a surface key, the DB field
+    item['selection_weight'] (TrendSurface.selection_weight) is used as the
+    base multiplier. This lets operators tune weights via admin UI without
+    touching story_mix.json.
+
     Sorted by effective_hotness descending.
     Original item["hotness"] is preserved — UsedItem.hotness_at_use must use
     item["hotness"] (original), never item["effective_hotness"].
@@ -201,7 +207,12 @@ def _apply_topic_boost(
             (topic_boosts.get(tag, 1.0) for tag in tags),
             default=1.0,
         )
-        surface_mult = surface_weight_overrides.get(item.get('surface_key', ''), 1.0)
+        # D2 merge: json override → DB selection_weight → 1.0 default
+        surface_key = item.get('surface_key', '')
+        if surface_key in surface_weight_overrides:
+            surface_mult = surface_weight_overrides[surface_key]
+        else:
+            surface_mult = item.get('selection_weight', 1.0)
         # Bound the combined multiplier to prevent runaway stacking
         effective_multiplier = max(0.3, min(surface_mult * topic_mult, 3.0))
         item['effective_hotness'] = item['hotness'] * effective_multiplier
@@ -254,7 +265,49 @@ def _enforce_platform_caps(
     return result[:total_slots]
 
 
-def _select_by_mix(total_needed: int, hours: int = 24) -> list[dict]:
+def _fill_min_slots(
+    candidates_by_category: dict[str, list[dict]],
+    min_slots: dict[str, int],
+    seen_urls: set[str],
+) -> list[dict]:
+    """
+    Guarantee at least N items from each required category (Phase 3).
+
+    Pulls items from candidates_by_category in hotness order; skips any
+    URL already in seen_urls (dedup). Adds guaranteed items to seen_urls
+    so the caller's proportional fill does not double-count them.
+
+    Logs a warning if a category pool is too small to satisfy its quota.
+    """
+    guaranteed = []
+    got: dict[str, int] = {}
+
+    for category, n_needed in min_slots.items():
+        pool = candidates_by_category.get(category, [])
+        added = 0
+        for item in pool:
+            if item['url'] not in seen_urls and added < n_needed:
+                guaranteed.append(item)
+                seen_urls.add(item['url'])
+                added += 1
+        got[category] = added
+
+    for category, n_needed in min_slots.items():
+        if got.get(category, 0) < n_needed:
+            logger.warning(
+                f"min_slots not fully satisfied: '{category}' "
+                f"wanted {n_needed}, got {got.get(category, 0)} "
+                f"— sparse data or all items already used"
+            )
+
+    return guaranteed
+
+
+def _select_by_mix(
+    total_needed: int,
+    hours: int = 24,
+    format_name: str | None = None,
+) -> list[dict]:
     """
     Select items across categories according to story_mix.json ratios.
 
@@ -262,10 +315,15 @@ def _select_by_mix(total_needed: int, hours: int = 24) -> list[dict]:
     category_sources — no longer hardcoded. Surface weights and topic boosts
     are applied after fetching to re-rank candidates within each category.
 
-    Constraint priority order:
-      1. platform_caps (hard ceiling — applied after all categories assembled)
-      2. category_mix  (soft target — proportional slot allocation per category)
-    min_slots (guaranteed category slots) will be added in Phase 3.
+    Constraint priority order (Phase 3):
+      1. min_slots (guaranteed category slots — inserted first)
+      2. platform_caps (hard ceiling — applied after all categories assembled)
+      3. category_mix  (soft target — proportional slot allocation per category)
+
+    Args:
+        format_name: Format key for looking up min_slots_per_format in story_mix.json
+                     (e.g. 'top5', 'two_takes', 'pattern', 'deep_dive').
+                     Pass None for formats with no min_slot requirements.
     """
     config = load_story_mix_config()
     mix = config['category_mix']
@@ -273,18 +331,15 @@ def _select_by_mix(total_needed: int, hours: int = 24) -> list[dict]:
     platform_caps = config.get('platform_caps', {})
     topic_boosts = config.get('topic_boosts', {})
     surface_weight_overrides = config.get('surface_weight_overrides', {})
+    min_slots_per_format = config.get('min_slots_per_format', {})
 
-    selected = []
-    seen_urls: set[str] = set()
-
-    for category, ratio in mix.items():
-        n = round(total_needed * ratio)
-        if n == 0:
-            continue
-
+    # --- Step 1: Fetch and score candidates per category ---
+    candidates_by_category: dict[str, list[dict]] = {}
+    for category in mix:
         src = category_sources.get(category)
         if not src:
             logger.warning(f"No category_sources entry for '{category}', skipping")
+            candidates_by_category[category] = []
             continue
 
         buckets = src.get('buckets')
@@ -293,18 +348,43 @@ def _select_by_mix(total_needed: int, hours: int = 24) -> list[dict]:
 
         if exclude_region:
             items = get_regional_items(
-                exclude_region=exclude_region, limit=n * 5, hours=hours
+                exclude_region=exclude_region, limit=total_needed * 5, hours=hours
             )
         else:
             items = get_top_items(
-                limit=n * 5, hours=hours, buckets=buckets, platforms=platforms
+                limit=total_needed * 5, hours=hours, buckets=buckets, platforms=platforms
             )
 
         items = _filter_already_used(items)
         items = _apply_topic_boost(items, topic_boosts, surface_weight_overrides)
+        candidates_by_category[category] = items
 
+    # --- Step 2: Guarantee min_slots for this format (Phase 3) ---
+    min_slots: dict[str, int] = (
+        min_slots_per_format.get(format_name, {}) if format_name else {}
+    )
+    seen_urls: set[str] = set()
+    selected: list[dict] = []
+
+    if min_slots:
+        guaranteed = _fill_min_slots(candidates_by_category, min_slots, seen_urls)
+        selected.extend(guaranteed)
+        logger.info(
+            f"min_slots for '{format_name}': "
+            f"guaranteed {len(guaranteed)} items from {list(min_slots.keys())}"
+        )
+
+    # --- Step 3: Proportional fill for remaining slots ---
+    for category, ratio in mix.items():
+        if len(selected) >= total_needed:
+            break
+        n = round(total_needed * ratio)
+        if n == 0:
+            continue
         added = 0
-        for item in items:
+        for item in candidates_by_category.get(category, []):
+            if len(selected) >= total_needed:
+                break
             if item['url'] not in seen_urls:
                 selected.append(item)
                 seen_urls.add(item['url'])
@@ -312,10 +392,10 @@ def _select_by_mix(total_needed: int, hours: int = 24) -> list[dict]:
                 if added >= n:
                     break
 
-    # Apply platform caps across the full assembled list
+    # --- Step 4: Apply platform caps across the full assembled list ---
     selected = _enforce_platform_caps(selected, platform_caps, total_needed)
 
-    # Fallback: fill remaining slots with top items by hotness
+    # --- Step 5: Fallback — fill remaining slots with top items by hotness ---
     if len(selected) < total_needed:
         fallback = get_top_items(limit=50, hours=hours)
         fallback = _filter_already_used(fallback)
@@ -405,7 +485,7 @@ def select_for_top5(lang: str = 'en', hours: int = 24) -> list[dict]:
     Falls back to wider time windows if not enough items.
     """
     for window in [hours, 48, 72]:
-        items = _select_by_mix(total_needed=5, hours=window)
+        items = _select_by_mix(total_needed=5, hours=window, format_name='top5')
         if len(items) >= 5:
             return items[:5]
         logger.info(f"Only {len(items)} mix items in {window}h window, expanding...")
@@ -484,7 +564,7 @@ def select_for_two_takes(hours: int = 24) -> list[dict]:
     Uses category mix to get diverse items, then the LLM identifies
     framing differences.
     """
-    items = _select_by_mix(total_needed=8, hours=hours)
+    items = _select_by_mix(total_needed=8, hours=hours, format_name='two_takes')
     if not items:
         logger.warning("No items found for two_takes")
     return items
@@ -496,7 +576,7 @@ def select_for_pattern(hours: int = 72) -> list[dict]:
 
     Uses category mix for diverse topics, then verifies >=3 regions present.
     """
-    items = _select_by_mix(total_needed=12, hours=hours)
+    items = _select_by_mix(total_needed=12, hours=hours, format_name='pattern')
 
     # Deterministic gate: need items from >=3 regions
     regions = set(i.get('region_key', '') for i in items)
@@ -532,7 +612,7 @@ def select_for_deep_dive(topic: str = 'tech', hours: int = 168) -> list[dict]:
 
     Uses category mix for diverse content over 7-day window.
     """
-    items = _select_by_mix(total_needed=15, hours=hours)
+    items = _select_by_mix(total_needed=15, hours=hours, format_name='deep_dive')
 
     if len(items) < 5:
         logger.warning(f"Only {len(items)} items for deep_dive, need at least 5")

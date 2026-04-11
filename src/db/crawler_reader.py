@@ -94,8 +94,10 @@ def get_top_items(
             ti.original_locale,
             ti.content_regions,
             ti.primary_region,
+            ti.topic_tags,
             ts.platform,
             ts.key as surface_key,
+            ts.selection_weight,
             r.key as region_key,
             r.name as region_name,
             COALESCE(ti.primary_region, r.key) as effective_region
@@ -174,8 +176,10 @@ def get_early_signals(limit: int = 5, hours: int = 24) -> list[dict]:
             ti.original_locale,
             ti.content_regions,
             ti.primary_region,
+            ti.topic_tags,
             ts.platform,
             ts.key as surface_key,
+            ts.selection_weight,
             r.key as region_key,
             r.name as region_name,
             COALESCE(ti.primary_region, r.key) as effective_region
@@ -226,8 +230,10 @@ def get_regional_items(
             ti.original_locale,
             ti.content_regions,
             ti.primary_region,
+            ti.topic_tags,
             ts.platform,
             ts.key as surface_key,
+            ts.selection_weight,
             r.key as region_key,
             r.name as region_name,
             COALESCE(ti.primary_region, r.key) as effective_region
@@ -294,4 +300,15 @@ def _item_to_dict(row: sqlite3.Row) -> dict:
             d['content_regions'] = []
     else:
         d['content_regions'] = []
+    # Phase 4: parse topic_tags JSON array ([] if absent or malformed)
+    if d.get('topic_tags'):
+        try:
+            d['topic_tags'] = json.loads(d['topic_tags'])
+        except (json.JSONDecodeError, TypeError):
+            d['topic_tags'] = []
+    else:
+        d['topic_tags'] = []
+    # Phase 4: selection_weight is a float column — default to 1.0 if missing
+    if d.get('selection_weight') is None:
+        d['selection_weight'] = 1.0
     return d
