@@ -118,6 +118,12 @@ def init_db():
     except sqlite3.OperationalError:
         pass  # column already exists
 
+    # Migration: add platform column to used_items if not present
+    try:
+        conn.execute("ALTER TABLE used_items ADD COLUMN platform TEXT")
+    except sqlite3.OperationalError:
+        pass  # column already exists
+
     # Migration: convert text timestamps to UNIX integers
     _migrate_timestamps(conn)
 
@@ -206,10 +212,10 @@ def record_used_items(story_set_id: int, story_id: int, format: str,
         conn.execute(
             """INSERT INTO used_items
                (crawler_item_id, crawler_url, hotness_at_use,
-                story_set_id, story_id, format, used_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                story_set_id, story_id, format, used_at, platform)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (item['id'], item['url'], item['hotness'],
-             story_set_id, story_id, format, now)
+             story_set_id, story_id, format, now, item.get('platform'))
         )
     conn.commit()
     conn.close()
@@ -228,6 +234,25 @@ def get_used_urls_with_hotness() -> dict[str, float]:
     ).fetchall()
     conn.close()
     return {row['crawler_url']: row['max_hotness'] for row in rows}
+
+
+def get_platform_counts_for_set(story_set_id: int) -> dict[str, int]:
+    """Return {platform: count} of items already used in the given story set.
+
+    Used by select_for_format (single strategy) to enforce cross-format
+    platform caps within a single generation run.
+    Requires used_items.platform column (added via migration in init_db).
+    """
+    conn = get_connection()
+    rows = conn.execute(
+        """SELECT platform, COUNT(*) as cnt
+           FROM used_items
+           WHERE story_set_id = ? AND platform IS NOT NULL
+           GROUP BY platform""",
+        (story_set_id,)
+    ).fetchall()
+    conn.close()
+    return {row['platform']: row['cnt'] for row in rows}
 
 
 def get_story_sets(limit: int = 20) -> list[dict]:

@@ -35,17 +35,32 @@ def get_top_items(
     lang_group: str | None = None,
     exclude_platforms: list[str] | None = None,
     platforms: list[str] | None = None,
+    per_platform_k: int = 10,
 ) -> list[dict]:
     """
     Get the top items by hotness from the last N hours.
 
+    Uses a per-platform Top-K window query to guarantee that long-tail
+    platforms (hackernews, reddit, bbc, aljazeera …) survive into the
+    candidate pool before any cap filtering runs.  Without this, a global
+    ORDER BY hotness DESC LIMIT N hands the entire pool to bilibili/youtube
+    because their hotness scores are structurally higher.
+
+    Architecture:
+        ① per-platform Top-K  →  ② ORDER BY hotness DESC  →  ③ LIMIT
+
     Args:
-        limit: Max items to return
-        hours: How far back to look
-        buckets: Filter to specific buckets (e.g., ['hot_now', 'news'])
-        lang_group: Filter to specific language group (e.g., 'en')
-        exclude_platforms: Platforms to exclude
-        platforms: Only include these platforms (e.g., ['hackernews', 'devto'])
+        limit: Max items to return after per-platform sampling.
+        hours: How far back to look.
+        buckets: Filter to specific buckets (e.g., ['hot_now', 'news']).
+        lang_group: Filter to specific language group (e.g., 'en').
+        exclude_platforms: Platforms to exclude.
+        platforms: Only include these platforms (e.g., ['hackernews', 'devto']).
+        per_platform_k: How many top items to keep per platform before the
+            final global ranking.  Formula from bugs.txt:
+            K = max(5, ceil(total_needed × 3 / active_platform_count)).
+            Default 10 is a safe conservative value; callers that know
+            total_needed can pass a computed K explicitly.
     """
     conn = get_crawler_connection()
 
@@ -53,7 +68,7 @@ def get_top_items(
         "ti.hotness IS NOT NULL",
         f"ti.collected_at >= datetime('now', '-{hours} hours')",
     ]
-    params = []
+    params: list = []
 
     if buckets:
         placeholders = ",".join("?" * len(buckets))
@@ -75,37 +90,52 @@ def get_top_items(
         params.extend(platforms)
 
     where = " AND ".join(conditions)
-    params.append(limit)
+    # per_platform_k bound first, then the final LIMIT
+    params.extend([per_platform_k, limit])
 
     rows = conn.execute(
         f"""
+        WITH ranked AS (
+            SELECT
+                ti.id,
+                ti.title_original,
+                ti.canonical_title,
+                ti.description_original,
+                ti.url,
+                ti.hotness,
+                ti.bucket,
+                ti.engagement_signals,
+                ti.raw_payload,
+                ti.collected_at,
+                ti.lang_group,
+                ti.original_locale,
+                ti.content_regions,
+                ti.primary_region,
+                ti.topic_tags,
+                ts.platform,
+                ts.key AS surface_key,
+                ts.selection_weight,
+                r.key AS region_key,
+                r.name AS region_name,
+                COALESCE(ti.primary_region, r.key) AS effective_region,
+                ROW_NUMBER() OVER (
+                    PARTITION BY ts.platform
+                    ORDER BY ti.hotness DESC
+                ) AS rn
+            FROM crawler_admin_trenditem ti
+            JOIN crawler_admin_trendsurface ts ON ti.surface_id = ts.id
+            JOIN crawler_admin_region r ON ti.region_id = r.id
+            WHERE {where}
+        )
         SELECT
-            ti.id,
-            ti.title_original,
-            ti.canonical_title,
-            ti.description_original,
-            ti.url,
-            ti.hotness,
-            ti.bucket,
-            ti.engagement_signals,
-            ti.raw_payload,
-            ti.collected_at,
-            ti.lang_group,
-            ti.original_locale,
-            ti.content_regions,
-            ti.primary_region,
-            ti.topic_tags,
-            ts.platform,
-            ts.key as surface_key,
-            ts.selection_weight,
-            r.key as region_key,
-            r.name as region_name,
-            COALESCE(ti.primary_region, r.key) as effective_region
-        FROM crawler_admin_trenditem ti
-        JOIN crawler_admin_trendsurface ts ON ti.surface_id = ts.id
-        JOIN crawler_admin_region r ON ti.region_id = r.id
-        WHERE {where}
-        ORDER BY ti.hotness DESC
+            id, title_original, canonical_title, description_original,
+            url, hotness, bucket, engagement_signals, raw_payload,
+            collected_at, lang_group, original_locale, content_regions,
+            primary_region, topic_tags, platform, surface_key,
+            selection_weight, region_key, region_name, effective_region
+        FROM ranked
+        WHERE rn <= ?
+        ORDER BY hotness DESC
         LIMIT ?
         """,
         params,

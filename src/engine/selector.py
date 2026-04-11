@@ -20,7 +20,7 @@ import json
 import logging
 import os
 import re
-from collections import defaultdict
+from collections import defaultdict, Counter
 from pathlib import Path
 
 from db.crawler_reader import (
@@ -30,7 +30,7 @@ from db.crawler_reader import (
     get_regional_items,
     get_known_surface_keys,
 )
-from db.models import get_used_urls_with_hotness
+from db.models import get_used_urls_with_hotness, get_platform_counts_for_set
 
 logger = logging.getLogger(__name__)
 
@@ -273,6 +273,13 @@ def _enforce_platform_caps(
     if not caps:
         return items
 
+    # Fix C: cap enforcement requires ≥2 slots to be meaningful.
+    # For total_slots=1, int(cap×1)=0 for every capped platform → all hard-excluded
+    # → min-supply guard immediately adds them back unchecked. Skip enforcement
+    # entirely; single-slot diversity is controlled by category_sources.platforms.
+    if total_slots <= 1:
+        return items
+
     # Pre-compute hard-excluded platforms: those whose cap rounds to 0 slots.
     hard_excluded: set[str] = {
         platform for platform, frac in caps.items()
@@ -301,7 +308,16 @@ def _enforce_platform_caps(
         if item.get('platform', '') not in hard_excluded:
             result.append(item)
 
-    # Min-supply guard: if strict caps produce too few items, relax and warn.
+    # GAP 4: log cap enforcement outcome on every call, not just on failure.
+    logger.info(
+        "[caps] total_slots=%d  hard_excluded=%s  platform_counts=%s  overflow=%d  result=%d",
+        total_slots, hard_excluded, dict(platform_counts), len(overflow), len(result),
+    )
+
+    # Fix B: min-supply guard with priority-ordered backfill.
+    # Instead of pulling from overflow in raw hotness order (which lets the
+    # highest-hotness platform dominate every backfill slot), we fill in three
+    # priority tiers so hard-excluded platforms only enter as a last resort.
     min_supply = min(3, total_slots)
     if len(result) < min_supply:
         logger.warning(
@@ -309,12 +325,30 @@ def _enforce_platform_caps(
             f"(hard_excluded={hard_excluded}), need {min_supply} — relaxing caps"
         )
         seen_urls = {i['url'] for i in result}
-        for item in overflow:
+        priority_groups = [
+            # P1: uncapped platforms (no cap restriction at all)
+            [i for i in overflow if i.get('platform', '') not in caps],
+            # P2: capped but not hard-excluded, cap not yet exhausted
+            [i for i in overflow
+             if i.get('platform', '') in caps
+             and i.get('platform', '') not in hard_excluded
+             and platform_counts[i.get('platform', '')] < int(total_slots * caps[i.get('platform', '')])],
+            # P3: hard-excluded platforms — last resort only
+            [i for i in overflow if i.get('platform', '') in hard_excluded],
+        ]
+        for priority, group in enumerate(priority_groups, start=1):
+            for item in group:
+                if len(result) >= min_supply:
+                    break
+                if item['url'] not in seen_urls:
+                    result.append(item)
+                    seen_urls.add(item['url'])
+                    logger.warning(
+                        "[caps:backfill] added %s  hotness=%.1f  priority=P%d",
+                        item.get('platform'), item.get('hotness', 0), priority,
+                    )
             if len(result) >= min_supply:
                 break
-            if item['url'] not in seen_urls:
-                result.append(item)
-                seen_urls.add(item['url'])
 
     return result[:total_slots]
 
@@ -434,6 +468,13 @@ def _select_by_mix(
 
         candidates_by_category[category] = items
 
+        # GAP 2: log candidate pool composition per category.
+        plat_counts = Counter(i.get('platform') for i in items)
+        logger.info(
+            "[pool] category=%s  fetched=%d  platforms=%s",
+            category, len(items), dict(plat_counts.most_common()),
+        )
+
     # --- Step 2: Guarantee min_slots for this format (Phase 3) ---
     min_slots: dict[str, int] = (
         min_slots_per_format.get(format_name, {}) if format_name else {}
@@ -468,7 +509,12 @@ def _select_by_mix(
                     break
 
     # --- Step 4: Apply platform caps across the full assembled list ---
+    # GAP 6: log platform breakdown before and after cap enforcement.
+    pre_plat = Counter(i.get('platform') for i in selected)
+    logger.info("[pre-cap]  assembled=%d  platforms=%s", len(selected), dict(pre_plat))
     selected = _enforce_platform_caps(selected, platform_caps, total_needed)
+    post_plat = Counter(i.get('platform') for i in selected)
+    logger.info("[post-cap] after_caps=%d  platforms=%s", len(selected), dict(post_plat))
 
     # --- Step 5: Fallback — fill remaining slots with top items by hotness ---
     if len(selected) < total_needed:
@@ -773,10 +819,15 @@ def select_for_niche(niche: str = 'tech', hours: int = 24) -> list[dict]:
     return selected
 
 
-def select_for_format(format_id: int, hours: int = 24) -> list[dict] | None:
+def select_for_format(format_id: int, hours: int = 24,
+                      set_id: int | None = None) -> list[dict] | None:
     """
     Generic selector for formats 10-46.
     Uses FORMAT_REGISTRY to determine strategy and item count.
+
+    set_id: if provided, used by the 'single' strategy to enforce cross-format
+            platform caps — prevents one platform from filling every single-slot
+            format in the same generation run.
     """
     from engine.format_registry import FORMAT_REGISTRY
 
@@ -788,6 +839,25 @@ def select_for_format(format_id: int, hours: int = 24) -> list[dict] | None:
 
     if strategy == 'single':
         from engine.format_registry import FORMAT_REQUIRES_NEWS
+        config = load_story_mix_config()
+        topic_boosts = config.get('topic_boosts', {})
+        surface_weight_overrides = config.get('surface_weight_overrides', {})
+        platform_default_weights = config.get('platform_default_weights', {})
+        platform_caps = config.get('platform_caps', {})
+
+        # Fix A: get platforms already used in this set so we can enforce
+        # cross-format caps — prevents bilibili from winning every single-slot
+        # format purely by raw hotness. Uses SINGLE_SLOT_BATCH_SIZE as the
+        # denominator for cap math so int(cap × N) >= 1 for reasonable caps.
+        SINGLE_SLOT_BATCH_SIZE = 9  # typical single-run format count
+        set_platform_counts: dict[str, int] = {}
+        if set_id is not None:
+            set_platform_counts = get_platform_counts_for_set(set_id)
+            logger.info(
+                "[single] set_id=%d  platform_counts_so_far=%s",
+                set_id, set_platform_counts,
+            )
+
         requires_news = format_id in FORMAT_REQUIRES_NEWS
         best_items = None
         for window in [hours, 48, 72, 168]:
@@ -795,20 +865,49 @@ def select_for_format(format_id: int, hours: int = 24) -> list[dict] | None:
             candidates = _filter_already_used(candidates)
             if not candidates:
                 continue
+
+            # Apply topic boost so editorial weights influence single-slot picks
+            candidates = _apply_topic_boost(
+                candidates, topic_boosts, surface_weight_overrides,
+                platform_default_weights,
+            )
+
+            # Fix A: filter out platforms that have already hit their cap
+            # for this set. Cap = int(SINGLE_SLOT_BATCH_SIZE * cap_frac),
+            # minimum 1 so no platform is hard-excluded entirely.
+            if set_platform_counts and platform_caps:
+                def _over_cap(item: dict) -> bool:
+                    plat = item.get('platform', '')
+                    cap_frac = platform_caps.get(plat)
+                    if cap_frac is None:
+                        return False  # uncapped platform — always allowed
+                    allowed = max(1, int(SINGLE_SLOT_BATCH_SIZE * cap_frac))
+                    return set_platform_counts.get(plat, 0) >= allowed
+
+                capped_out = [i for i in candidates if _over_cap(i)]
+                candidates = [i for i in candidates if not _over_cap(i)]
+                if capped_out:
+                    logger.info(
+                        "[single] format_%d: excluded %d items from capped platforms: %s",
+                        format_id, len(capped_out),
+                        list({i.get('platform') for i in capped_out}),
+                    )
+
             if requires_news:
                 news_only = [i for i in candidates if not _is_entertainment(i)]
                 if news_only:
                     best_items = news_only
                     break
-                # No news items in this window — keep as fallback, try wider
                 if best_items is None:
                     best_items = candidates
                 logger.info(
                     f"  format_{format_id}: top items are entertainment in {window}h window, expanding..."
                 )
             else:
-                best_items = candidates
-                break
+                if candidates:
+                    best_items = candidates
+                    break
+
         return [best_items[0]] if best_items else None
 
     elif strategy == 'mix':

@@ -296,7 +296,7 @@ def _run_generic_format(format_id: int, lang: str, channel: int, dry_run: bool,
 
     format_name = FORMAT_NAMES.get(format_id, f'format_{format_id}')
 
-    items = select_for_format(format_id)
+    items = select_for_format(format_id, set_id=set_id)
     if not items:
         logger.warning(f"No items found for {format_name} — skipping")
         return None
