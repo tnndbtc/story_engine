@@ -36,7 +36,8 @@
         "bbc", "guardian", "reuters", "ap", "nyt",
         "aljazeera", "chinatimes", "hk01", "mirrormedia",
         "sina", "wenxuecity", "yahoo_japan",
-        "naver_news", "livedoor_news", "goo_news", "daum_news"
+        "naver_news", "livedoor_news", "goo_news", "daum_news",
+        "hatena", "billboard", "variety", "ign", "polygon"
       ]
     },
 
@@ -67,17 +68,14 @@
     },
 
     "category_mix": {
-      "world":         0.18,
-      "politics":      0.10,
-      "business":      0.08,
-      "technology":    0.20,
-      "science":       0.07,
-      "society":       0.10,
-      "culture":       0.08,
-      "sports":        0.05,
-      "entertainment": 0.07,
-      "lifestyle":     0.04,
-      "opinion":       0.03
+      "world":         0.20,
+      "politics":      0.12,
+      "business":      0.10,
+      "technology":    0.22,
+      "science":       0.08,
+      "society":       0.12,
+      "sports":        0.06,
+      "entertainment": 0.10
     },
 
     "category_policy": {
@@ -126,12 +124,9 @@
         "sports":        "sports",
         "finance":       "business",
         "science":       "science",
-        "health":        "lifestyle",
+        "health":        "society",
         "business":      "business",
-        "environment":   "science",
-        "culture":       "culture",
-        "lifestyle":     "lifestyle",
-        "opinion":       "opinion"
+        "environment":   "science"
       },
 
       "bucket_hot_now_platform": {
@@ -179,11 +174,8 @@
       "world":         1.00,
       "politics":      1.00,
       "society":       1.00,
-      "culture":       0.95,
       "sports":        0.95,
-      "entertainment": 0.90,
-      "lifestyle":     0.90,
-      "opinion":       0.90
+      "entertainment": 0.90
     },
 
     "platform_weight_overrides": {
@@ -198,7 +190,18 @@
       "nicovideo":     0.90,
       "google_trends": 0.85,
       "wikipedia":     0.80,
-      "news_rss":      1.10
+      "news_rss":      1.10,
+      "stackoverflow": 1.00,
+      "lobsters":      1.00,
+      "devto":         0.95,
+      "v2ex":          0.90,
+      "github":        0.90,
+      "paperswithcode": 0.95,
+      "hatena":        0.90,
+      "billboard":     0.85,
+      "variety":       0.85,
+      "polygon":       0.80,
+      "ign":           0.80
     }
   },
 
@@ -206,14 +209,18 @@
     "comment_platforms": [
       "hackernews",
       "youtube",
-      "reddit"
+      "reddit",
+      "stackoverflow",
+      "devto",
+      "lobsters"
     ],
 
     "news_like_platforms": [
       "twitter", "weibo", "baidu", "zhihu",
       "reddit", "hackernews",
       "rss", "generic_rss", "google_news",
-      "bbc", "guardian", "reuters", "ap", "nyt", "aljazeera"
+      "bbc", "guardian", "reuters", "ap", "nyt", "aljazeera",
+      "hatena", "billboard", "variety", "ign", "polygon"
     ],
 
     "video_platforms": [

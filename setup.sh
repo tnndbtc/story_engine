@@ -129,6 +129,105 @@ show_status() {
     echo ""
 }
 
+reset_last_batch() {
+    echo ""
+    echo -e "  ${BOLD}Reset Last Batch${NC}"
+    echo ""
+
+    local db_path="${STORY_ENGINE_DB:-$SCRIPT_DIR/db.sqlite3}"
+
+    if [ ! -f "$db_path" ]; then
+        echo -e "  ${RED}ERROR: database not found at $db_path${NC}"
+        echo ""
+        return
+    fi
+
+    # Find the last story set
+    local result
+    result=$(python3 -c "
+import sqlite3, sys
+conn = sqlite3.connect('$db_path')
+conn.row_factory = sqlite3.Row
+row = conn.execute('SELECT id, status, created_at FROM story_sets ORDER BY id DESC LIMIT 1').fetchone()
+if not row:
+    print('NONE')
+else:
+    print(str(row['id']) + '|' + str(row['status']) + '|' + str(row['created_at']))
+conn.close()
+" 2>&1)
+
+    if [ "$result" = "NONE" ]; then
+        echo -e "  ${YELLOW}No story sets found in database.${NC}"
+        echo ""
+        return
+    fi
+
+    local set_id
+    local set_status
+    local set_created
+    set_id=$(echo "$result" | cut -d'|' -f1)
+    set_status=$(echo "$result" | cut -d'|' -f2)
+    set_created=$(echo "$result" | cut -d'|' -f3)
+
+    echo -e "  Last batch found:"
+    echo -e "    ${CYAN}ID:       $set_id${NC}"
+    echo -e "    ${CYAN}Status:   $set_status${NC}"
+    echo -e "    ${CYAN}Created:  $set_created${NC}"
+    echo ""
+    echo -e "  ${YELLOW}WARNING: This will permanently delete all stories, used_items,${NC}"
+    echo -e "  ${YELLOW}and the story_set record for batch #$set_id.${NC}"
+    echo -e "  ${YELLOW}URLs will be freed so the next run can select fresh articles.${NC}"
+    echo ""
+    read -p "  Delete batch #$set_id and re-enable its articles? [y/N]: " confirm
+
+    if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+        echo -e "  ${YELLOW}Cancelled.${NC}"
+        echo ""
+        return
+    fi
+
+    echo ""
+    python3 -c "
+import sqlite3, sys
+db_path = '$db_path'
+set_id = $set_id
+
+conn = sqlite3.connect(db_path)
+conn.row_factory = sqlite3.Row
+conn.execute('PRAGMA foreign_keys=ON')
+
+# Step 1 — delete used_items first (FK references story_sets + stories)
+cur = conn.execute('DELETE FROM used_items WHERE story_set_id = ?', (set_id,))
+print('  used_items deleted:  ' + str(cur.rowcount))
+
+# Step 2 — delete stories linked to this set via batch_id
+story_rows = conn.execute('SELECT id FROM stories WHERE batch_id = ?', (set_id,)).fetchall()
+story_ids = [r['id'] for r in story_rows]
+if story_ids:
+    placeholders = ','.join('?' * len(story_ids))
+    cur = conn.execute('DELETE FROM stories WHERE id IN (' + placeholders + ')', story_ids)
+    print('  stories deleted:     ' + str(cur.rowcount) + '  (ids: ' + str(story_ids) + ')')
+else:
+    print('  stories deleted:     0  (none found for batch_id=' + str(set_id) + ')')
+
+# Step 3 — delete the story set itself
+cur = conn.execute('DELETE FROM story_sets WHERE id = ?', (set_id,))
+print('  story_sets deleted:  ' + str(cur.rowcount))
+
+conn.commit()
+conn.close()
+
+if cur.rowcount == 0:
+    print('WARNING: story_sets row was already gone — nothing deleted')
+    sys.exit(1)
+else:
+    print('')
+    print('  Batch #' + str(set_id) + ' deleted. Run option 5 to generate a fresh set.')
+" 2>&1
+
+    echo ""
+}
+
 generate_stories() {
     echo ""
     echo -e "  ${BOLD}Generate Stories${NC}"
@@ -265,6 +364,7 @@ EOF
     echo ""
     echo -e "${BOLD}Generation:${NC}"
     echo "  5)  Generate Stories (zh-Hans)"
+    echo "  6)  Reset Last Batch  (delete & free articles for re-run)"
     echo ""
     echo "  0)  Exit"
     echo ""
@@ -282,6 +382,7 @@ while true; do
         3) show_status ;;
         4) show_urls ;;
         5) generate_stories ;;
+        6) reset_last_batch ;;
         0)
             echo ""
             echo -e "  ${CYAN}Exiting...${NC}"
