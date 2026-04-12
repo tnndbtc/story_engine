@@ -124,6 +124,22 @@ def init_db():
     except sqlite3.OperationalError:
         pass  # column already exists
 
+    # Migration: add partial columns to story_sets if not present
+    try:
+        conn.execute("ALTER TABLE story_sets ADD COLUMN partial INTEGER NOT NULL DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass  # column already exists
+    try:
+        conn.execute("ALTER TABLE story_sets ADD COLUMN partial_formats TEXT NOT NULL DEFAULT '[]'")
+    except sqlite3.OperationalError:
+        pass  # column already exists
+
+    # Migration: add canonical_story_id to used_items if not present (v2 dedup)
+    try:
+        conn.execute("ALTER TABLE used_items ADD COLUMN canonical_story_id TEXT DEFAULT NULL")
+    except sqlite3.OperationalError:
+        pass  # column already exists
+
     # Migration: convert text timestamps to UNIX integers
     _migrate_timestamps(conn)
 

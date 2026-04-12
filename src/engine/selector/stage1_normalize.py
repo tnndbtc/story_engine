@@ -1,0 +1,432 @@
+"""
+Stage 1 — Candidate Normalization  (stage1_normalize.py)
+
+Transforms raw crawler DB rows into a clean, typed, enriched candidate list
+ready for allocation and selection. Emits a snapshot and a summary metrics log.
+
+Key correctness points:
+  - Uses crawler_reader.get_top_items() directly (NOT a custom query).
+    The design section Stage 1 Step 1 SQL is wrong — do not use it.
+  - _is_entertainment() reads from config.normalization — not hardcoded.
+  - Reuse exclusion TraceRecords written before used items are filtered out.
+  - Snapshot written after normalization, not from raw crawler output.
+  - Trace JSONL opened in append mode ("a") — never "w".
+  - frozenset and datetime serialized via snapshot.py custom encoder.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import re
+from datetime import datetime, timezone
+from pathlib import Path
+
+from db.crawler_reader import get_top_items, CRAWLER_DB_PATH
+from db.models import get_used_urls_with_hotness, DB_PATH
+from engine.selector.config import BatchConfig
+from engine.selector.schemas import NormalizedCandidate, TraceRecord
+from engine.selector.snapshot import cleanup_old_snapshots, save_snapshot
+from engine.selector.trace import open_trace, write_trace
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Entertainment media filter — config-driven (reads from config.normalization)
+# ---------------------------------------------------------------------------
+
+_entertainment_pattern_cache: dict[str, re.Pattern] = {}
+
+
+def _get_entertainment_pattern(regex: str) -> re.Pattern:
+    """Compile and cache the entertainment detection regex."""
+    if regex not in _entertainment_pattern_cache:
+        _entertainment_pattern_cache[regex] = re.compile(regex, re.IGNORECASE)
+    return _entertainment_pattern_cache[regex]
+
+# Region display names (copied from run.py REGION_NAMES)
+_REGION_NAMES: dict[str, str] = {
+    'jp': 'Japan', 'kr': 'South Korea', 'cn': 'China', 'de': 'Germany',
+    'fr': 'France', 'br': 'Brazil', 'es': 'Spain/Latin America',
+    'in': 'India', 'ru': 'Russia', 'it': 'Italy', 'tr': 'Turkey',
+    'ar': 'Arab World', 'id': 'Indonesia', 'pl': 'Poland',
+    'nl': 'Netherlands', 'se': 'Sweden', 'ph': 'Philippines',
+    'vn': 'Vietnam', 'th': 'Thailand', 'my': 'Malaysia',
+    'pt': 'Portugal', 'ar_latam': 'Argentina',
+}
+
+
+def _derive_category(
+    bucket: str,
+    platform: str,
+    topic_tags: list[str] | None,
+    config,
+) -> str:
+    """
+    Map crawler item fields to a logical category using config.normalization.category_derivation.
+
+    4-rule priority pipeline (first match wins):
+      Rule 1 — bucket_direct: if bucket in bucket_direct map → use that category
+      Rule 2 — topic_tag: elif any tag in topic_tags is in topic_tag map → use first match
+      Rule 3 — bucket_hot_now_platform: elif bucket == "hot_now" → platform lookup
+      Rule 4 — default: → "unknown"
+    """
+    cd = config.normalization.category_derivation
+    topic_set = set(topic_tags or [])
+
+    # Rule 1 — bucket_direct
+    if bucket in cd.bucket_direct:
+        return cd.bucket_direct[bucket]
+
+    # Rule 2 — topic_tag (first matching tag)
+    for tag in (topic_tags or []):
+        if tag in cd.topic_tag:
+            return cd.topic_tag[tag]
+
+    # Rule 3 — bucket_hot_now_platform
+    if bucket == 'hot_now':
+        return cd.bucket_hot_now_platform.get(platform, 'unknown')
+
+    # Rule 4 — news bucket catch-all (not in normalization config — handle separately)
+    if bucket == 'news':
+        return 'news'
+
+    # Rule 5 — default
+    return 'unknown'
+
+
+def _is_entertainment(title: str | None, platform: str, config) -> bool:
+    """
+    Return True if this item is entertainment media (anime PV, MV, Trailer, etc.)
+    Reads from config.normalization.news_event_detection — not hardcoded.
+    """
+    ned = config.normalization.news_event_detection
+    if platform not in ned.video_platforms:
+        return False
+    if not title:
+        return False
+    pattern = _get_entertainment_pattern(ned.title_block_regex)
+    return bool(pattern.search(title))
+
+
+def _parse_freshness(collected_at: str | None) -> datetime:
+    """
+    Parse collected_at string to UTC datetime.
+    Falls back to epoch if unparseable.
+    """
+    if not collected_at:
+        return datetime.fromtimestamp(0, tz=timezone.utc)
+    try:
+        # SQLite datetime format: 'YYYY-MM-DD HH:MM:SS[.ffffff]'
+        dt_str = collected_at.replace(' ', 'T')
+        if '+' not in dt_str and 'Z' not in dt_str:
+            dt_str += '+00:00'
+        return datetime.fromisoformat(dt_str)
+    except (ValueError, TypeError):
+        return datetime.fromtimestamp(0, tz=timezone.utc)
+
+
+def stage1_normalize(
+    db_path: str,
+    config: BatchConfig,
+    format_ids: list[int],
+    hours: int,
+    batch_ts: int,
+) -> list[NormalizedCandidate]:
+    """
+    Stage 1: normalize raw crawler items into typed NormalizedCandidate objects.
+
+    Args:
+        db_path:    Path to story_engine's db.sqlite3 (for used_urls lookup).
+        config:     Loaded BatchConfig from story_mix.json.
+        format_ids: List of integer format IDs included in this batch.
+        hours:      Lookback window in hours.
+        batch_ts:   UNIX milliseconds — used for trace file name and snapshot name.
+
+    Returns:
+        List of NormalizedCandidate objects with is_used==False only.
+        Side effects: snapshot written, trace JSONL opened and partially written.
+    """
+    # Clean up old snapshots at run start
+    cleanup_old_snapshots(db_path)
+
+    # Determine logs directory alongside db.sqlite3
+    logs_dir = os.path.join(os.path.dirname(os.path.abspath(db_path)), 'logs')
+
+    # Open trace handle in APPEND mode — Stage 3/4 will reuse the same file
+    trace_handle = open_trace(logs_dir, batch_ts)
+
+    # Step 1 — Fetch raw items from crawler DB
+    # Use a large limit to ensure we have enough candidates for all formats.
+    # Per-platform K is set to a large value to prevent low-hotness platforms
+    # being excluded before cap filtering.
+    raw_items = get_top_items(
+        limit=500,
+        hours=hours,
+        per_platform_k=50,
+    )
+    logger.info("Stage 1: fetched %d raw items from crawler (hours=%d)", len(raw_items), hours)
+
+    # Step 2 — Pre-fetch used URLs for binary dedup
+    used_urls: dict[str, float] = get_used_urls_with_hotness()
+    used_url_set: set[str] = set(used_urls.keys())
+
+    # Step 3 — Normalize each item
+    all_candidates: list[NormalizedCandidate] = []
+    known_categories = set(config.category_mix.keys())
+
+    for row in raw_items:
+        # a. platform normalization — 4-step sequence per implementation plan
+        # Step 1: lowercase + strip
+        platform = (row.get('platform') or '').lower().strip()
+        # Step 2: alias resolution
+        platform = config.platform_aliases.get(platform, platform)
+        # Step 3: hard excluded platforms
+        if platform in config.hard_excluded_platforms:
+            _url = row.get('url') or ''
+            _trace_rec = TraceRecord(
+                candidate_id      = _url,
+                url               = _url,
+                platform          = platform,
+                category          = 'unknown',
+                language          = (row.get('lang_group') or 'unknown').strip(),
+                format_considered = None,
+                selection_status  = 'excluded',
+                rejection_reasons = ['hard_excluded_platform'],
+                constraint_hits   = ['hard_excluded_platforms'],
+                score             = 0.0,
+                hotness           = 0.0,
+                rank_inputs       = {},
+                final_assignment  = None,
+                batch_ts          = batch_ts,
+            )
+            write_trace(trace_handle, _trace_rec)
+            continue
+        # Step 4: group resolution — replace platform with group name if member
+        for _group_name, _members in config.platform_groups.items():
+            if platform in _members:
+                platform = _group_name
+                break
+
+        # b. category — derive logical category from bucket, platform, topic_tags
+        #    Bucket values (category_tech, hot_now, etc.) don't directly match
+        #    category_mix keys (tech, social, etc.) — use _derive_category() reverse map.
+        raw_bucket = (row.get('bucket') or '').lower().strip()
+        raw_topic_tags = row.get('topic_tags') or []
+        if isinstance(raw_topic_tags, str):
+            try:
+                import json as _json
+                raw_topic_tags = _json.loads(raw_topic_tags)
+            except Exception:
+                raw_topic_tags = []
+        category = _derive_category(raw_bucket, platform, raw_topic_tags, config)
+
+        # c. hotness
+        hotness = float(row.get('hotness') or 0.0)
+
+        # d. effective_hotness = hotness × topic_boost × platform_weight (3 factors)
+        boost           = config.topic_boosts.get(category, 1.0)
+        platform_weight = config.surface_weight_overrides.get(platform, 1.0)
+        effective_hotness = hotness * boost * platform_weight
+
+        # e. is_used — binary URL dedup
+        url = row.get('url') or ''
+        is_used = url in used_url_set
+
+        # f. freshness — ti.collected_at
+        freshness = _parse_freshness(row.get('collected_at'))
+
+        # g. language — ti.lang_group
+        language = (row.get('lang_group') or 'unknown').strip()
+
+        # h. region fields
+        region_key = row.get('region_key') or None
+        region_name = (
+            row.get('region_name')
+            or _REGION_NAMES.get(region_key, region_key)
+            if region_key else None
+        )
+
+        # i. engagement_signals — JSON string or dict
+        raw_signals = row.get('engagement_signals')
+        if isinstance(raw_signals, str):
+            try:
+                engagement_signals = json.loads(raw_signals)
+            except (json.JSONDecodeError, TypeError):
+                engagement_signals = {}
+        elif isinstance(raw_signals, dict):
+            engagement_signals = raw_signals
+        else:
+            engagement_signals = {}
+
+        candidate = NormalizedCandidate(
+            candidate_id         = url,   # URL is the stable unique key
+            url                  = url,
+            platform             = platform,
+            category             = category,
+            language             = language,
+            hotness              = hotness,
+            effective_hotness    = effective_hotness,
+            freshness            = freshness,
+            eligible_format_ids  = frozenset(),  # filled in Step 4
+            crawler_item_id      = int(row.get('id') or 0),
+            title_original       = row.get('title_original') or '',
+            canonical_title      = row.get('canonical_title') or None,
+            description_original = row.get('description_original') or None,
+            region_key           = region_key,
+            region_name          = region_name,
+            engagement_signals   = engagement_signals,
+            raw_payload          = row.get('raw_payload') or None,
+            is_used              = is_used,
+        )
+        all_candidates.append(candidate)
+
+    # Step 3b — URL deduplication (same URL can appear from multiple surfaces)
+    # Keep the first occurrence per URL (get_top_items() returns ORDER BY hotness DESC
+    # so the first occurrence is already the highest-hotness one for that URL).
+    _seen_urls: set[str] = set()
+    _deduped: list[NormalizedCandidate] = []
+    for c in all_candidates:
+        if c.candidate_id not in _seen_urls:
+            _seen_urls.add(c.candidate_id)
+            _deduped.append(c)
+    if len(_deduped) < len(all_candidates):
+        logger.info(
+            "Stage 1: deduped %d → %d candidates (%d duplicate URLs removed)",
+            len(all_candidates), len(_deduped), len(all_candidates) - len(_deduped),
+        )
+    all_candidates = _deduped
+
+    # Step 4 — Format eligibility tagging
+    for candidate in all_candidates:
+        eligible: set[int] = set()
+        for format_id in format_ids:
+            rule = config.format_eligibility.get(format_id)
+            if rule is None:
+                eligible.add(format_id)   # no restriction → eligible
+                continue
+            if rule.excluded_categories and candidate.category in rule.excluded_categories:
+                continue                  # blocked by category exclusion
+            if rule.requires_news_event and _is_entertainment(
+                candidate.title_original or candidate.canonical_title,
+                candidate.platform,
+                config,
+            ):
+                continue                  # blocked by news-event requirement
+            if rule.source_restricted_to == "comment_platforms":
+                if candidate.platform not in config.comment_platforms:
+                    continue              # blocked by source restriction
+            eligible.add(format_id)
+        candidate.eligible_format_ids = frozenset(eligible)
+
+    # Step 5 — Filter used items + emit reuse exclusion traces
+    available: list[NormalizedCandidate] = []
+    excluded_count = 0
+
+    for candidate in all_candidates:
+        if candidate.is_used:
+            excluded_count += 1
+            trace = TraceRecord(
+                candidate_id      = candidate.candidate_id,
+                url               = candidate.url,
+                platform          = candidate.platform,
+                category          = candidate.category,
+                language          = candidate.language,
+                format_considered = None,
+                selection_status  = "excluded",
+                rejection_reasons = ["used_item"],
+                constraint_hits   = ["reuse_policy:binary_url"],
+                score             = candidate.effective_hotness,
+                hotness           = candidate.hotness,
+                rank_inputs       = {},
+                final_assignment  = None,
+                batch_ts          = batch_ts,
+            )
+            write_trace(trace_handle, trace)
+        else:
+            available.append(candidate)
+
+    # Step 6 — Emit Stage 1 summary metrics
+    by_platform: dict[str, int] = {}
+    by_category: dict[str, int] = {}
+    by_language: dict[str, int] = {}
+    eligible_per_format: dict[int, int] = {fid: 0 for fid in format_ids}
+
+    for c in available:
+        by_platform[c.platform] = by_platform.get(c.platform, 0) + 1
+        by_category[c.category] = by_category.get(c.category, 0) + 1
+        by_language[c.language] = by_language.get(c.language, 0) + 1
+        for fid in c.eligible_format_ids:
+            if fid in eligible_per_format:
+                eligible_per_format[fid] += 1
+
+    metrics = {
+        "stage":             1,
+        "batch_ts":          batch_ts,
+        "total_ingested":    len(all_candidates),
+        "excluded_by_reuse": excluded_count,
+        "available":         len(available),
+        "by_platform":       by_platform,
+        "by_category":       by_category,
+        "by_language":       by_language,
+        "eligible_per_format": eligible_per_format,
+    }
+    logger.info("Stage 1 summary: %s", json.dumps(metrics, ensure_ascii=False))
+
+    # Step 7 — Write snapshot (available candidates only, used excluded)
+    snap_path = save_snapshot(available, db_path, batch_ts)
+
+    # Store trace handle on module level for Stage 3/4 to retrieve
+    # (passed via the returned candidates list is not possible cleanly;
+    #  we store it on the module so the orchestrator can pass it to Stage 4)
+    # NOTE: the orchestrator (__init__.py) must close the handle after Stage 4.
+    _store_trace_handle(batch_ts, trace_handle, logs_dir)
+
+    logger.info(
+        "Stage 1 complete: %d available candidates, %d excluded by reuse, snapshot=%s",
+        len(available), excluded_count, snap_path,
+    )
+    return available
+
+
+# ---------------------------------------------------------------------------
+# Trace handle registry — allows Stage 3 and Stage 4 to append to the same file
+# ---------------------------------------------------------------------------
+
+_trace_handles: dict[int, tuple] = {}  # batch_ts → (handle, logs_dir)
+
+
+def _store_trace_handle(batch_ts: int, handle, logs_dir: str) -> None:
+    _trace_handles[batch_ts] = (handle, logs_dir)
+
+
+def get_trace_handle(batch_ts: int):
+    """Retrieve the open trace handle for a given batch. Used by Stage 3 and 4."""
+    entry = _trace_handles.get(batch_ts)
+    if entry is None:
+        raise RuntimeError(
+            f"No trace handle registered for batch_ts={batch_ts}. "
+            "Ensure stage1_normalize() was called before accessing the trace handle."
+        )
+    return entry[0]
+
+
+def get_trace_path(batch_ts: int, db_path: str) -> str:
+    """Return the path to the trace JSONL file for this batch."""
+    entry = _trace_handles.get(batch_ts)
+    if entry:
+        logs_dir = entry[1]
+    else:
+        logs_dir = os.path.join(os.path.dirname(os.path.abspath(db_path)), 'logs')
+    return os.path.join(logs_dir, f"trace_{batch_ts}.jsonl")
+
+
+def close_trace_handle(batch_ts: int) -> None:
+    """Close and remove the trace handle after Stage 4 completes."""
+    entry = _trace_handles.pop(batch_ts, None)
+    if entry:
+        try:
+            entry[0].close()
+        except Exception:
+            pass

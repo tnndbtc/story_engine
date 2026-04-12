@@ -1,215 +1,326 @@
 {
-  "_version": 3,
-  "_notes": "category_mix ratios must sum to 1.0. surface_weight_overrides keys must match TrendSurface.key values in Django admin DB — verify with: SELECT DISTINCT key FROM crawler_admin_trendsurface WHERE enabled=1. platform_default_weights is a fallback tier applied to any surface whose key is not in surface_weight_overrides.",
-  "category_mix": {
-    "tech": 0.2,
-    "news": 0.15,
-    "politics": 0.1,
-    "finance": 0.08,
-    "ai": 0.07,
-    "regional": 0.15,
-    "entertainment": 0.1,
-    "social": 0.05,
-    "science": 0.05,
-    "business": 0.05
+  "version": "1.0",
+  "contract_notes": {
+    "purpose": "Authoritative selector config for story engine refactor",
+    "rules": [
+      "Hard constraints are enforced batch-globally",
+      "Soft targets influence allocation and ranking but never override hard constraints",
+      "All platforms are governed by caps (explicit or default)",
+      "Unspecified categories are normalized to 'unknown' and deprioritized",
+      "Partial output is valid; constraint relaxation is not allowed",
+      "category_mix is a soft optimization target that actively deprioritizes over-represented categories during selection — it is not merely logged"
+    ]
   },
-  "category_sources": {
-    "tech": {
-      "buckets": [
-        "category_tech",
-        "rising"
-      ],
-      "platforms": [
-        "hackernews",
-        "devto",
-        "lobsters",
-        "github",
-        "stackoverflow",
-        "v2ex",
-        "producthunt"
+
+  "hard_constraints": {
+    "platform_caps": {
+      "bilibili":      0.10,
+      "reddit":        0.10,
+      "youtube":       0.10,
+      "weibo":         0.05,
+      "baidu":         0.05,
+      "twitter":       0.10,
+      "hackernews":    0.15,
+      "zhihu":         0.10,
+      "nicovideo":     0.10,
+      "google_trends": 0.10,
+      "wikipedia":     0.05,
+      "news_rss":      0.40
+    },
+
+    "default_uncapped_platform_max_share": 0.10,
+
+    "platform_groups": {
+      "news_rss": [
+        "rss", "generic_rss", "google_news",
+        "bbc", "guardian", "reuters", "ap", "nyt",
+        "aljazeera", "chinatimes", "hk01", "mirrormedia",
+        "sina", "wenxuecity", "yahoo_japan",
+        "naver_news", "livedoor_news", "goo_news", "daum_news"
       ]
     },
-    "news": {
-      "buckets": [
-        "news"
-      ],
-      "platforms": null
+
+    "hard_excluded_platforms": [],
+
+    "platform_default_policy": "cap_with_default",
+
+    "reuse_policy": {
+      "mode": "binary_url_exclusion",
+      "tracking_key": "canonical_url",
+      "allow_reuse_if_hotter": false
     },
-    "politics": {
-      "buckets": [
-        "category_politics",
-        "news"
-      ],
-      "platforms": null,
-      "prefer_topics": [
-        "politics"
-      ]
-    },
-    "finance": {
-      "buckets": [
-        "category_finance",
-        "news"
-      ],
-      "platforms": null,
-      "prefer_topics": [
-        "finance"
-      ]
-    },
-    "ai": {
-      "buckets": [
-        "category_tech",
-        "rising"
-      ],
-      "platforms": [
-        "hackernews",
-        "paperswithcode",
-        "arxiv_ai_rss",
-        "devto"
-      ],
-      "prefer_topics": [
-        "ai"
-      ]
-    },
-    "regional": {
-      "buckets": null,
-      "platforms": null,
-      "exclude_region": "us",
-      "exclude_platforms": [
-        "bilibili",
-        "nicovideo"
-      ]
-    },
-    "entertainment": {
-      "buckets": [
-        "category_entertainment"
-      ],
-      "platforms": [
-        "youtube",
-        "bilibili",
-        "nicovideo"
-      ]
-    },
-    "social": {
-      "buckets": [
-        "hot_now"
-      ],
-      "platforms": [
-        "reddit",
-        "weibo",
-        "baidu"
-      ]
-    },
-    "science": {
-      "buckets": null,
-      "platforms": [
-        "paperswithcode",
-        "arxiv_ai_rss"
-      ]
-    },
-    "business": {
-      "buckets": [
-        "news"
-      ],
-      "platforms": null,
-      "prefer_topics": [
-        "business"
-      ]
+
+    "partial_output_policy": {
+      "allow_partial_batches": true,
+      "relax_constraints": false,
+      "skip_unfillable_formats": true,
+      "emit_conflict_records": true
     }
   },
-  "comment_platforms": [
-    "hackernews",
-    "youtube",
-    "reddit"
-  ],
-  "platform_caps": {
-    "bilibili": 0.1,
-    "reddit": 0.1,
-    "youtube": 0.1,
-    "weibo": 0.05,
-    "baidu": 0.05,
-    "twitter": 0.1
-  },
-  "platform_default_weights": {
-    "reddit": 0.28,
-    "bilibili": 0.6,
-    "youtube": 0.5,
-    "weibo": 0.3,
-    "baidu": 0.3
-  },
-  "topic_boosts": {
-    "politics": 1.5,
-    "finance": 1.4,
-    "ai": 1.3,
-    "science": 1.2,
-    "tech": 1.1,
-    "entertainment": 0.8,
-    "social": 0.7
-  },
-  "surface_weight_overrides": {
-    "bilibili_trending": 3.0,
-    "youtube_trending": 3.0,
-    "youtube_bbc": 3.0,
-    "weibo_hot": 3.0,
-    "baidu_hot": 3.0,
-    "reddit_hot": 0.1,
-    "reddit_news": 0.42,
-    "reddit_worldnews": 0.45,
-    "reddit_technology": 0.46,
-    "reddit_economics": 0.47,
-    "reddit_geopolitics": 0.51,
-    "reddit_europe": 0.52,
-    "reddit_australia": 0.47,
-    "reddit_canada": 0.47,
-    "reddit_unitedkingdom": 0.48,
-    "reddit_ukraine": 0.49,
-    "reddit_africa": 0.49,
-    "reddit_philippines": 0.49,
-    "reddit_malaysia": 0.49,
-    "reddit_sweden": 0.49,
-    "reddit_india": 0.43,
-    "reddit_brasil": 0.42,
-    "reddit_france": 0.45,
-    "reddit_de": 0.42,
-    "reddit_mexico": 0.4,
-    "reddit_argentina": 0.45,
-    "hackernews": 1.02,
-    "bloomberg_news": 1.05,
-    "reuters_news": 1.04,
-    "wenxuecity_news": 1.03,
-    "ft_news": 1.06,
-    "wsj_news": 1.05,
-    "economist_news": 1.06,
-    "cnbc_news": 1.04,
-    "arxiv_ai_rss": 1.03,
-    "lemonde_rss": 1.02,
-    "spiegel_rss": 1.02,
-    "elpais_rss": 1.03,
-    "scmp_rss": 1.03,
-    "theverge_rss": 1.01,
-    "arstechnica_rss": 1.02,
-    "techcrunch_rss": 1.01,
-    "aljazeera_news": 1.01,
-    "bbc_news": 1.04
-  },
-  "min_slots_per_format": {
-    "top5": {
-      "politics": 1,
-      "finance": 1
+
+  "soft_targets": {
+    "platform_targets": {
+      "derive_from_caps": true,
+      "target_ratio_of_cap": 0.7,
+      "tolerance": 0.03,
+      "apply_to_default_cap": true
     },
-    "two_takes": {
-      "politics": 1,
-      "finance": 1,
-      "ai": 1
+
+    "category_mix": {
+      "world":         0.18,
+      "politics":      0.10,
+      "business":      0.08,
+      "technology":    0.20,
+      "science":       0.07,
+      "society":       0.10,
+      "culture":       0.08,
+      "sports":        0.05,
+      "entertainment": 0.07,
+      "lifestyle":     0.04,
+      "opinion":       0.03
     },
-    "pattern": {
-      "politics": 2,
-      "finance": 1,
-      "ai": 1
-    },
-    "deep_dive": {
-      "politics": 2,
-      "finance": 2,
-      "ai": 2
+
+    "category_policy": {
+      "unknown_category_target": 0.0,
+      "unknown_category_dominance_threshold": 0.10,
+      "dominance_multiplier": 1.5,
+      "enforcement_mode": "soft_target",
+      "selection_behavior": "deprioritize_when_over_target"
     }
+  },
+
+  "normalization": {
+    "unknown_category_value": "unknown",
+
+    "platform_aliases": {
+      "x":  "twitter",
+      "yt": "youtube",
+      "hn": "hackernews"
+    },
+
+    "category_derivation": {
+      "notes": "Rules are evaluated in priority order. First match wins.",
+
+      "priority_order": [
+        "bucket_direct",
+        "topic_tag",
+        "bucket_hot_now_platform",
+        "default"
+      ],
+
+      "bucket_direct": {
+        "category_tech":          "technology",
+        "category_entertainment": "entertainment",
+        "category_gaming":        "entertainment",
+        "region_local":           "world",
+        "rising":                 "technology"
+      },
+
+      "topic_tag": {
+        "politics":      "politics",
+        "society":       "society",
+        "tech":          "technology",
+        "ai":            "technology",
+        "entertainment": "entertainment",
+        "crime":         "society",
+        "sports":        "sports",
+        "finance":       "business",
+        "science":       "science",
+        "health":        "lifestyle",
+        "business":      "business",
+        "environment":   "science",
+        "culture":       "culture",
+        "lifestyle":     "lifestyle",
+        "opinion":       "opinion"
+      },
+
+      "bucket_hot_now_platform": {
+        "notes": "Applied only when bucket=hot_now and no topic_tag matched",
+        "bilibili":      "entertainment",
+        "nicovideo":     "entertainment",
+        "youtube":       "entertainment",
+        "hatena":        "society",
+        "naver_news":    "world",
+        "wikipedia":     "world",
+        "google_trends": "world"
+      },
+
+      "default": "unknown"
+    },
+
+    "news_event_detection": {
+      "video_platforms": ["bilibili", "youtube", "nicovideo"],
+      "title_block_regex": "\\b(anime|PV|MV|Trailer|预告|番剧|AMV|OP|ED)\\b"
+    }
+  },
+
+  "localization": {
+    "notes": "Selection operates on one shared global candidate pool. Deduplication is URL-based within the same language context only. Cross-language variants of the same underlying story are treated as independent candidates.",
+    "pool_scope": "global",
+    "dedup_key": "canonical_url",
+    "dedup_scope": "within_language",
+    "cross_language_dedup": false
+  },
+
+  "ranking": {
+    "base_score_field": "effective_hotness",
+    "tie_break_order": [
+      "score_desc",
+      "hotness_desc",
+      "freshness_desc",
+      "canonical_id_asc"
+    ],
+    "null_hotness_value": 0.0,
+
+    "topic_boosts": {
+      "technology":    1.15,
+      "science":       1.10,
+      "business":      1.05,
+      "world":         1.00,
+      "politics":      1.00,
+      "society":       1.00,
+      "culture":       0.95,
+      "sports":        0.95,
+      "entertainment": 0.90,
+      "lifestyle":     0.90,
+      "opinion":       0.90
+    },
+
+    "platform_weight_overrides": {
+      "hackernews":    1.05,
+      "reddit":        1.00,
+      "twitter":       1.00,
+      "youtube":       0.95,
+      "bilibili":      0.95,
+      "weibo":         1.00,
+      "baidu":         1.00,
+      "zhihu":         1.00,
+      "nicovideo":     0.90,
+      "google_trends": 0.85,
+      "wikipedia":     0.80,
+      "news_rss":      1.10
+    }
+  },
+
+  "source_groups": {
+    "comment_platforms": [
+      "hackernews",
+      "youtube",
+      "reddit"
+    ],
+
+    "news_like_platforms": [
+      "twitter", "weibo", "baidu", "zhihu",
+      "reddit", "hackernews",
+      "rss", "generic_rss", "google_news",
+      "bbc", "guardian", "reuters", "ap", "nyt", "aljazeera"
+    ],
+
+    "video_platforms": [
+      "youtube", "bilibili", "nicovideo"
+    ]
+  },
+
+  "format_eligibility": {
+    "11": {
+      "excluded_categories": ["entertainment"],
+      "requires_news_event": true
+    },
+    "16": {
+      "excluded_categories": ["entertainment"],
+      "requires_news_event": true
+    },
+    "17": {
+      "excluded_categories": ["entertainment"],
+      "requires_news_event": true
+    },
+    "18": {
+      "excluded_categories": ["entertainment"],
+      "requires_news_event": true
+    },
+    "26": {
+      "source_restricted_to_group": "comment_platforms",
+      "selection_mode": {
+        "primary": "comment_platform_only",
+        "secondary": "general_mix_if_primary_insufficient",
+        "secondary_is_relaxation": false
+      }
+    },
+    "31": {
+      "source_restricted_to_group": "comment_platforms",
+      "selection_mode": {
+        "primary": "comment_platform_only",
+        "secondary": "general_mix_if_primary_insufficient",
+        "secondary_is_relaxation": false
+      }
+    }
+  },
+
+  "format_defaults": {
+    "allowed_categories": null,
+    "excluded_categories": [],
+    "requires_news_event": false,
+    "source_restricted_to_group": null,
+    "selection_mode": "normal"
+  },
+
+  "selection_policy": {
+    "global_allocation_before_assignment": true,
+    "selection_and_ranking_are_separate": true,
+    "constraint_priority_order": [
+      "platform_caps_and_hard_excludes",
+      "format_fidelity",
+      "feasibility_and_supply",
+      "duplicate_suppression_and_reuse",
+      "batch_diversity_targets",
+      "ranking_preferences"
+    ],
+
+    "allocation_algorithm": {
+      "type": "greedy_with_single_level_rollback",
+      "format_processing_order": "most_constrained_first",
+      "rollback_scope": "current_format_only",
+      "on_joint_infeasibility": "emit_conflict_and_mark_partial"
+    }
+  },
+
+  "determinism": {
+    "snapshot_enabled": true,
+    "snapshot_stage": "post_stage1_normalization",
+    "snapshot_retention_hours": 48,
+    "replay_supported": true,
+    "randomness_allowed_in_selector": false
+  },
+
+  "observability": {
+    "trace_all_candidates": true,
+    "trace_storage": "jsonl",
+    "stage1_metrics_log": true,
+    "partial_batch_db_column": "partial_formats",
+    "required_partial_fields": [
+      "skipped_format_id",
+      "shortage_dimension",
+      "blocking_constraint",
+      "candidate_count_before_filtering",
+      "candidate_count_after_filtering"
+    ]
+  },
+
+  "tuning_layer_bounds": {
+    "can_adjust": [
+      "ranking.platform_weight_overrides",
+      "ranking.topic_boosts",
+      "soft_targets.category_mix",
+      "soft_targets.platform_targets"
+    ],
+    "cannot_adjust": [
+      "hard_constraints.platform_caps",
+      "hard_constraints.hard_excluded_platforms",
+      "hard_constraints.reuse_policy",
+      "hard_constraints.partial_output_policy",
+      "format_eligibility",
+      "selection_policy.constraint_priority_order",
+      "normalization.category_derivation"
+    ]
   }
 }
