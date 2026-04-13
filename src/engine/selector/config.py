@@ -51,15 +51,6 @@ class PlatformTargetsConfig:
 
 
 @dataclass
-class CategoryDerivationConfig:
-    """4-rule category derivation pipeline from normalization.category_derivation."""
-
-    bucket_direct:           dict[str, str] = field(default_factory=dict)
-    topic_tag:               dict[str, str] = field(default_factory=dict)
-    bucket_hot_now_platform: dict[str, str] = field(default_factory=dict)
-
-
-@dataclass
 class NewsEventConfig:
     """Entertainment-media detection params from normalization.news_event_detection."""
 
@@ -69,10 +60,9 @@ class NewsEventConfig:
 
 @dataclass
 class NormalizationConfig:
-    """Normalization sub-config — category derivation + news event detection."""
+    """Normalization sub-config — news event detection."""
 
-    category_derivation:  CategoryDerivationConfig = field(default_factory=CategoryDerivationConfig)
-    news_event_detection: NewsEventConfig           = field(default_factory=NewsEventConfig)
+    news_event_detection: NewsEventConfig = field(default_factory=NewsEventConfig)
 
 
 @dataclass
@@ -190,7 +180,7 @@ def load_config(config_path: str) -> BatchConfig:
     hc      = raw.get('hard_constraints', {})   # v2: platform caps, groups, exclusions
     soft    = raw.get('soft_targets', {})        # both v1/v2: platform_targets; v2 also: category_mix
     ranking = raw.get('ranking', {})             # v2: topic_boosts, platform_weight_overrides
-    raw_norm = raw.get('normalization', {})      # both: category_derivation; v2 also: platform_aliases
+    raw_norm = raw.get('normalization', {})      # platform_aliases + news_event_detection
     source_groups: dict[str, list[str]] = raw.get('source_groups', {})
 
     # --- Dual-mode field resolution (v2 first, v1 fallback) ---
@@ -309,17 +299,6 @@ def load_config(config_path: str) -> BatchConfig:
     )
 
     # --- normalization ---
-    raw_cd = raw_norm.get('category_derivation', {})
-    # v2 bucket_hot_now_platform may include a 'notes' key — filter it out
-    bhp_raw = raw_cd.get('bucket_hot_now_platform', {})
-    bucket_hot_now_platform = {k: v for k, v in bhp_raw.items()
-                               if isinstance(v, str)}
-    category_derivation = CategoryDerivationConfig(
-        bucket_direct=raw_cd.get('bucket_direct', {}),
-        topic_tag=raw_cd.get('topic_tag', {}),
-        bucket_hot_now_platform=bucket_hot_now_platform,
-    )
-
     raw_ned = raw_norm.get('news_event_detection', {})
     title_block_regex = raw_ned.get(
         'title_block_regex',
@@ -338,7 +317,6 @@ def load_config(config_path: str) -> BatchConfig:
     )
 
     normalization = NormalizationConfig(
-        category_derivation=category_derivation,
         news_event_detection=news_event_detection,
     )
 

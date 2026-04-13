@@ -13,7 +13,9 @@ import os
 import subprocess
 from pathlib import Path
 
+from db.crawler_reader import get_background_items
 from db.models import save_story, save_failed_story
+from engine.format_registry import FORMAT_REGISTRY, FORMAT_CONTEXT_COUNTS
 
 logger = logging.getLogger(__name__)
 
@@ -249,6 +251,24 @@ def generate_explainer(item: dict, lang: str = 'en', channel: int = 1, batch_id:
             engagement_parts.append(f"{key}: {signals[key]:,}" if isinstance(signals[key], (int, float)) else f"{key}: {signals[key]}")
     engagement_str = ', '.join(engagement_parts) if engagement_parts else 'N/A'
 
+    context_items: list[dict] = []
+    category = item.get('story_category') if item else None
+    exclude_urls = [item.get('url', '')] if item else []
+    context_items = get_background_items(
+        category=category,
+        exclude_urls=exclude_urls,
+        limit=2,
+        hours=168,
+    )
+    context_block = ""
+    if context_items:
+        context_block = (
+            "\n\n## Background Context\n"
+            "NOTE: Do not build the story around these articles. "
+            "Use them only for facts, history, statistics, and supporting detail.\n\n"
+            + _build_stories_block(context_items)
+        )
+
     prompt = template.format(
         title=item.get('canonical_title') or item['title_original'],
         platform=item['platform'],
@@ -257,6 +277,7 @@ def generate_explainer(item: dict, lang: str = 'en', channel: int = 1, batch_id:
         engagement=engagement_str,
         url=item['url'],
         lang_instruction=_lang_instruction(lang),
+        context_block=context_block,
     )
 
     logger.info(f"Generating explainer: {item['title_original'][:60]}...")
@@ -356,45 +377,66 @@ def generate_top5(items: list[dict], lang: str = 'en', channel: int = 1, batch_i
         raise
 
 
-def _build_stories_block(items: list[dict]) -> str:
+def _build_stories_block(
+    items: list[dict],
+    context_items: list[dict] | None = None,
+) -> str:
     """Build the stories_block text for multi-item prompts.
 
     Includes top_comments from raw_payload when available. Format 26 (情绪解读)
     and format 31 (热门评论精选) explicitly instruct the LLM to prioritize
     comment content when present; other formats benefit from the added context.
+
+    When context_items is None or empty, behavior is identical to the original
+    (no section headers). When context_items is non-empty, main items are
+    wrapped under "## Current Development" and context items are appended
+    under "## Background Context".
     """
-    lines = []
-    for i, item in enumerate(items, 1):
-        signals = item.get('engagement_signals', {})
-        engagement_parts = []
-        for key in ['score', 'upvotes', 'views', 'likes', 'comments', 'num_comments']:
-            if key in signals and signals[key]:
-                engagement_parts.append(
-                    f"{key}: {signals[key]:,}" if isinstance(signals[key], (int, float))
-                    else f"{key}: {signals[key]}"
-                )
-        engagement_str = ', '.join(engagement_parts) if engagement_parts else 'N/A'
+    def _render_items(item_list: list[dict], start_index: int = 1) -> str:
+        lines = []
+        for i, item in enumerate(item_list, start_index):
+            signals = item.get('engagement_signals', {})
+            engagement_parts = []
+            for key in ['score', 'upvotes', 'views', 'likes', 'comments', 'num_comments']:
+                if key in signals and signals[key]:
+                    engagement_parts.append(
+                        f"{key}: {signals[key]:,}" if isinstance(signals[key], (int, float))
+                        else f"{key}: {signals[key]}"
+                    )
+            engagement_str = ', '.join(engagement_parts) if engagement_parts else 'N/A'
 
-        title = item.get('canonical_title') or item['title_original']
-        desc = item.get('description_original') or 'No description available'
-        region = item.get('region_name', item.get('region_key', 'unknown'))
+            title = item.get('canonical_title') or item['title_original']
+            desc = item.get('description_original') or 'No description available'
+            region = item.get('region_name', item.get('region_key', 'unknown'))
 
-        block = (
-            f"Story {i}:\n"
-            f"  Title: {title}\n"
-            f"  Source: {item['platform']} ({region})\n"
-            f"  Region: {region}\n"
-            f"  Summary: {desc}\n"
-            f"  Engagement: {engagement_str}\n"
-            f"  URL: {item['url']}"
-        )
+            block = (
+                f"Story {i}:\n"
+                f"  Title: {title}\n"
+                f"  Source: {item['platform']} ({region})\n"
+                f"  Region: {region}\n"
+                f"  Summary: {desc}\n"
+                f"  Engagement: {engagement_str}\n"
+                f"  URL: {item['url']}"
+            )
 
-        comments_block = _format_comments_block(item)
-        if comments_block:
-            block += f"\n{comments_block}"
+            comments_block = _format_comments_block(item)
+            if comments_block:
+                block += f"\n{comments_block}"
 
-        lines.append(block)
-    return '\n\n'.join(lines)
+            lines.append(block)
+        return '\n\n'.join(lines)
+
+    if not context_items:
+        return _render_items(items)
+
+    main_block = "## Current Development\n\n" + _render_items(items, start_index=1)
+    ctx_block = (
+        "## Background Context\n"
+        "NOTE: Do not build the story around these articles. "
+        "Use them only for facts, history, statistics, and supporting detail.\n\n"
+        + _render_items(context_items, start_index=len(items) + 1)
+    )
+    return main_block + "\n\n" + ctx_block
 
 
 def generate_radar(items: list[dict], lang: str = 'zh', channel: int = 2, batch_id: int | None = None, batch_ts: int | None = None) -> int:
@@ -439,9 +481,21 @@ def generate_regional(items: list[dict], region_name: str, lang: str = 'zh', cha
     Generate regional perspective script (Format 4).
     """
     template = (PROMPTS_DIR / 'regional.txt').read_text()
+
+    context_items: list[dict] = []
+    if items:
+        category = items[0].get('story_category') if items else None
+        exclude_urls = [item.get('url', '') for item in items]
+        context_items = get_background_items(
+            category=category,
+            exclude_urls=exclude_urls,
+            limit=2,
+            hours=168,
+        )
+
     prompt = template.format(
         region_name=region_name,
-        stories_block=_build_stories_block(items),
+        stories_block=_build_stories_block(items, context_items or None),
         lang_instruction=_lang_instruction(lang),
     )
 
@@ -551,8 +605,20 @@ def generate_viral(items: list[dict], lang: str = 'zh', channel: int = 2, batch_
     Generate "before it goes viral" script (Format 7).
     """
     template = (PROMPTS_DIR / 'viral.txt').read_text()
+
+    context_items: list[dict] = []
+    if items:
+        category = items[0].get('story_category') if items else None
+        exclude_urls = [item.get('url', '') for item in items]
+        context_items = get_background_items(
+            category=category,
+            exclude_urls=exclude_urls,
+            limit=2,
+            hours=168,
+        )
+
     prompt = template.format(
-        stories_block=_build_stories_block(items),
+        stories_block=_build_stories_block(items, context_items or None),
         lang_instruction=_lang_instruction(lang),
     )
 
@@ -588,9 +654,21 @@ def generate_deep_dive(items: list[dict], topic: str, lang: str = 'zh', channel:
     Generate weekly deep dive script (Format 8).
     """
     template = (PROMPTS_DIR / 'deep_dive.txt').read_text()
+
+    context_items: list[dict] = []
+    if items:
+        category = items[0].get('story_category') if items else None
+        exclude_urls = [item.get('url', '') for item in items]
+        context_items = get_background_items(
+            category=category,
+            exclude_urls=exclude_urls,
+            limit=3,
+            hours=168,
+        )
+
     prompt = template.format(
         topic=topic,
-        stories_block=_build_stories_block(items),
+        stories_block=_build_stories_block(items, context_items or None),
         lang_instruction=_lang_instruction(lang),
     )
 
@@ -626,9 +704,21 @@ def generate_niche(items: list[dict], niche: str, lang: str = 'zh', channel: int
     Generate niche focus script (Format 9).
     """
     template = (PROMPTS_DIR / 'niche.txt').read_text()
+
+    context_items: list[dict] = []
+    if items:
+        category = items[0].get('story_category') if items else None
+        exclude_urls = [item.get('url', '') for item in items]
+        context_items = get_background_items(
+            category=category,
+            exclude_urls=exclude_urls,
+            limit=2,
+            hours=168,
+        )
+
     prompt = template.format(
         niche=niche,
-        stories_block=_build_stories_block(items),
+        stories_block=_build_stories_block(items, context_items or None),
         lang_instruction=_lang_instruction(lang),
     )
 
@@ -675,12 +765,12 @@ def generate_by_format(
     _build_stories_block(). Format 26 (情绪解读) and format 31 (热门评论精选)
     instruct the LLM to prioritize comment content when present.
     """
-    from engine.format_registry import FORMAT_REGISTRY, FORMAT_NAMES
+    from engine.format_registry import FORMAT_NAMES
 
     if format_id not in FORMAT_REGISTRY:
         raise ValueError(f"Unknown format_id: {format_id}")
 
-    _, prompt_file, _ = FORMAT_REGISTRY[format_id]
+    _, prompt_file, _, ctx_count = FORMAT_REGISTRY[format_id]
     format_name = FORMAT_NAMES.get(format_id, f'format_{format_id}')
     format_key = f'format_{format_id}'
 
@@ -688,8 +778,26 @@ def generate_by_format(
     if not template_path.exists():
         raise FileNotFoundError(f"Prompt template not found: {template_path}")
 
+    context_items: list[dict] = []
+    if ctx_count > 0 and items:
+        category = items[0].get('story_category') if items else None
+        # NOTE: category derived from first item only. Acceptable for current
+        # formats — all multi-item formats with ctx>0 are expected same-category.
+        exclude_urls = [item.get('url', '') for item in items]
+        context_items = get_background_items(
+            category=category,
+            exclude_urls=exclude_urls,
+            limit=ctx_count,
+            hours=168,
+        )
+        if context_items:
+            logger.debug(
+                f"{format_name}: fetched {len(context_items)} background items "
+                f"(category={category!r})"
+            )
+
     template = template_path.read_text()
-    stories_block = _build_stories_block(items)  # includes top_comments when available
+    stories_block = _build_stories_block(items, context_items or None)  # includes top_comments when available
     prompt = template.format(
         stories_block=stories_block,
         lang_instruction=_lang_instruction(lang),

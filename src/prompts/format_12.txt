@@ -5,6 +5,10 @@
 今日素材：
 {stories_block}
 
+The input below may be divided into two sections:
+- "Current Development" — these are the fresh news items the story MUST be built around. The hook, main narrative, and conclusion must come from this section.
+- "Background Context" — these are older articles provided for reference only. Use them to add facts, historical detail, statistics, or supporting context. Do NOT use them as the main story angle. Do NOT introduce them as new developments.
+
 脚本结构（必须严格遵循）：
 1. HOOK（1-2句）：说明为什么现在需要回顾这件事，它为什么重要。
 2. BULLETS（3-5个时间节点）：按时间顺序列出关键节点，每个节点包含：

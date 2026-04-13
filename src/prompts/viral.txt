@@ -5,6 +5,10 @@ Your task: Write a script about items gaining traction on niche/tech platforms t
 EARLY SIGNALS FROM NICHE PLATFORMS (HackerNews, dev.to, GitHub, lobsters, ProductHunt, etc.):
 {stories_block}
 
+The input below may be divided into two sections:
+- "Current Development" — these are the fresh news items the story MUST be built around. The hook, main narrative, and conclusion must come from this section.
+- "Background Context" — these are older articles provided for reference only. Use them to add facts, historical detail, statistics, or supporting context. Do NOT use them as the main story angle. Do NOT introduce them as new developments.
+
 SCRIPT STRUCTURE (you must follow this exactly):
 1. HOOK (1-2 sentences): "While mainstream media is asleep on this..." or "This is trending in tech circles right now and you'll hear about it everywhere in a week" style.
 2. BULLETS (3-5 points): Each bullet covers ONE early signal:

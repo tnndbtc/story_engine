@@ -61,38 +61,17 @@ def _derive_category(
     bucket: str,
     platform: str,
     topic_tags: list[str] | None,
-    config,
 ) -> str:
     """
-    Map crawler item fields to a logical category using config.normalization.category_derivation.
+    Emergency fallback: derive a category from raw crawler fields when
+    story_category is absent. This path should never fire in normal operation
+    (crawler classifies all items before they reach the story engine).
+    Monitored via emergency_derivation_count in Stage 1 metrics.
 
-    4-rule priority pipeline (first match wins):
-      Rule 1 — bucket_direct: if bucket in bucket_direct map → use that category
-      Rule 2 — topic_tag: elif any tag in topic_tags is in topic_tag map → use first match
-      Rule 3 — bucket_hot_now_platform: elif bucket == "hot_now" → platform lookup
-      Rule 4 — default: → "unknown"
+    Returns 'unknown' — downstream consumers must handle unknown gracefully.
+    The category_derivation config block has been removed (dead code);
+    this function is retained as a circuit-breaker only.
     """
-    cd = config.normalization.category_derivation
-    topic_set = set(topic_tags or [])
-
-    # Rule 1 — bucket_direct
-    if bucket in cd.bucket_direct:
-        return cd.bucket_direct[bucket]
-
-    # Rule 2 — topic_tag (first matching tag)
-    for tag in (topic_tags or []):
-        if tag in cd.topic_tag:
-            return cd.topic_tag[tag]
-
-    # Rule 3 — bucket_hot_now_platform
-    if bucket == 'hot_now':
-        return cd.bucket_hot_now_platform.get(platform, 'unknown')
-
-    # Rule 4 — news bucket catch-all (not in normalization config — handle separately)
-    if bucket == 'news':
-        return 'news'
-
-    # Rule 5 — default
     return 'unknown'
 
 
@@ -176,6 +155,8 @@ def stage1_normalize(
     all_candidates: list[NormalizedCandidate] = []
     known_categories = set(config.category_mix.keys())
 
+    _emergency_derivation_count = 0
+
     for row in raw_items:
         # a. platform normalization — 4-step sequence per implementation plan
         # Step 1: lowercase + strip
@@ -209,18 +190,28 @@ def stage1_normalize(
                 platform = _group_name
                 break
 
-        # b. category — derive logical category from bucket, platform, topic_tags
-        #    Bucket values (category_tech, hot_now, etc.) don't directly match
-        #    category_mix keys (tech, social, etc.) — use _derive_category() reverse map.
+        # b. category — use story_category if crawler has classified the item.
+        #    Fall back to _derive_category() only as emergency path (< 5% target).
         raw_bucket = (row.get('bucket') or '').lower().strip()
-        raw_topic_tags = row.get('topic_tags') or []
-        if isinstance(raw_topic_tags, str):
-            try:
-                import json as _json
-                raw_topic_tags = _json.loads(raw_topic_tags)
-            except Exception:
-                raw_topic_tags = []
-        category = _derive_category(raw_bucket, platform, raw_topic_tags, config)
+        story_category = row.get('story_category') or None
+
+        if story_category:
+            # Crawler owns classification — use it directly. No remapping.
+            category = story_category
+        else:
+            # Emergency path: derive from topic_tags + bucket + platform.
+            # This runs for items that slipped through (pending/failed items
+            # that passed the classification_state filter in an edge case,
+            # or items collected before the new schema was deployed).
+            raw_topic_tags = row.get('topic_tags') or []
+            if isinstance(raw_topic_tags, str):
+                try:
+                    import json as _json
+                    raw_topic_tags = _json.loads(raw_topic_tags)
+                except Exception:
+                    raw_topic_tags = []
+            category = _derive_category(raw_bucket, platform, raw_topic_tags)
+            _emergency_derivation_count += 1
 
         # c. hotness
         hotness = float(row.get('hotness') or 0.0)
@@ -361,18 +352,34 @@ def stage1_normalize(
             if fid in eligible_per_format:
                 eligible_per_format[fid] += 1
 
+    total_ingested = len(all_candidates)
+    emergency_rate = _emergency_derivation_count / total_ingested if total_ingested else 0.0
+
     metrics = {
-        "stage":             1,
-        "batch_ts":          batch_ts,
-        "total_ingested":    len(all_candidates),
-        "excluded_by_reuse": excluded_count,
-        "available":         len(available),
-        "by_platform":       by_platform,
-        "by_category":       by_category,
-        "by_language":       by_language,
-        "eligible_per_format": eligible_per_format,
+        "stage":                      1,
+        "batch_ts":                   batch_ts,
+        "total_ingested":             len(all_candidates),
+        "excluded_by_reuse":          excluded_count,
+        "available":                  len(available),
+        "by_platform":                by_platform,
+        "by_category":                by_category,
+        "by_language":                by_language,
+        "eligible_per_format":        eligible_per_format,
+        "emergency_derivation_count": _emergency_derivation_count,
+        "emergency_derivation_rate":  round(emergency_rate, 4),
     }
     logger.info("Stage 1 summary: %s", json.dumps(metrics, ensure_ascii=False))
+    if emergency_rate > 0.05:
+        logger.warning(
+            "Stage 1: emergency category derivation rate %.1f%% exceeds 5%% threshold — "
+            "crawler classification pipeline may be degraded",
+            emergency_rate * 100,
+        )
+    else:
+        logger.info(
+            "Stage 1: emergency category derivation rate %.1f%% (within 5%% threshold)",
+            emergency_rate * 100,
+        )
 
     # Step 7 — Write snapshot (available candidates only, used excluded)
     snap_path = save_snapshot(available, db_path, batch_ts)

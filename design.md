@@ -221,6 +221,11 @@ Items per format by strategy (from format_registry.py):
   comment      →  3–5 items (formats 26, 31)
   legacy mix   →  5–15 items (top5=5, two_takes=8, pattern=12, deep_dive=15)
 
+FORMAT_REGISTRY entries are 4-tuples: (strategy, prompt_file, item_count, context_item_count).
+FORMAT_CONTEXT_COUNTS dict is derived from index [3].
+context_item_count = number of background articles fetched for story enrichment
+  (0 = no background fetch).
+
 The batch size for feasibility validation is the sum of item_count values for
 the formats included in the specific run, derived from format_registry.py at
 runtime. There is no single global batch size constant.
@@ -517,17 +522,15 @@ be read from config (treat as a bug if it is).
       },
 
       "category_mix": {
-        "world":         0.18,
-        "politics":      0.10,
-        "business":      0.08,
-        "technology":    0.20,
-        "science":       0.07,
-        "society":       0.10,
-        "culture":       0.08,
-        "sports":        0.05,
-        "entertainment": 0.07,
-        "lifestyle":     0.04,
-        "opinion":       0.03
+        "world":         0.20,
+        "politics":      0.12,
+        "business":      0.10,
+        "technology":    0.15,
+        "ai":            0.07,
+        "science":       0.08,
+        "society":       0.12,
+        "sports":        0.06,
+        "entertainment": 0.10
       },
 
       "category_policy": {
@@ -546,56 +549,6 @@ be read from config (treat as a bug if it is).
         "x":  "twitter",
         "yt": "youtube",
         "hn": "hackernews"
-      },
-
-      "category_derivation": {
-        "notes": "Rules are evaluated in priority order. First match wins.",
-
-        "priority_order": [
-          "bucket_direct",
-          "topic_tag",
-          "bucket_hot_now_platform",
-          "default"
-        ],
-
-        "bucket_direct": {
-          "category_tech":          "technology",
-          "category_entertainment": "entertainment",
-          "category_gaming":        "entertainment",
-          "region_local":           "world",
-          "rising":                 "technology"
-        },
-
-        "topic_tag": {
-          "politics":      "politics",
-          "society":       "society",
-          "tech":          "technology",
-          "ai":            "technology",
-          "entertainment": "entertainment",
-          "crime":         "society",
-          "sports":        "sports",
-          "finance":       "business",
-          "science":       "science",
-          "health":        "lifestyle",
-          "business":      "business",
-          "environment":   "science",
-          "culture":       "culture",
-          "lifestyle":     "lifestyle",
-          "opinion":       "opinion"
-        },
-
-        "bucket_hot_now_platform": {
-          "notes": "Applied only when bucket=hot_now and no topic_tag matched",
-          "bilibili":      "entertainment",
-          "nicovideo":     "entertainment",
-          "youtube":       "entertainment",
-          "hatena":        "society",
-          "naver_news":    "world",
-          "wikipedia":     "world",
-          "google_trends": "world"
-        },
-
-        "default": "unknown"
       },
 
       "news_event_detection": {
@@ -623,6 +576,7 @@ be read from config (treat as a bug if it is).
       "null_hotness_value": 0.0,
 
       "topic_boosts": {
+        "ai":            1.20,
         "technology":    1.15,
         "science":       1.10,
         "business":      1.05,
@@ -768,8 +722,7 @@ be read from config (treat as a bug if it is).
         "hard_constraints.reuse_policy",
         "hard_constraints.partial_output_policy",
         "format_eligibility",
-        "selection_policy.constraint_priority_order",
-        "normalization.category_derivation"
+        "selection_policy.constraint_priority_order"
       ]
     }
   }
@@ -931,7 +884,15 @@ All inter-stage contracts are typed dataclasses. No dicts passed between stages.
       batch_ts:            int   # UNIX ms from create_story_set()
       story_set_id:        int
       format_assignments:  dict[int, list[NormalizedCandidate]]
-                           # full objects — generators receive these directly, no re-query
+                           # full objects — generators receive these directly, no re-query.
+                           # For formats with context_item_count > 0, generators also
+                           # fetch background context items via get_background_items()
+                           # (crawler_reader.py). _build_stories_block() accepts optional
+                           # context_items and renders a two-section prompt:
+                           #   "## Current Development" (main sources)
+                           #   "## Background Context" (reference only)
+                           # Applies to generate_by_format() and 5 legacy generators
+                           # (explainer, regional, viral, deep_dive, niche).
       partial:             bool
       partial_formats:     list[PartialFormat]
       trace_log_path:      str                    # path to JSONL trace file
@@ -950,6 +911,13 @@ Input:
   - config: BatchConfig
   - format_ids: list[int]  (the formats included in this batch run)
   - hours: int             (lookback window, default 48)
+
+Classification state filter:
+  Crawler sets classification_state and story_category on all TrendItems.
+  get_top_items() filters classification_state NOT IN ('pending', 'failed'),
+  ensuring only fully-classified items enter the candidate pool.
+  stage1_normalize uses story_category directly from the crawler field —
+  no selection-time derivation in normal operation.
 
 Output:
   - list[NormalizedCandidate]  (used items excluded)
@@ -979,25 +947,17 @@ Algorithm:
                      use the group key that exists in platform_budgets.
                      Original source platform is preserved in raw_payload only.
       b. category  = derive_category(row, config)
-                     Uses the 4-rule priority pipeline from
-                     config.normalization.category_derivation:
-
-                       Rule 1 — bucket_direct:
-                         if row.bucket in bucket_direct map
-                           → category = bucket_direct[row.bucket]
-
-                       Rule 2 — topic_tag:
-                         elif any tag in row.topic_tags is in topic_tag map
-                           → category = topic_tag[first matching tag]
-
-                       Rule 3 — bucket_hot_now_platform:
-                         elif row.bucket == "hot_now"
-                           → category = bucket_hot_now_platform.get(platform, "unknown")
-
-                       Rule 4 — default:
-                         → category = "unknown"
-
-                     First match wins. Rules evaluated in order.
+                     Emergency fallback only. The crawler now sets story_category
+                     on all items before they reach the story engine.
+                     stage1_normalize uses story_category directly;
+                     _derive_category() is called only when story_category is
+                     absent (an edge case that should not occur in normal
+                     operation). The function returns 'unknown' unconditionally —
+                     the config-driven 4-rule pipeline
+                     (bucket_direct, topic_tag, bucket_hot_now_platform) has
+                     been removed. Invocations are counted and logged as
+                     emergency_derivation_rate per batch. In production this
+                     rate is 0%.
       c. hotness   = float(row.hotness) if row.hotness is not None else 0.0
       d. boost            = config.topic_boosts.get(category, 1.0)
          platform_weight  = config.platform_weight_overrides.get(platform, 1.0)
@@ -1450,6 +1410,8 @@ Algorithm:
   # Convert candidate IDs to NormalizedCandidate objects for BatchResult
   # Use the full NormalizedCandidate objects (from Stage 1) — generators need
   # fields like crawler_item_id, raw_payload, region_key that SelectedItem lacks.
+  # Generators with context_item_count > 0 additionally call get_background_items()
+  # (crawler_reader.py) to fetch background context items at generation time.
   candidate_by_id = {c.candidate_id: c for c in candidates}
   format_assignments: dict[int, list[NormalizedCandidate]] = {
       fid: [candidate_by_id[cid] for cid in cids]
@@ -1496,7 +1458,8 @@ Algorithm:
     b. For each candidate_id in assigned_ids:
        INSERT INTO used_items (crawler_item_id, crawler_url, hotness_at_use,
                                story_set_id, story_id, format,
-                               used_at, platform)
+                               used_at, platform, role)
+       -- role = 'main' for primary sources; 'context' for background-only items
 
     If any write fails: rollback entire transaction, do not write partial DB state.
 
@@ -1581,9 +1544,13 @@ DB SCHEMA CHANGES
        partial         INTEGER NOT NULL DEFAULT 0   -- boolean
        partial_formats TEXT NOT NULL DEFAULT '[]'   -- JSON array of PartialFormat
 
-  2. used_items table — add column:
+  2. used_items table — add columns:
        canonical_story_id TEXT DEFAULT NULL
        -- Not populated in v1. Reserved for v2 story-level dedup.
+       role  TEXT NOT NULL DEFAULT 'main'
+       -- 'main' = primary source (excluded from reuse);
+       -- 'context' = background only (never excluded)
+       -- get_used_urls_with_hotness() filters WHERE role = 'main' OR role IS NULL
 
   3. snapshots/ directory (new)
        Location: same directory as db.sqlite3
@@ -1607,8 +1574,12 @@ After refactor:
   - FORMAT_REQUIRES_NEWS set is removed from format_registry.py
   - Format eligibility rules are read from config.format_eligibility
   - format_registry.py retains only:
+      - FORMAT_REGISTRY: dict[int, tuple]  (format_id → 4-tuple:
+          (strategy, prompt_file, item_count, context_item_count))
       - FORMAT_STRATEGIES: dict[int, str]  (format_id → strategy name)
       - FORMAT_ITEM_COUNTS: dict[int, int] (format_id → item_count)
+      - FORMAT_CONTEXT_COUNTS: dict[int, int] (format_id → context_item_count,
+          derived from index [3]; 0 = no background fetch)
       - item_count(format_id) helper
       - strategy(format_id) helper
   - All eligibility logic moves to stage1_normalize.py (eligibility tagging)

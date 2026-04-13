@@ -6,6 +6,10 @@ TOPIC AREA: {topic}
 ITEMS FROM THE PAST 7 DAYS:
 {stories_block}
 
+The input below may be divided into two sections:
+- "Current Development" — these are the fresh news items the story MUST be built around. The hook, main narrative, and conclusion must come from this section.
+- "Background Context" — these are older articles provided for reference only. Use them to add facts, historical detail, statistics, or supporting context. Do NOT use them as the main story angle. Do NOT introduce them as new developments.
+
 SCRIPT STRUCTURE (you must follow this exactly):
 1. HOOK (2-3 sentences): Set up why this topic matters RIGHT NOW. What changed this week that makes this urgent or important?
 2. BULLETS (5-7 points — this is a longer format):

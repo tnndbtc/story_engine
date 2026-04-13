@@ -5,6 +5,10 @@
 今日素材：
 {stories_block}
 
+The input below may be divided into two sections:
+- "Current Development" — these are the fresh news items the story MUST be built around. The hook, main narrative, and conclusion must come from this section.
+- "Background Context" — these are older articles provided for reference only. Use them to add facts, historical detail, statistics, or supporting context. Do NOT use them as the main story angle. Do NOT introduce them as new developments.
+
 脚本结构（必须严格遵循）：
 1. HOOK（1-2句）：点出这个关键词——它频繁出现在新闻中，但大多数人并不真正理解它。
 2. BULLETS（2-4个要点）：

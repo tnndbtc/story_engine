@@ -71,7 +71,8 @@
       "world":         0.20,
       "politics":      0.12,
       "business":      0.10,
-      "technology":    0.22,
+      "technology":    0.15,
+      "ai":            0.07,
       "science":       0.08,
       "society":       0.12,
       "sports":        0.06,
@@ -94,53 +95,6 @@
       "x":  "twitter",
       "yt": "youtube",
       "hn": "hackernews"
-    },
-
-    "category_derivation": {
-      "notes": "Rules are evaluated in priority order. First match wins.",
-
-      "priority_order": [
-        "bucket_direct",
-        "topic_tag",
-        "bucket_hot_now_platform",
-        "default"
-      ],
-
-      "bucket_direct": {
-        "category_tech":          "technology",
-        "category_entertainment": "entertainment",
-        "category_gaming":        "entertainment",
-        "region_local":           "world",
-        "rising":                 "technology"
-      },
-
-      "topic_tag": {
-        "politics":      "politics",
-        "society":       "society",
-        "tech":          "technology",
-        "ai":            "technology",
-        "entertainment": "entertainment",
-        "crime":         "society",
-        "sports":        "sports",
-        "finance":       "business",
-        "science":       "science",
-        "health":        "society",
-        "business":      "business",
-        "environment":   "science"
-      },
-
-      "bucket_hot_now_platform": {
-        "notes": "Applied only when bucket=hot_now and no topic_tag matched",
-        "bilibili":      "entertainment",
-        "nicovideo":     "entertainment",
-        "youtube":       "entertainment",
-        "hatena":        "society",
-        "naver_news":    "world",
-        "wikipedia":     "world",
-        "google_trends": "world"
-      },
-
-      "default": "unknown"
     },
 
     "news_event_detection": {
@@ -168,6 +122,7 @@
     "null_hotness_value": 0.0,
 
     "topic_boosts": {
+      "ai":            1.20,
       "technology":    1.15,
       "science":       1.10,
       "business":      1.05,
@@ -326,8 +281,7 @@
       "hard_constraints.reuse_policy",
       "hard_constraints.partial_output_policy",
       "format_eligibility",
-      "selection_policy.constraint_priority_order",
-      "normalization.category_derivation"
+      "selection_policy.constraint_priority_order"
     ]
   }
 }

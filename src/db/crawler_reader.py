@@ -67,6 +67,7 @@ def get_top_items(
     conditions = [
         "ti.hotness IS NOT NULL",
         f"ti.collected_at >= datetime('now', '-{hours} hours')",
+        "ti.classification_state NOT IN ('pending', 'failed')",
     ]
     params: list = []
 
@@ -112,6 +113,7 @@ def get_top_items(
                 ti.content_regions,
                 ti.primary_region,
                 ti.topic_tags,
+                ti.story_category,
                 ts.platform,
                 ts.key AS surface_key,
                 ts.selection_weight,
@@ -131,7 +133,7 @@ def get_top_items(
             id, title_original, canonical_title, description_original,
             url, hotness, bucket, engagement_signals, raw_payload,
             collected_at, lang_group, original_locale, content_regions,
-            primary_region, topic_tags, platform, surface_key,
+            primary_region, topic_tags, story_category, platform, surface_key,
             selection_weight, region_key, region_name, effective_region
         FROM ranked
         WHERE rn <= ?
@@ -324,6 +326,93 @@ def get_known_surface_keys() -> set[str]:
     return {row['key'] for row in rows}
 
 
+def get_background_items(
+    category: str | None,
+    exclude_urls: list[str],
+    limit: int,
+    hours: int = 168,
+) -> list[dict]:
+    """
+    Fetch background context articles for story enrichment.
+
+    Does NOT filter by used_items — these articles can be freely reused
+    as background context regardless of prior use.
+    Does NOT apply per-platform Top-K windowing — category-scoped queries
+    benefit from simple hotness ordering.
+
+    Args:
+        category:     story_category to match (e.g. 'technology').
+                      If None, no category filter is applied.
+        exclude_urls: URLs of already-selected main source articles for
+                      this batch. Excluded so the same article does not
+                      appear as both main and background in one story.
+        limit:        Maximum number of items to return.
+        hours:        Lookback window. Default 168 (7 days) for rich
+                      historical context pool.
+
+    Returns:
+        List of item dicts in the same format as get_top_items().
+    """
+    conn = get_crawler_connection()
+
+    conditions = [
+        "ti.hotness IS NOT NULL",
+        f"ti.collected_at >= datetime('now', '-{hours} hours')",
+        "ti.classification_state NOT IN ('pending', 'failed')",
+    ]
+    params: list = []
+
+    if category:
+        conditions.append("ti.story_category = ?")
+        params.append(category)
+
+    if exclude_urls:
+        placeholders = ",".join("?" * len(exclude_urls))
+        conditions.append(f"ti.url NOT IN ({placeholders})")
+        params.extend(exclude_urls)
+
+    where = " AND ".join(conditions)
+    params.append(limit)
+
+    rows = conn.execute(
+        f"""
+        SELECT
+            ti.id,
+            ti.title_original,
+            ti.canonical_title,
+            ti.description_original,
+            ti.url,
+            ti.hotness,
+            ti.bucket,
+            ti.engagement_signals,
+            ti.raw_payload,
+            ti.collected_at,
+            ti.lang_group,
+            ti.original_locale,
+            ti.content_regions,
+            ti.primary_region,
+            ti.topic_tags,
+            ti.story_category,
+            ts.platform,
+            ts.key AS surface_key,
+            ts.selection_weight,
+            r.key AS region_key,
+            r.name AS region_name,
+            COALESCE(ti.primary_region, r.key) AS effective_region
+        FROM crawler_admin_trenditem ti
+        JOIN crawler_admin_trendsurface ts ON ti.surface_id = ts.id
+        JOIN crawler_admin_region r ON ti.region_id = r.id
+        WHERE {where}
+        ORDER BY ti.hotness DESC
+        LIMIT ?
+        """,
+        params,
+    ).fetchall()
+
+    conn.close()
+    return [_item_to_dict(row) for row in rows]
+
+
 def _item_to_dict(row: sqlite3.Row) -> dict:
     """Convert a crawler item row to a dictionary."""
     d = dict(row)
@@ -356,4 +445,7 @@ def _item_to_dict(row: sqlite3.Row) -> dict:
     # Phase 4: selection_weight is a float column — default to 1.0 if missing
     if d.get('selection_weight') is None:
         d['selection_weight'] = 1.0
+    # story_category: string or None — no JSON parsing needed
+    if 'story_category' not in d:
+        d['story_category'] = None
     return d

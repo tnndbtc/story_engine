@@ -8,6 +8,7 @@ Source: {platform} ({region})
 Summary: {description}
 Engagement: {engagement}
 URL: {url}
+{context_block}
 
 SCRIPT STRUCTURE (you must follow this exactly):
 1. HOOK (1-2 sentences): Open with a surprising fact, question, or bold statement that grabs attention immediately.
@@ -27,6 +28,7 @@ OUTPUT FORMAT — respond with valid JSON only, no markdown, no explanation:
 }}
 
 RULES:
+- If a "Background Context" section appears below the main article, use it to enrich the explainer with facts, history, or statistics. Do not introduce background articles as the current event.
 - Script language: {lang_instruction}
 - Total spoken time: ~60 seconds (roughly 150-180 words)
 - Tone: Informative but conversational — like telling a smart friend

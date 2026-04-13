@@ -62,7 +62,9 @@ CREATE TABLE IF NOT EXISTS used_items (
     story_set_id    INTEGER NOT NULL REFERENCES story_sets(id),
     story_id        INTEGER REFERENCES stories(id),
     format          TEXT NOT NULL,
-    used_at         INTEGER                 -- UNIX epoch seconds
+    used_at         INTEGER,                -- UNIX epoch seconds
+    platform        TEXT,
+    role            TEXT NOT NULL DEFAULT 'main'
 );
 
 CREATE INDEX IF NOT EXISTS idx_used_items_crawler_id ON used_items(crawler_item_id);
@@ -137,6 +139,14 @@ def init_db():
     # Migration: add canonical_story_id to used_items if not present (v2 dedup)
     try:
         conn.execute("ALTER TABLE used_items ADD COLUMN canonical_story_id TEXT DEFAULT NULL")
+    except sqlite3.OperationalError:
+        pass  # column already exists
+
+    # Migration: add role column to used_items if not present
+    try:
+        conn.execute(
+            "ALTER TABLE used_items ADD COLUMN role TEXT NOT NULL DEFAULT 'main'"
+        )
     except sqlite3.OperationalError:
         pass  # column already exists
 
@@ -220,7 +230,7 @@ def complete_story_set(set_id: int, status: str = 'complete'):
 
 
 def record_used_items(story_set_id: int, story_id: int, format: str,
-                      items: list[dict]):
+                      items: list[dict], role: str = 'main'):
     """Record which crawler items were consumed by a story."""
     now = _now()
     conn = get_connection()
@@ -228,10 +238,10 @@ def record_used_items(story_set_id: int, story_id: int, format: str,
         conn.execute(
             """INSERT INTO used_items
                (crawler_item_id, crawler_url, hotness_at_use,
-                story_set_id, story_id, format, used_at, platform)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                story_set_id, story_id, format, used_at, platform, role)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (item['id'], item['url'], item['hotness'],
-             story_set_id, story_id, format, now, item.get('platform'))
+             story_set_id, story_id, format, now, item.get('platform'), role)
         )
     conn.commit()
     conn.close()
@@ -246,7 +256,7 @@ def get_used_urls_with_hotness() -> dict[str, float]:
     conn = get_connection()
     rows = conn.execute(
         "SELECT crawler_url, MAX(hotness_at_use) as max_hotness "
-        "FROM used_items GROUP BY crawler_url"
+        "FROM used_items WHERE role = 'main' OR role IS NULL GROUP BY crawler_url"
     ).fetchall()
     conn.close()
     return {row['crawler_url']: row['max_hotness'] for row in rows}
@@ -263,7 +273,7 @@ def get_platform_counts_for_set(story_set_id: int) -> dict[str, int]:
     rows = conn.execute(
         """SELECT platform, COUNT(*) as cnt
            FROM used_items
-           WHERE story_set_id = ? AND platform IS NOT NULL
+           WHERE story_set_id = ? AND platform IS NOT NULL AND (role = 'main' OR role IS NULL)
            GROUP BY platform""",
         (story_set_id,)
     ).fetchall()
