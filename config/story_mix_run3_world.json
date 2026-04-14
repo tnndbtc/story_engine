@@ -2,27 +2,19 @@
   "profile_id": "run3_world",
   "extends": "story_mix.json",
   "_notes": [
-    "06:00 run — Politics / World / Society channel (aggressive version 2026-04-14).",
+    "06:00 run — Politics-only channel (revised 2026-04-14).",
     "",
-    "Politics + world + society cover ~60% of corpus, so this channel can",
-    "be the most focused of the three. Zero out tech/ai/science/business",
-    "entirely — they belong in run2_ai and run4_business. Crush entertainment.",
-    "",
-    "Feasibility ratios:",
-    "  politics 0.40/0.357=1.12",
-    "  society  0.35/0.233=1.50",
-    "  world    0.04/0.022=1.82",
-    "  sports   0.05/0.062=0.81",
-    "  entertainment 0.10/0.116=0.86 (softer — world news has human interest)",
-    "  business 0.06/0.066=0.91 (kept — political economy)",
-    "  tech/ai/science: 0.00"
+    "Hard-filter to politics only. Previously mixed with society/world but",
+    "admitted off-topic items (inspirational/adventure bilibili videos tagged",
+    "as society/world). All non-politics categories zeroed to exclude them at",
+    "the Stage 1 profile allowlist."
   ],
 
   "soft_targets": {
     "category_mix": {
-      "politics":      0.55,
-      "society":       0.40,
-      "world":         0.05,
+      "politics":      1.00,
+      "society":       0.00,
+      "world":         0.00,
       "entertainment": 0.00,
       "business":      0.00,
       "sports":        0.00,
@@ -35,8 +27,8 @@
   "ranking": {
     "topic_boosts": {
       "politics":      3.00,
-      "world":         3.00,
-      "society":       2.00,
+      "world":         0.05,
+      "society":       0.05,
       "business":      0.05,
       "entertainment": 0.05,
       "sports":        0.05,
