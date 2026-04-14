@@ -114,9 +114,17 @@ def list_stories(
 
 
 @router.get("/story-sets", response_model=list[StorySetSummary])
-def list_story_sets(limit: int = Query(default=20, le=100)):
-    """List all story sets with story counts."""
-    sets = get_story_sets(limit=limit)
+def list_story_sets(
+    limit: int = Query(default=20, le=100),
+    profile: str | None = Query(default=None, description="Filter by overlay profile id, e.g. 'run2_ai'"),
+):
+    """
+    List story sets with story counts.
+
+    If `profile` is provided, only return sets whose profile_id matches
+    (used by trend_ui channel tabs). Default (no profile) returns all sets.
+    """
+    sets = get_story_sets(limit=limit, profile_id=profile)
     return [StorySetSummary(**s) for s in sets]
 
 

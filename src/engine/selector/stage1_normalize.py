@@ -177,16 +177,40 @@ def stage1_normalize(
     # The metadata is written as a batch_metadata event on first open.
     trace_handle = open_trace(logs_dir, batch_ts, metadata=_batch_metadata)
 
-    # Step 1 — Fetch raw items from crawler DB
-    # Use a large limit to ensure we have enough candidates for all formats.
+    # Step 1 — Fetch raw items from crawler DB (category-aware)
+    #
+    # Derive the category allowlist from config.category_mix: any
+    # category explicitly set to 0 is excluded from the fetch, any
+    # category with target > 0 is included. If all categories are
+    # non-zero (base profile / run1_legacy), no allowlist is passed and
+    # the legacy single-global-fetch path is used.
+    #
+    # This is Step 1 Mode B (category-aware fetch) per design.md. Without
+    # per-category fetch, focused profiles only see <30 business items
+    # out of 1,400+ in a 48h window because high-hotness categories
+    # (entertainment, politics) saturate the global top-500.
+    fetch_allowed_categories: list[str] | None
+    if config.category_mix and any(v == 0 for v in config.category_mix.values()):
+        fetch_allowed_categories = sorted(
+            c for c, v in config.category_mix.items() if v > 0
+        )
+    else:
+        fetch_allowed_categories = None
+
     # Per-platform K is set to a large value to prevent low-hotness platforms
-    # being excluded before cap filtering.
+    # being excluded before cap filtering. In focused mode, LIMIT is applied
+    # per category, so total fetched may be up to limit × N_categories.
     raw_items = get_top_items(
         limit=500,
         hours=hours,
         per_platform_k=50,
+        allowed_categories=fetch_allowed_categories,
     )
-    logger.info("Stage 1: fetched %d raw items from crawler (hours=%d)", len(raw_items), hours)
+    logger.info(
+        "Stage 1: fetched %d raw items from crawler (hours=%d, allowlist=%s)",
+        len(raw_items), hours,
+        fetch_allowed_categories if fetch_allowed_categories else 'none',
+    )
 
     # Step 2 — Pre-fetch used URLs for binary dedup
     used_urls: dict[str, float] = get_used_urls_with_hotness()
@@ -352,11 +376,43 @@ def stage1_normalize(
             eligible.add(format_id)
         candidate.eligible_format_ids = frozenset(eligible)
 
-    # Step 5 — Filter used items + emit reuse exclusion traces
+    # Step 4b — Profile category allowlist (hard filter)
+    #
+    # The profile's category_mix is used as an implicit allowlist: any
+    # category with target > 0 is allowed, any category with target == 0
+    # is HARD EXCLUDED. This is the enforcement mechanism for "focused"
+    # profiles (business/finance tab, politics tab) so that when on-topic
+    # candidates run out, the batch shrinks instead of filling with
+    # unrelated content.
+    #
+    # The filter is a no-op when every category in category_mix has a
+    # non-zero target (base profile / run1_legacy). When category_mix is
+    # empty or missing, no filter is applied.
+    allowed_categories: set[str] | None
+    if config.category_mix:
+        _zero_cats = {c for c, v in config.category_mix.items() if v == 0}
+        if _zero_cats:
+            allowed_categories = {c for c, v in config.category_mix.items() if v > 0}
+        else:
+            allowed_categories = None  # all non-zero → no filter
+    else:
+        allowed_categories = None      # missing → no filter
+
+    if allowed_categories is not None:
+        logger.info(
+            "Stage 1: profile category allowlist active: %s (excluded: %s)",
+            sorted(allowed_categories),
+            sorted({c for c, v in config.category_mix.items() if v == 0}),
+        )
+
+    # Step 5 — Filter used items and category-disallowed items
+    #          + emit exclusion traces
     available: list[NormalizedCandidate] = []
     excluded_count = 0
+    excluded_by_category_count = 0
 
     for candidate in all_candidates:
+        # 5a. Reuse / used-item exclusion (emitted first — highest priority)
         if candidate.is_used:
             excluded_count += 1
             trace = TraceRecord(
@@ -376,8 +432,37 @@ def stage1_normalize(
                 batch_ts          = batch_ts,
             )
             write_trace(trace_handle, trace)
-        else:
-            available.append(candidate)
+            continue
+
+        # 5b. Profile category allowlist exclusion
+        if allowed_categories is not None and candidate.category not in allowed_categories:
+            excluded_by_category_count += 1
+            trace = TraceRecord(
+                candidate_id      = candidate.candidate_id,
+                url               = candidate.url,
+                platform          = candidate.platform,
+                category          = candidate.category,
+                language          = candidate.language,
+                format_considered = None,
+                selection_status  = "excluded",
+                rejection_reasons = ["category_not_in_profile_allowlist"],
+                constraint_hits   = ["soft_targets.category_mix:zero_target"],
+                score             = candidate.effective_hotness,
+                hotness           = candidate.hotness,
+                rank_inputs       = {},
+                final_assignment  = None,
+                batch_ts          = batch_ts,
+            )
+            write_trace(trace_handle, trace)
+            continue
+
+        available.append(candidate)
+
+    if excluded_by_category_count:
+        logger.info(
+            "Stage 1: category allowlist excluded %d candidates",
+            excluded_by_category_count,
+        )
 
     # Step 6 — Emit Stage 1 summary metrics
     by_platform: dict[str, int] = {}
@@ -401,6 +486,7 @@ def stage1_normalize(
         "batch_ts":                   batch_ts,
         "total_ingested":             len(all_candidates),
         "excluded_by_reuse":          excluded_count,
+        "excluded_by_category":       excluded_by_category_count,
         "available":                  len(available),
         "by_platform":                by_platform,
         "by_category":                by_category,
@@ -408,6 +494,9 @@ def stage1_normalize(
         "eligible_per_format":        eligible_per_format,
         "emergency_derivation_count": _emergency_derivation_count,
         "emergency_derivation_rate":  round(emergency_rate, 4),
+        "profile_allowed_categories": (
+            sorted(allowed_categories) if allowed_categories is not None else None
+        ),
     }
     logger.info("Stage 1 summary: %s", json.dumps(metrics, ensure_ascii=False))
     if emergency_rate > 0.05:

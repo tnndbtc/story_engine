@@ -150,6 +150,15 @@ def init_db():
     except sqlite3.OperationalError:
         pass  # column already exists
 
+    # Migration: add profile_id column to story_sets (2026-04-14 channel
+    # validation — per-run config profile tracking for trend_ui tabs)
+    try:
+        conn.execute(
+            "ALTER TABLE story_sets ADD COLUMN profile_id TEXT DEFAULT NULL"
+        )
+    except sqlite3.OperationalError:
+        pass  # column already exists
+
     # Migration: convert text timestamps to UNIX integers
     _migrate_timestamps(conn)
 
@@ -204,13 +213,26 @@ def _migrate_timestamps(conn):
 # Story Set functions
 # ---------------------------------------------------------------------------
 
-def create_story_set(lang: str, channel: int) -> tuple[int, int]:
-    """Create a new story set. Returns (set_id, batch_ts) where batch_ts is UNIX epoch."""
+def create_story_set(
+    lang: str,
+    channel: int,
+    profile_id: str | None = None,
+) -> tuple[int, int]:
+    """
+    Create a new story set. Returns (set_id, batch_ts) where batch_ts is UNIX epoch.
+
+    Args:
+        lang:       Output language ("en" or "zh").
+        channel:    Output channel (1, 2, or 3).
+        profile_id: Per-run overlay profile id (e.g. "run2_ai") or None for base.
+                    Used by trend_ui to group stories by themed channel.
+    """
     batch_ts = _now()
     conn = get_connection()
     cursor = conn.execute(
-        "INSERT INTO story_sets (batch_ts, lang, channel, created_at) VALUES (?, ?, ?, ?)",
-        (batch_ts, lang, channel, batch_ts)
+        "INSERT INTO story_sets (batch_ts, lang, channel, profile_id, created_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (batch_ts, lang, channel, profile_id, batch_ts)
     )
     set_id = cursor.lastrowid
     conn.commit()
@@ -281,19 +303,40 @@ def get_platform_counts_for_set(story_set_id: int) -> dict[str, int]:
     return {row['platform']: row['cnt'] for row in rows}
 
 
-def get_story_sets(limit: int = 20) -> list[dict]:
-    """Get story sets with story counts (ready only)."""
+def get_story_sets(limit: int = 20, profile_id: str | None = None) -> list[dict]:
+    """
+    Get story sets with story counts (ready only).
+
+    Args:
+        limit:      Max number of sets to return (newest first).
+        profile_id: Optional filter — if provided, only return sets whose
+                    profile_id matches exactly. Used by trend_ui channel tabs.
+                    Pass None (default) to get all sets regardless of profile.
+    """
     conn = get_connection()
-    rows = conn.execute(
-        """SELECT ss.*, COUNT(CASE WHEN s.status = 'ready' THEN 1 END) as story_count
-           FROM story_sets ss
-           LEFT JOIN stories s ON s.batch_id = ss.id
-           GROUP BY ss.id
-           HAVING story_count > 0
-           ORDER BY ss.id DESC
-           LIMIT ?""",
-        (limit,)
-    ).fetchall()
+    if profile_id is not None:
+        rows = conn.execute(
+            """SELECT ss.*, COUNT(CASE WHEN s.status = 'ready' THEN 1 END) as story_count
+               FROM story_sets ss
+               LEFT JOIN stories s ON s.batch_id = ss.id
+               WHERE ss.profile_id = ?
+               GROUP BY ss.id
+               HAVING story_count > 0
+               ORDER BY ss.id DESC
+               LIMIT ?""",
+            (profile_id, limit)
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """SELECT ss.*, COUNT(CASE WHEN s.status = 'ready' THEN 1 END) as story_count
+               FROM story_sets ss
+               LEFT JOIN stories s ON s.batch_id = ss.id
+               GROUP BY ss.id
+               HAVING story_count > 0
+               ORDER BY ss.id DESC
+               LIMIT ?""",
+            (limit,)
+        ).fetchall()
     conn.close()
     result = []
     for r in rows:

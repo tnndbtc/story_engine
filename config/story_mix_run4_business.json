@@ -2,52 +2,61 @@
   "profile_id": "run4_business",
   "extends": "story_mix.json",
   "_notes": [
-    "22:00 run — Business / Finance / Tech lean.",
+    "22:00 run — Business / Finance channel (aggressive version 2026-04-14).",
     "",
-    "Similar situation to run2_ai: business is 6.6% of corpus (2x cap",
-    "= 13.2%), so a pure business channel is infeasible. This overlay",
-    "lifts business + tech to their 2x caps and uses topic_boosts to",
-    "prioritize finance content within the remaining politics/society",
-    "supply (i.e. political economy, tariffs, central bank decisions).",
+    "Business supply is 6.6% so pure business is infeasible. Channel",
+    "leans business + tech, fills with politics (financial politics /",
+    "policy / tariffs). Zero out entertainment/sports/world, crush video.",
     "",
-    "Feasibility ratios (target / corpus_share):",
-    "  technology 0.13 / 0.071 = 1.83",
-    "  business   0.12 / 0.066 = 1.82",
-    "  ai         0.07 / 0.039 = 1.79",
-    "  science    0.06 / 0.035 = 1.71",
-    "  entertainment 0.15 / 0.116 = 1.29",
-    "  politics   0.21 / 0.357 = 0.59",
-    "  society    0.20 / 0.233 = 0.86",
-    "  sports     0.04 / 0.062 = 0.65",
-    "  world      0.02 / 0.022 = 0.91",
-    "All ratios < 2.0 — passes feasibility gate."
+    "Feasibility ratios:",
+    "  business   0.13/0.066=1.97",
+    "  technology 0.14/0.071=1.97",
+    "  ai         0.07/0.039=1.79",
+    "  science    0.06/0.035=1.71",
+    "  politics   0.30/0.357=0.84",
+    "  society    0.30/0.233=1.29",
+    "  world/entertainment/sports: 0.00"
   ],
 
   "soft_targets": {
     "category_mix": {
-      "politics":      0.21,
-      "society":       0.20,
-      "entertainment": 0.15,
-      "technology":    0.13,
-      "business":      0.12,
-      "ai":            0.07,
-      "science":       0.06,
-      "sports":        0.04,
-      "world":         0.02
+      "business":      1.00,
+      "politics":      0.00,
+      "society":       0.00,
+      "technology":    0.00,
+      "ai":            0.00,
+      "science":       0.00,
+      "entertainment": 0.00,
+      "sports":        0.00,
+      "world":         0.00
     }
   },
 
   "ranking": {
     "topic_boosts": {
-      "business":      1.40,
-      "technology":    1.20,
-      "ai":            1.15,
-      "politics":      1.10,
-      "science":       1.05,
-      "world":         1.00,
-      "entertainment": 0.90,
-      "society":       0.90,
-      "sports":        0.80
+      "business":      3.00,
+      "technology":    0.05,
+      "ai":            0.05,
+      "science":       0.05,
+      "politics":      0.05,
+      "society":       0.05,
+      "world":         0.05,
+      "sports":        0.05,
+      "entertainment": 0.05
+    },
+    "platform_weight_overrides": {
+      "bilibili":      0.10,
+      "youtube":       0.10,
+      "nicovideo":     0.10,
+      "hackernews":    1.80,
+      "news_rss":      1.30,
+      "bbc":           1.20,
+      "guardian":      1.20,
+      "reuters":       1.50,
+      "weibo":         0.30,
+      "baidu":         0.30,
+      "google_trends": 0.20,
+      "wikipedia":     0.50
     }
   }
 }

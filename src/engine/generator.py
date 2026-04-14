@@ -43,9 +43,27 @@ def _call_claude(prompt: str) -> str:
         "{\"hook\": \"\", \"bullets\": [], \"twist\": \"\"}"
     )
 
+    # 2026-04-14: strip Claude Code harness overhead on every subprocess.
+    # See crawler topic_llm_classifier.py (commit 7163c925) for full
+    # rationale — each plain `claude -p` call was burning ~15-25 KB of
+    # input tokens on the default system prompt, skill manifests, tool
+    # catalogue, and CLAUDE.md that story generation never uses. Flags
+    # strip the harness down to just the model + our prompt.
     try:
         result = subprocess.run(
-            ['claude', '-p', '--model', CLAUDE_MODEL],
+            [
+                'claude', '-p',
+                '--model', CLAUDE_MODEL,
+                '--system-prompt',
+                'You are a short-form story script generator. Output ONLY '
+                'the JSON object the user prompt requests. No prose, no '
+                'markdown fences, no questions. Start with { and end with }.',
+                '--disable-slash-commands',
+                '--tools', '',
+                '--setting-sources', 'user',
+                '--no-session-persistence',
+                '--output-format', 'text',
+            ],
             input=prompt,
             capture_output=True,
             text=True,

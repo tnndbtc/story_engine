@@ -25,7 +25,8 @@
       "nicovideo":     0.10,
       "google_trends": 0.10,
       "wikipedia":     0.05,
-      "news_rss":      0.40
+      "news_rss":      0.40,
+      "entertainment_brands": 0.08
     },
 
     "default_uncapped_platform_max_share": 0.10,
@@ -36,7 +37,9 @@
         "bbc", "guardian", "reuters", "ap", "nyt",
         "aljazeera", "chinatimes", "hk01", "mirrormedia",
         "sina", "wenxuecity", "yahoo_japan",
-        "naver_news", "livedoor_news", "goo_news", "daum_news",
+        "naver_news", "livedoor_news", "goo_news", "daum_news"
+      ],
+      "entertainment_brands": [
         "hatena", "billboard", "variety", "ign", "polygon"
       ]
     },

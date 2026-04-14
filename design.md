@@ -925,12 +925,48 @@ Output:
 
 Algorithm:
 
-  Step 1 — Raw query
-    SELECT url, platform, category, language, hotness, published_at, title,
-           crawler_item_id
-    FROM crawler_items
-    WHERE published_at >= NOW() - INTERVAL hours HOURS
-    ORDER BY hotness DESC
+  Step 1 — Raw query (category-aware fetch)
+
+    The fetch query has two modes depending on whether the active profile
+    declares a category allowlist (see Step 4b below and the category_mix
+    allowlist contract):
+
+    Mode A — Unfocused profile (no zero-target categories in category_mix,
+             or category_mix absent entirely — base / run1_legacy):
+      SELECT url, platform, category, language, hotness, published_at,
+             title, crawler_item_id
+      FROM crawler_items
+      WHERE published_at >= NOW() - INTERVAL hours HOURS
+      ORDER BY hotness DESC
+      LIMIT N                          # one global top-N fetch
+
+      This is the original Phase A behavior — a single global hotness-ranked
+      pool with platform-level cap applied via per_platform_k.
+
+    Mode B — Focused profile (category_mix has at least one target == 0):
+      For each cat in allowed_categories:
+        SELECT ... FROM crawler_items
+        WHERE story_category = cat
+          AND published_at >= NOW() - INTERVAL hours HOURS
+        ORDER BY hotness DESC
+        LIMIT N_per_cat                # top-N per allowed category
+
+      Then merge all per-category slices into one deduplicated global list.
+      Downstream stages still see one shared global candidate pool — the
+      "global pool" invariant (localization section, pool_scope=global)
+      describes how selection operates, not how fetch shapes the pool.
+
+      Rationale: without this split, high-hotness categories (entertainment,
+      politics) saturate the top-N and drown out scarce but on-topic
+      categories (business, ai, science, world). The Stage 1 hard allowlist
+      would then filter a nearly-empty pool, producing artificially small
+      focused batches even when the crawler has hundreds of matching items.
+
+      Concretely: with N=500 global and business corpus share ≈ 6.6%, only
+      ~20-30 business items reach Stage 1 out of 1,400+ business items the
+      crawler collected over a 48h window. Mode B surfaces the full on-topic
+      pool before the Step 4b hard filter and Step 5 used-item filter are
+      applied.
 
   Step 2 — Per-item normalization
     For each raw row:

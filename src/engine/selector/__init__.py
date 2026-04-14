@@ -104,7 +104,9 @@ def run_batch(
 
     # 2. Create story_sets row immediately — stage4_assign() will UPDATE it.
     #    batch_ts is int (UNIX ms) from create_story_set().
-    story_set_id, batch_ts = create_story_set(lang, channel)
+    #    profile_id is persisted on the row so trend_ui can group story sets
+    #    by themed channel (run2_ai / run3_world / run4_business).
+    story_set_id, batch_ts = create_story_set(lang, channel, profile_id=config_profile)
 
     # 3. Stage 1 — normalize candidates
     snap_path = ""

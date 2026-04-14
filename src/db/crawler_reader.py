@@ -36,6 +36,7 @@ def get_top_items(
     exclude_platforms: list[str] | None = None,
     platforms: list[str] | None = None,
     per_platform_k: int = 10,
+    allowed_categories: list[str] | set[str] | None = None,
 ) -> list[dict]:
     """
     Get the top items by hotness from the last N hours.
@@ -46,11 +47,30 @@ def get_top_items(
     ORDER BY hotness DESC LIMIT N hands the entire pool to bilibili/youtube
     because their hotness scores are structurally higher.
 
+    Category-aware fetch (Stage 1 Mode B, design.md): when
+    ``allowed_categories`` is set, the fetch is executed SEPARATELY for
+    each allowed category (top-N per category) and the results are merged
+    and deduped. This prevents high-hotness categories (entertainment,
+    politics) from saturating the global top-N and drowning out
+    scarce-but-on-topic categories (business, ai, science, world) for
+    focused profiles. Example: run4_business only accepts "business"; in
+    a 48h window the crawler has 1,400+ business items but <30 of them
+    sit above the global top-500 hotness cutoff. Without per-category
+    fetch, focused profiles see a nearly-empty pool after the Step 4b
+    allowlist filter.
+
     Architecture:
-        ① per-platform Top-K  →  ② ORDER BY hotness DESC  →  ③ LIMIT
+      - Unfocused (allowed_categories is None):
+          ① per-platform Top-K  →  ② ORDER BY hotness DESC  →  ③ LIMIT
+      - Focused   (allowed_categories is a set):
+          For each cat:
+            ① per-platform Top-K within cat → ② ORDER BY hotness → ③ LIMIT
+          Merge + dedupe by URL + re-sort by hotness desc.
 
     Args:
-        limit: Max items to return after per-platform sampling.
+        limit: Max items to return. In focused mode the limit is applied
+            PER category, so total items returned may be up to
+            limit × len(allowed_categories) before dedup.
         hours: How far back to look.
         buckets: Filter to specific buckets (e.g., ['hot_now', 'news']).
         lang_group: Filter to specific language group (e.g., 'en').
@@ -61,6 +81,63 @@ def get_top_items(
             K = max(5, ceil(total_needed × 3 / active_platform_count)).
             Default 10 is a safe conservative value; callers that know
             total_needed can pass a computed K explicitly.
+        allowed_categories: Optional set/list of story_category values.
+            When provided, one fetch is issued PER category and results
+            are merged + deduped. When None, a single global fetch is
+            issued (legacy behavior).
+    """
+    # Focused-profile path: one fetch per allowed category, then merge.
+    # This guarantees each on-topic category gets its own top-N slice
+    # instead of competing for slots in a globally-hotness-sorted pool.
+    if allowed_categories:
+        merged: list[dict] = []
+        seen_urls: set[str] = set()
+        for cat in sorted(allowed_categories):
+            for row in _get_top_items_single_pass(
+                limit             = limit,
+                hours             = hours,
+                buckets           = buckets,
+                lang_group        = lang_group,
+                exclude_platforms = exclude_platforms,
+                platforms         = platforms,
+                per_platform_k    = per_platform_k,
+                category_filter   = cat,
+            ):
+                url = row.get('url') or ''
+                if url and url not in seen_urls:
+                    seen_urls.add(url)
+                    merged.append(row)
+        # Re-sort by hotness desc for determinism + downstream ranking.
+        merged.sort(key=lambda r: (r.get('hotness') or 0.0), reverse=True)
+        return merged
+
+    # Unfocused path: single global fetch (legacy behavior).
+    return _get_top_items_single_pass(
+        limit             = limit,
+        hours             = hours,
+        buckets           = buckets,
+        lang_group        = lang_group,
+        exclude_platforms = exclude_platforms,
+        platforms         = platforms,
+        per_platform_k    = per_platform_k,
+        category_filter   = None,
+    )
+
+
+def _get_top_items_single_pass(
+    limit: int,
+    hours: int,
+    buckets: list[str] | None,
+    lang_group: str | None,
+    exclude_platforms: list[str] | None,
+    platforms: list[str] | None,
+    per_platform_k: int,
+    category_filter: str | None,
+) -> list[dict]:
+    """
+    Internal: one per-platform Top-K fetch, optionally restricted to a
+    single story_category. Used by both the legacy unfocused path and
+    the new per-category focused path in get_top_items().
     """
     conn = get_crawler_connection()
 
@@ -70,6 +147,10 @@ def get_top_items(
         "ti.classification_state NOT IN ('pending', 'failed')",
     ]
     params: list = []
+
+    if category_filter is not None:
+        conditions.append("ti.story_category = ?")
+        params.append(category_filter)
 
     if buckets:
         placeholders = ",".join("?" * len(buckets))

@@ -139,6 +139,7 @@ class StorySetSummary(BaseModel):
     channel: int
     status: str
     story_count: int
+    profile_id: Optional[str] = None  # per-run overlay id, e.g. "run2_ai"
 
 
 # ---------------------------------------------------------------------------

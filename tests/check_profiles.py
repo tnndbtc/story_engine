@@ -2,9 +2,19 @@
 """
 Feasibility gate for per-run config profiles.
 
-Validates that every overlay profile's category_mix targets are within
-2x the corpus share for that category — otherwise Stage 2 feasibility
-will partial-output the affected formats on every run.
+Validates overlay profile category_mix shape. Two modes:
+
+  1. Unfocused profile (every category has target > 0):
+     target / corpus_share must stay ≤ FEASIBILITY_RATIO_CAP, otherwise
+     Stage 2 will partial-output on every run.
+
+  2. Focused profile (at least one category has target == 0):
+     The zero-target categories form an implicit hard-exclusion allowlist
+     enforced in Stage 1 (stage1_normalize.py Step 4b). The batch shrinks
+     instead of filling with unrelated content. The ratio cap is
+     intentionally bypassed for non-zero categories — authors of focused
+     profiles are explicitly asking for "only these categories, and fewer
+     stories is OK."
 
 Reads:
   config/corpus_share.json        (Phase A bootstrap frozen constants)
@@ -102,6 +112,16 @@ def _validate_profile(
         messages.append(f"  ❌ SUM: category_mix sums to {s:.4f}, expected 1.0 ±0.01")
         passed = False
 
+    # Focused-profile detection: any explicit zero target means this
+    # profile uses the Stage 1 hard allowlist and accepts shrunken output
+    # in exchange for on-topic purity. Ratio cap becomes informational.
+    is_focused = any(v == 0 for v in effective_mix.values())
+    if is_focused:
+        messages.append(
+            "  ℹ FOCUSED: profile has explicit zero-target categories; "
+            "ratio cap is informational only (Stage 1 hard allowlist active)"
+        )
+
     # Ratio check
     for cat, target in sorted(effective_mix.items(), key=lambda x: -x[1]):
         if target <= 0:
@@ -120,12 +140,18 @@ def _validate_profile(
             # Skip ratio check — infinite ratio
             continue
         ratio = target / share
-        marker = "✓" if ratio <= FEASIBILITY_RATIO_CAP else "❌"
+        within_cap = ratio <= FEASIBILITY_RATIO_CAP
+        if within_cap:
+            marker = "✓"
+        elif is_focused:
+            marker = "ℹ"   # informational: focused profile, shrinkage is intended
+        else:
+            marker = "❌"
         messages.append(
             f"  {marker} {cat:14s} target={target:.2%}  share={share:.2%}  "
             f"ratio={ratio:.2f}"
         )
-        if ratio > FEASIBILITY_RATIO_CAP:
+        if not within_cap and not is_focused:
             passed = False
 
     return passed, messages
