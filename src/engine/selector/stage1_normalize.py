@@ -16,6 +16,7 @@ Key correctness points:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -31,6 +32,40 @@ from engine.selector.snapshot import cleanup_old_snapshots, save_snapshot
 from engine.selector.trace import open_trace, write_trace
 
 logger = logging.getLogger(__name__)
+
+
+# Path to the crawler's auto_keywords.json (used for keyword_map_sha).
+# Derived relative to CRAWLER_DB_PATH so story_engine stays independent of
+# the crawler's Python package structure.
+_AUTO_KEYWORDS_PATH = (
+    Path(CRAWLER_DB_PATH).parent / 'config' / 'auto_keywords.json'
+    if CRAWLER_DB_PATH else None
+)
+
+
+def _compute_batch_metadata(config: BatchConfig) -> dict:
+    """
+    Build the (profile_id, keyword_map_sha) metadata block used by the
+    snapshot envelope and the trace batch_metadata event.
+
+    keyword_map_sha is the first 8 hex chars of the SHA-256 of the
+    crawler's auto_keywords.json, matching the crawler worker's
+    classification_version formula. On missing file, returns None for
+    the sha — replay validation will degrade to a no-op for that field.
+    """
+    sha: str | None = None
+    if _AUTO_KEYWORDS_PATH is not None and _AUTO_KEYWORDS_PATH.exists():
+        try:
+            content = _AUTO_KEYWORDS_PATH.read_bytes()
+            sha = hashlib.sha256(content).hexdigest()[:8]
+        except OSError as e:
+            logger.warning(
+                "Could not read auto_keywords.json for batch metadata: %s", e
+            )
+    return {
+        "profile_id":      config.profile_id,
+        "keyword_map_sha": sha,
+    }
 
 # ---------------------------------------------------------------------------
 # Entertainment media filter — config-driven (reads from config.normalization)
@@ -133,8 +168,14 @@ def stage1_normalize(
     # Determine logs directory alongside db.sqlite3
     logs_dir = os.path.join(os.path.dirname(os.path.abspath(db_path)), 'logs')
 
-    # Open trace handle in APPEND mode — Stage 3/4 will reuse the same file
-    trace_handle = open_trace(logs_dir, batch_ts)
+    # Compute batch metadata (profile_id + keyword_map_sha) for snapshot
+    # envelope and trace header. This lets replay tooling detect when
+    # upstream classifier state has moved since the batch was taken.
+    _batch_metadata = _compute_batch_metadata(config)
+
+    # Open trace handle in APPEND mode — Stage 3/4 will reuse the same file.
+    # The metadata is written as a batch_metadata event on first open.
+    trace_handle = open_trace(logs_dir, batch_ts, metadata=_batch_metadata)
 
     # Step 1 — Fetch raw items from crawler DB
     # Use a large limit to ensure we have enough candidates for all formats.
@@ -382,7 +423,7 @@ def stage1_normalize(
         )
 
     # Step 7 — Write snapshot (available candidates only, used excluded)
-    snap_path = save_snapshot(available, db_path, batch_ts)
+    snap_path = save_snapshot(available, db_path, batch_ts, metadata=_batch_metadata)
 
     # Store trace handle on module level for Stage 3/4 to retrieve
     # (passed via the returned candidates list is not possible cleanly;

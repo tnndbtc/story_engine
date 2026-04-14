@@ -107,6 +107,9 @@ class BatchConfig:
     category_dominance_multiplier:       float = 1.5
     default_uncapped_platform_max_share: float = 0.10
 
+    # Per-run channel profile id (None = base file, no overlay applied)
+    profile_id: str | None = None
+
 
 # ---------------------------------------------------------------------------
 # Known top-level keys in story_mix.json (v1 and v2)
@@ -345,4 +348,180 @@ def load_config(config_path: str) -> BatchConfig:
         normalization=normalization,
         category_dominance_multiplier=category_dominance,
         default_uncapped_platform_max_share=default_uncapped_share,
+        profile_id=None,
     )
+
+
+# ---------------------------------------------------------------------------
+# Per-run profile overlays
+# ---------------------------------------------------------------------------
+#
+# Overlays live in the same directory as the base story_mix.json. Each
+# overlay file is a JSON object that may override ONLY the soft-layer keys
+# listed in _OVERLAY_ALLOWED_KEYS. Merge semantics: ATOMIC REPLACE at the
+# keys listed below (if the overlay has `soft_targets.category_mix`, it
+# fully replaces the base's category_mix dict; other base keys unchanged).
+#
+# Introduced 2026-04-14 as part of the channel specialization proposal
+# (story2.txt). No hard goals change; this is a pure extension of the
+# existing tuning layer.
+
+_OVERLAY_ALLOWED_KEYS = frozenset({
+    # Metadata
+    'profile_id',
+    'extends',
+    '_notes',
+    # Soft-layer keys that overlays may override.
+    # These match design.md's tuning_layer_bounds.can_adjust:
+    #   ranking.platform_weight_overrides
+    #   ranking.topic_boosts
+    #   soft_targets.category_mix
+    #   soft_targets.platform_targets
+    # design.md tuning_layer_bounds.cannot_adjust explicitly lists
+    # 'format_eligibility' — overlays cannot override format eligibility
+    # rules. Goal 5 (Format fidelity over local diversity) requires that
+    # format fidelity never be downgraded by a diversity/tuning mechanism.
+    'soft_targets',          # only category_mix + platform_targets inside
+    'ranking',               # only topic_boosts + platform_weight_overrides
+})
+
+_OVERLAY_ALLOWED_SOFT_KEYS = frozenset({
+    'category_mix',
+    'platform_targets',
+})
+
+_OVERLAY_ALLOWED_RANKING_KEYS = frozenset({
+    'topic_boosts',
+    'platform_weight_overrides',
+})
+
+
+def load_with_profile(base_path: str, profile_id: str | None) -> BatchConfig:
+    """
+    Load base config and optionally apply a per-run overlay profile.
+
+    Args:
+        base_path:  Path to story_mix.json (the base file).
+        profile_id: Profile identifier (e.g. "run2_ai") or None for base-only.
+
+    Returns:
+        A merged BatchConfig. If profile_id is None, equivalent to
+        load_config(base_path).
+
+    Raises:
+        FileNotFoundError: base or overlay file missing.
+        ValueError: overlay contains forbidden keys, category_mix does not
+                    sum to 1.0, or any validation error from load_config.
+
+    Merge semantics:
+        ATOMIC REPLACE at the keys listed in _OVERLAY_ALLOWED_KEYS.
+        If the overlay has `soft_targets.category_mix`, it fully replaces
+        the base's category_mix dict — authors must list every category
+        they want non-zero.
+    """
+    if profile_id is None:
+        return load_config(base_path)
+
+    base_dir = Path(base_path).parent
+    overlay_path = base_dir / 'config' / f'story_mix_{profile_id}.json'
+    if not overlay_path.exists():
+        # Also check the base directory for backward compat
+        overlay_path_fallback = base_dir / f'story_mix_{profile_id}.json'
+        if overlay_path_fallback.exists():
+            overlay_path = overlay_path_fallback
+        else:
+            raise FileNotFoundError(
+                f"Profile overlay not found: {overlay_path} "
+                f"(also tried {overlay_path_fallback})"
+            )
+
+    with open(overlay_path, encoding='utf-8') as f:
+        overlay = json.load(f)
+
+    # Validate overlay top-level keys
+    unknown_top = set(overlay.keys()) - _OVERLAY_ALLOWED_KEYS
+    if unknown_top:
+        raise ValueError(
+            f"Overlay {overlay_path.name} contains forbidden top-level "
+            f"key(s): {sorted(unknown_top)}. Overlays may only override: "
+            f"{sorted(_OVERLAY_ALLOWED_KEYS - {'profile_id', 'extends', '_notes'})}"
+        )
+
+    # Validate nested soft_targets
+    if 'soft_targets' in overlay:
+        unknown_soft = set(overlay['soft_targets'].keys()) - _OVERLAY_ALLOWED_SOFT_KEYS
+        if unknown_soft:
+            raise ValueError(
+                f"Overlay {overlay_path.name} soft_targets contains forbidden "
+                f"key(s): {sorted(unknown_soft)}. Allowed: "
+                f"{sorted(_OVERLAY_ALLOWED_SOFT_KEYS)}"
+            )
+
+    # Validate nested ranking
+    if 'ranking' in overlay:
+        unknown_rank = set(overlay['ranking'].keys()) - _OVERLAY_ALLOWED_RANKING_KEYS
+        if unknown_rank:
+            raise ValueError(
+                f"Overlay {overlay_path.name} ranking contains forbidden "
+                f"key(s): {sorted(unknown_rank)}. Allowed: "
+                f"{sorted(_OVERLAY_ALLOWED_RANKING_KEYS)}"
+            )
+
+    # Validate category_mix sum (if overlay provides one)
+    cat_mix_overlay = overlay.get('soft_targets', {}).get('category_mix')
+    if cat_mix_overlay is not None:
+        s = sum(cat_mix_overlay.values())
+        if abs(s - 1.0) > 0.01:
+            raise ValueError(
+                f"Overlay {overlay_path.name} category_mix must sum to 1.0 "
+                f"(±0.01); got {s:.4f}"
+            )
+
+    # Merge: read base raw, overwrite allowed paths atomically, hand off to
+    # load_config() via a temporary merged-dict approach. To avoid
+    # re-implementing load_config's parsing logic, we write the merged raw
+    # to an in-memory dict and re-parse.
+    with open(base_path, encoding='utf-8') as f:
+        base_raw = json.load(f)
+
+    merged = dict(base_raw)  # shallow copy
+
+    # Apply soft_targets overrides at depth-2 atomic replace
+    if 'soft_targets' in overlay:
+        merged_soft = dict(base_raw.get('soft_targets', {}))
+        for k, v in overlay['soft_targets'].items():
+            merged_soft[k] = v  # full replace at key level
+        merged['soft_targets'] = merged_soft
+
+    # Apply ranking overrides at depth-2
+    if 'ranking' in overlay:
+        merged_ranking = dict(base_raw.get('ranking', {}))
+        for k, v in overlay['ranking'].items():
+            merged_ranking[k] = v
+        merged['ranking'] = merged_ranking
+
+    # NOTE: format_eligibility is intentionally NOT merged here.
+    # design.md lists it under tuning_layer_bounds.cannot_adjust; Goal 5
+    # (Format fidelity over local diversity) forbids the tuning layer
+    # from overriding it. The _OVERLAY_ALLOWED_KEYS validation above
+    # rejects any overlay that tries.
+
+    # Write merged to temp file and parse via load_config
+    import tempfile
+    with tempfile.NamedTemporaryFile(
+        mode='w', encoding='utf-8', suffix='.json', delete=False
+    ) as tf:
+        json.dump(merged, tf)
+        tmp_path = tf.name
+
+    try:
+        cfg = load_config(tmp_path)
+    finally:
+        import os as _os
+        try:
+            _os.unlink(tmp_path)
+        except OSError:
+            pass
+
+    cfg.profile_id = profile_id
+    return cfg

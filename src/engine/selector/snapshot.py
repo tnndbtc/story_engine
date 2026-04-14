@@ -61,14 +61,39 @@ def _snapshots_dir(db_path: str) -> str:
     return os.path.join(os.path.dirname(os.path.abspath(db_path)), "snapshots")
 
 
-def save_snapshot(candidates: list[NormalizedCandidate], db_path: str, batch_ts: int) -> str:
+_SNAPSHOT_SCHEMA_VERSION = 2
+
+
+def save_snapshot(
+    candidates: list[NormalizedCandidate],
+    db_path: str,
+    batch_ts: int,
+    metadata: dict | None = None,
+) -> str:
     """
     Serialize list[NormalizedCandidate] to snapshots/{batch_ts}_stage1.json.
+
+    File format (schema_version 2, introduced 2026-04-14):
+        {
+          "schema_version": 2,
+          "metadata": {
+            "profile_id":       "run2_ai" | null,
+            "keyword_map_sha":  "abcdef12" | null,
+            "batch_ts":         <int>
+          },
+          "candidates": [ { ... }, { ... }, ... ]
+        }
+
+    Legacy format (schema_version 1): bare JSON array of candidate dicts.
+    load_snapshot() handles both on read.
 
     Args:
         candidates: Stage 1 output (used items already excluded).
         db_path:    Path to db.sqlite3 — used to locate snapshots/ directory.
         batch_ts:   UNIX milliseconds — used in file name.
+        metadata:   Optional dict of batch metadata (profile_id,
+                    keyword_map_sha, ...). When None, metadata block is
+                    written with batch_ts only.
 
     Returns:
         Absolute path to the written snapshot file.
@@ -78,12 +103,23 @@ def save_snapshot(candidates: list[NormalizedCandidate], db_path: str, batch_ts:
     path = os.path.join(snap_dir, f"{batch_ts}_stage1.json")
 
     # Convert each NormalizedCandidate to dict
-    data = [asdict(c) for c in candidates]
+    candidates_data = [asdict(c) for c in candidates]
+
+    envelope = {
+        "schema_version": _SNAPSHOT_SCHEMA_VERSION,
+        "metadata": {
+            "profile_id":      (metadata or {}).get("profile_id"),
+            "keyword_map_sha": (metadata or {}).get("keyword_map_sha"),
+            "batch_ts":        batch_ts,
+        },
+        "candidates": candidates_data,
+    }
 
     with open(path, 'w', encoding='utf-8') as f:
-        json.dump(data, f, cls=_CandidateEncoder, ensure_ascii=False, indent=None)
+        json.dump(envelope, f, cls=_CandidateEncoder, ensure_ascii=False, indent=None)
 
-    logger.info("Snapshot written: %s (%d candidates)", path, len(candidates))
+    logger.info("Snapshot written: %s (%d candidates, profile=%s)",
+                path, len(candidates), envelope["metadata"]["profile_id"] or '(base)')
     return path
 
 
@@ -91,23 +127,63 @@ def load_snapshot(snapshot_path: str) -> list[NormalizedCandidate]:
     """
     Deserialize a Stage 1 snapshot back to list[NormalizedCandidate].
 
+    Supports both schema v2 (envelope with metadata + candidates) and
+    legacy schema v1 (bare array). When loading a legacy v1 file, a
+    "legacy-snapshot, replay validation degraded" warning is logged.
+
     Args:
         snapshot_path: Absolute path to the snapshot JSON file.
 
     Returns:
         List of NormalizedCandidate objects with all types restored.
     """
+    metadata, candidates = load_snapshot_with_metadata(snapshot_path)
+    return candidates
+
+
+def load_snapshot_with_metadata(
+    snapshot_path: str,
+) -> tuple[dict, list[NormalizedCandidate]]:
+    """
+    Deserialize a Stage 1 snapshot and return both metadata and candidates.
+
+    Used by replay tooling to detect non-canonical replays when upstream
+    crawler classifier state has moved since the snapshot was taken.
+
+    Returns:
+        (metadata_dict, list[NormalizedCandidate])
+        metadata_dict is {} for legacy v1 bare-array snapshots.
+    """
     with open(snapshot_path, 'r', encoding='utf-8') as f:
-        raw_list = json.load(f, object_hook=_candidate_decoder)
+        raw = json.load(f, object_hook=_candidate_decoder)
+
+    # Detect schema: v2 is a dict with schema_version, v1 is a bare list
+    if isinstance(raw, dict) and raw.get("schema_version") == _SNAPSHOT_SCHEMA_VERSION:
+        metadata = raw.get("metadata", {})
+        raw_list = raw.get("candidates", [])
+    elif isinstance(raw, list):
+        logger.warning(
+            "Legacy snapshot format at %s — no metadata; replay validation "
+            "degraded", snapshot_path
+        )
+        metadata = {}
+        raw_list = raw
+    else:
+        raise ValueError(
+            f"Unrecognized snapshot format at {snapshot_path} "
+            f"(expected v2 envelope dict or v1 bare list)"
+        )
 
     candidates = []
     for d in raw_list:
         # eligible_format_ids arrives as frozenset from the object hook
-        # (because it was encoded as {"__frozenset__": [...]})
         candidates.append(NormalizedCandidate(**d))
 
-    logger.info("Snapshot loaded: %s (%d candidates)", snapshot_path, len(candidates))
-    return candidates
+    logger.info(
+        "Snapshot loaded: %s (%d candidates, profile=%s)",
+        snapshot_path, len(candidates), metadata.get("profile_id") or '(base)',
+    )
+    return metadata, candidates
 
 
 def cleanup_old_snapshots(db_path: str) -> None:

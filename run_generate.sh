@@ -2,18 +2,22 @@
 # story_engine daily generation script
 #
 # Usage:
-#   ./run_generate.sh              # Default formats (1-9)
-#   ./run_generate.sh 1-9          # Formats 1 to 9
-#   ./run_generate.sh 10-20        # Formats 10 to 20
-#   ./run_generate.sh 1,5,10,15    # Specific formats
-#   ./run_generate.sh all          # All 46 formats
-#   ./run_generate.sh --dry-run    # Preview only (no generation)
+#   ./run_generate.sh                              # Default formats (1-9), base config
+#   ./run_generate.sh 1-9                          # Formats 1 to 9, base config
+#   ./run_generate.sh 10-20                        # Formats 10 to 20
+#   ./run_generate.sh 1,5,10,15                    # Specific formats
+#   ./run_generate.sh all                          # All 46 formats
+#   ./run_generate.sh --dry-run                    # Preview only (no generation)
+#   ./run_generate.sh 1-9 --profile run2_ai        # Apply AI channel overlay
 #
-# Crontab examples (rotate formats across hours):
-#   0 6 * * * /home/tnnd/data/code/story_engine/run_generate.sh 1-9
-#   0 12 * * * /home/tnnd/data/code/story_engine/run_generate.sh 10-20
-#   0 18 * * * /home/tnnd/data/code/story_engine/run_generate.sh 21-30
-#   0 22 * * * /home/tnnd/data/code/story_engine/run_generate.sh 31-46
+# The --profile flag picks a per-run overlay from
+# story_engine/config/story_mix_<profile>.json.
+#
+# Crontab examples (rotate formats + profiles across the day):
+#   0 6 * * * /home/tnnd/data/code/story_engine/run_generate.sh 1-9   --profile run1_legacy
+#   0 12 * * * /home/tnnd/data/code/story_engine/run_generate.sh 10-20 --profile run2_ai
+#   0 18 * * * /home/tnnd/data/code/story_engine/run_generate.sh 21-30 --profile run3_world
+#   0 22 * * * /home/tnnd/data/code/story_engine/run_generate.sh 31-46 --profile run4_business
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
@@ -32,16 +36,40 @@ LEGACY_MAP[1]="explainer" LEGACY_MAP[2]="top5" LEGACY_MAP[3]="radar"
 LEGACY_MAP[4]="regional" LEGACY_MAP[5]="two_takes" LEGACY_MAP[6]="pattern"
 LEGACY_MAP[7]="viral" LEGACY_MAP[8]="deep_dive" LEGACY_MAP[9]="niche"
 
-# Parse arguments
-FORMAT_INPUT="${1:-1-9}"
-EXTRA_ARGS=""
-
-if [ "$FORMAT_INPUT" = "--dry-run" ]; then
-    FORMAT_INPUT="1-9"
-    EXTRA_ARGS="--dry-run"
-elif [ "$2" = "--dry-run" ]; then
-    EXTRA_ARGS="--dry-run"
+# Parse arguments: first positional is FORMAT_INPUT (only if it is not a
+# flag), then scan remaining args for --dry-run and --profile. This is
+# robust to any order: `--profile X`, `1-9 --profile X`, `--dry-run`, etc.
+FORMAT_INPUT=""
+if [ $# -gt 0 ] && [[ "$1" != --* ]]; then
+    FORMAT_INPUT="$1"
+    shift
 fi
+FORMAT_INPUT="${FORMAT_INPUT:-1-9}"
+
+EXTRA_ARGS=""
+PROFILE_ARGS=""
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --dry-run)
+            EXTRA_ARGS="$EXTRA_ARGS --dry-run"
+            shift
+            ;;
+        --profile)
+            if [ -n "$2" ]; then
+                PROFILE_ARGS="--config-profile $2"
+                shift 2
+            else
+                echo "Error: --profile requires a value"
+                exit 1
+            fi
+            ;;
+        *)
+            echo "Warning: unrecognized argument '$1'" >&2
+            shift
+            ;;
+    esac
+done
 
 # Expand format input to run.py format args
 FORMATS=""
@@ -76,12 +104,15 @@ echo "========================================="
 echo "  story_engine — Generation Run"
 echo "  $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
 echo "  Formats: $FORMAT_INPUT"
+if [ -n "$PROFILE_ARGS" ]; then
+    echo "  Profile: ${PROFILE_ARGS#--config-profile }"
+fi
 echo "========================================="
 
 # Generate Chinese stories (Channel 2)
 echo ""
 echo "--- Generating Chinese stories ---"
-python "$SCRIPT_DIR/src/engine/run.py" --format $FORMATS --lang zh --channel 2 $EXTRA_ARGS
+python "$SCRIPT_DIR/src/engine/run.py" --format $FORMATS --lang zh --channel 2 $EXTRA_ARGS $PROFILE_ARGS
 
 # Show summary
 echo ""

@@ -1,0 +1,50 @@
+{
+  "profile_id": "run3_world",
+  "extends": "story_mix.json",
+  "_notes": [
+    "18:00 run — Politics / World / Society channel.",
+    "",
+    "This is the ONLY channel that is unambiguously feasible as a",
+    "mostly-single-theme channel given live supply. Politics is 35.7%",
+    "of the corpus, society is 23.3% — combined 59%. World is scarce",
+    "(2.2% supply, 2x cap = 4.4%) so the world target is bounded even",
+    "though the channel is named 'world'. That is OK: the channel",
+    "editorial intent is 'international affairs / society' and",
+    "politics+society carries most of that weight.",
+    "",
+    "Feasibility ratios (target / corpus_share):",
+    "  world    0.04 / 0.022 = 1.82",
+    "  society  0.30 / 0.233 = 1.29",
+    "  politics 0.30 / 0.357 = 0.84",
+    "  (everything else below 1.1)",
+    "All ratios < 2.0 — passes feasibility gate."
+  ],
+
+  "soft_targets": {
+    "category_mix": {
+      "politics":      0.30,
+      "world":         0.04,
+      "society":       0.30,
+      "entertainment": 0.10,
+      "business":      0.07,
+      "technology":    0.07,
+      "sports":        0.06,
+      "ai":            0.03,
+      "science":       0.03
+    }
+  },
+
+  "ranking": {
+    "topic_boosts": {
+      "politics":      1.30,
+      "world":         1.30,
+      "society":       1.20,
+      "business":      1.05,
+      "entertainment": 0.95,
+      "technology":    0.90,
+      "science":       0.90,
+      "sports":        0.85,
+      "ai":            0.85
+    }
+  }
+}

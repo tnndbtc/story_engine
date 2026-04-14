@@ -1,0 +1,58 @@
+{
+  "profile_id": "run2_ai",
+  "extends": "story_mix.json",
+  "_notes": [
+    "12:00 run — AI / Tech / Science / Business lean.",
+    "",
+    "Given post-cleanup corpus share (tech 7.1%, ai 3.9%, science 3.5%,",
+    "business 6.6% — tech/ai/science/business cluster = 21.1% of supply),",
+    "this is a LEANING channel, not a pure channel. The feasibility gate",
+    "caps each category at 2x its corpus share. With the cluster at 42%",
+    "of the target even at 2x, 58% of the channel must come from the",
+    "other 5 categories.",
+    "",
+    "Ranking topic_boosts lift tech/ai/science/business selectively; the",
+    "soft category_mix enforces the shape via deprioritize-over-target.",
+    "No format_eligibility filter — soft shaping only.",
+    "",
+    "Feasibility ratios (target / corpus_share):",
+    "  technology    0.13 / 0.071 = 1.83",
+    "  business      0.12 / 0.066 = 1.82",
+    "  ai            0.07 / 0.039 = 1.79",
+    "  science       0.06 / 0.035 = 1.71",
+    "  entertainment 0.14 / 0.116 = 1.21",
+    "  society       0.22 / 0.233 = 0.94",
+    "  world         0.02 / 0.022 = 0.91",
+    "  politics      0.20 / 0.357 = 0.56",
+    "  sports        0.04 / 0.062 = 0.65",
+    "All ratios < 2.0 — passes feasibility gate."
+  ],
+
+  "soft_targets": {
+    "category_mix": {
+      "politics":      0.20,
+      "society":       0.22,
+      "entertainment": 0.14,
+      "technology":    0.13,
+      "business":      0.12,
+      "ai":            0.07,
+      "science":       0.06,
+      "sports":        0.04,
+      "world":         0.02
+    }
+  },
+
+  "ranking": {
+    "topic_boosts": {
+      "ai":            1.40,
+      "technology":    1.30,
+      "science":       1.25,
+      "business":      1.15,
+      "society":       1.00,
+      "entertainment": 0.90,
+      "politics":      0.85,
+      "world":         0.80,
+      "sports":        0.80
+    }
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "profile_id": "run4_business",
+  "extends": "story_mix.json",
+  "_notes": [
+    "22:00 run — Business / Finance / Tech lean.",
+    "",
+    "Similar situation to run2_ai: business is 6.6% of corpus (2x cap",
+    "= 13.2%), so a pure business channel is infeasible. This overlay",
+    "lifts business + tech to their 2x caps and uses topic_boosts to",
+    "prioritize finance content within the remaining politics/society",
+    "supply (i.e. political economy, tariffs, central bank decisions).",
+    "",
+    "Feasibility ratios (target / corpus_share):",
+    "  technology 0.13 / 0.071 = 1.83",
+    "  business   0.12 / 0.066 = 1.82",
+    "  ai         0.07 / 0.039 = 1.79",
+    "  science    0.06 / 0.035 = 1.71",
+    "  entertainment 0.15 / 0.116 = 1.29",
+    "  politics   0.21 / 0.357 = 0.59",
+    "  society    0.20 / 0.233 = 0.86",
+    "  sports     0.04 / 0.062 = 0.65",
+    "  world      0.02 / 0.022 = 0.91",
+    "All ratios < 2.0 — passes feasibility gate."
+  ],
+
+  "soft_targets": {
+    "category_mix": {
+      "politics":      0.21,
+      "society":       0.20,
+      "entertainment": 0.15,
+      "technology":    0.13,
+      "business":      0.12,
+      "ai":            0.07,
+      "science":       0.06,
+      "sports":        0.04,
+      "world":         0.02
+    }
+  },
+
+  "ranking": {
+    "topic_boosts": {
+      "business":      1.40,
+      "technology":    1.20,
+      "ai":            1.15,
+      "politics":      1.10,
+      "science":       1.05,
+      "world":         1.00,
+      "entertainment": 0.90,
+      "society":       0.90,
+      "sports":        0.80
+    }
+  }
+}

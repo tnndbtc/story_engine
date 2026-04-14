@@ -1,0 +1,13 @@
+{
+  "profile_id": "run1_legacy",
+  "extends": "story_mix.json",
+  "_notes": [
+    "06:00 run — legacy behavior, no overlay.",
+    "Exists for scheduler uniformity. An empty overlay uses base values",
+    "for every key. Passes the feasibility gate trivially because it",
+    "inherits the base category_mix (which is already gate-validated).",
+    "",
+    "Editorial intent: the 'everything' run. Same content mix as before",
+    "the channel specialization proposal landed. Safe fallback profile."
+  ]
+}

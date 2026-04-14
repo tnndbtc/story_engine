@@ -25,13 +25,22 @@ from engine.selector.schemas import TraceRecord
 logger = logging.getLogger(__name__)
 
 
-def open_trace(logs_dir: str, batch_ts: int) -> IO:
+def open_trace(logs_dir: str, batch_ts: int, metadata: dict | None = None) -> IO:
     """
     Open the trace JSONL file for this batch in append mode.
 
+    If `metadata` is provided (and the file is newly opened), writes a
+    single "batch_metadata" event as the first line. This matches the
+    existing `pass1_partial` event pattern and lets consumers that filter
+    on `event` type see the profile_id and classifier state under which
+    the batch ran, without touching the per-candidate TraceRecord schema.
+
     Args:
-        logs_dir:  Directory for log files (created if missing).
-        batch_ts:  UNIX milliseconds — used to name the file.
+        logs_dir: Directory for log files (created if missing).
+        batch_ts: UNIX milliseconds — used to name the file.
+        metadata: Optional {profile_id, keyword_map_sha, ...}. Written
+                  only when the file is empty (so multiple calls during
+                  replay don't duplicate the header).
 
     Returns:
         An open file handle in text append mode.
@@ -39,7 +48,25 @@ def open_trace(logs_dir: str, batch_ts: int) -> IO:
     """
     os.makedirs(logs_dir, exist_ok=True)
     path = os.path.join(logs_dir, f"trace_{batch_ts}.jsonl")
-    return open(path, 'a', encoding='utf-8')
+
+    # Only write the header if the file is new/empty
+    write_header = metadata is not None and (
+        not os.path.exists(path) or os.path.getsize(path) == 0
+    )
+
+    handle = open(path, 'a', encoding='utf-8')
+
+    if write_header:
+        header = {
+            "event":           "batch_metadata",
+            "batch_ts":        batch_ts,
+            "profile_id":      metadata.get("profile_id"),
+            "keyword_map_sha": metadata.get("keyword_map_sha"),
+        }
+        handle.write(json.dumps(header, ensure_ascii=False) + '\n')
+        handle.flush()
+
+    return handle
 
 
 def write_trace(handle: IO, record: TraceRecord) -> None:

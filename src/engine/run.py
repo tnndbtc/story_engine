@@ -141,11 +141,16 @@ def main():
     parser.add_argument('--dry-run', action='store_true', help='Show selections without generating')
     parser.add_argument('--hours', type=int, default=48,
                         help='Lookback window in hours for candidate fetch (default 48)')
+    parser.add_argument('--config-profile', default=os.getenv('STORY_RUN_PROFILE'),
+                        help='Per-run overlay profile id (e.g. run2_ai). Reads '
+                             'config/story_mix_<profile>.json as a shallow overlay '
+                             'on top of story_mix.json. Default: base only.')
     args = parser.parse_args()
 
     logger.info("=== story_engine generation run ===")
-    logger.info("  lang=%s  channel=%d  format=%s  dry_run=%s  hours=%d",
-                args.lang, args.channel, args.format, args.dry_run, args.hours)
+    logger.info("  lang=%s  channel=%d  format=%s  dry_run=%s  hours=%d  profile=%s",
+                args.lang, args.channel, args.format, args.dry_run, args.hours,
+                args.config_profile or '(base)')
 
     # Initialize DB (creates tables + runs migrations)
     init_db()
@@ -186,12 +191,13 @@ def main():
     # Step 2 — Run selection (all 4 stages) — one call, returns full item data
     try:
         batch_result = selector.run_batch(
-            format_ids  = format_ids,
-            db_path     = DB_PATH,
-            config_path = CONFIG_PATH,
-            lang        = args.lang,
-            channel     = args.channel,
-            hours       = args.hours,
+            format_ids     = format_ids,
+            db_path        = DB_PATH,
+            config_path    = CONFIG_PATH,
+            lang           = args.lang,
+            channel        = args.channel,
+            hours          = args.hours,
+            config_profile = args.config_profile,
         )
     except Exception as e:
         logger.error("Batch selection failed: %s", e, exc_info=True)
