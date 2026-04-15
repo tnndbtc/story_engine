@@ -354,6 +354,28 @@ def stage1_normalize(
         )
     all_candidates = _deduped
 
+    # Step 3c — Event memory classification (three-way: duplicate / new_development / new_event)
+    # duplicates    → excluded (is_used=True); same event retold within dedup window.
+    # new_development → allowed through with flag; generators frame as update.
+    # new_event     → no action; allowed through normally.
+    # Phase 1 uses Jaccard on titles; Phase 2 will use cosine on crawler embeddings.
+    _emem_decisions: dict = {}
+    try:
+        from engine.event_layer.memory import classify_candidates
+        _emem_decisions = classify_candidates(all_candidates, window_days=7)
+        for c in all_candidates:
+            decision_entry = _emem_decisions.get(c.url)
+            if decision_entry is None:
+                continue
+            decision, prior_title = decision_entry
+            if decision == 'duplicate' and not c.is_used:
+                c.is_used = True
+            elif decision == 'new_development':
+                c.is_new_development = True
+                c.prior_story_title  = prior_title
+    except Exception as _emem_exc:
+        logger.warning("event_memory classification skipped (error): %s", _emem_exc)
+
     # Step 4 — Format eligibility tagging
     for candidate in all_candidates:
         eligible: set[int] = set()
@@ -415,6 +437,10 @@ def stage1_normalize(
         # 5a. Reuse / used-item exclusion (emitted first — highest priority)
         if candidate.is_used:
             excluded_count += 1
+            # Distinguish URL reuse from event-memory semantic dedup in trace
+            is_event_dup = (
+                _emem_decisions.get(candidate.url, (None,))[0] == 'duplicate'
+            )
             trace = TraceRecord(
                 candidate_id      = candidate.candidate_id,
                 url               = candidate.url,
@@ -423,8 +449,8 @@ def stage1_normalize(
                 language          = candidate.language,
                 format_considered = None,
                 selection_status  = "excluded",
-                rejection_reasons = ["used_item"],
-                constraint_hits   = ["reuse_policy:binary_url"],
+                rejection_reasons = ["event_memory_duplicate" if is_event_dup else "used_item"],
+                constraint_hits   = ["reuse_policy:event_memory" if is_event_dup else "reuse_policy:binary_url"],
                 score             = candidate.effective_hotness,
                 hotness           = candidate.hotness,
                 rank_inputs       = {},

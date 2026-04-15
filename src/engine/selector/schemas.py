@@ -45,6 +45,12 @@ class NormalizedCandidate:
     # Reuse state (set by Stage 1)
     is_used:             bool = False
 
+    # New-development flag (set by Stage 1 event_memory classifier)
+    # True when the item is a follow-up on a recently told story —
+    # it is NOT excluded, but generators use it to frame the story as an update.
+    is_new_development:  bool = False
+    prior_story_title:   str | None = None   # title of the matched past story
+
 
 @dataclass
 class FormatFeasibility:
@@ -146,3 +152,7 @@ class BatchResult:
     partial_formats:    list[PartialFormat]
     trace_path:         str                            # path to JSONL trace log
     snapshot_path:      str                            # path to Stage 1 snapshot JSON
+    cluster_map:        dict[str, Any] = field(default_factory=dict)
+    # cluster_map: {candidate_id → EventCluster}
+    # Typed as dict[str, Any] to avoid a circular import with event_layer.clustering.
+    # Callers that need the full type can import EventCluster directly.

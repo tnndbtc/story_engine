@@ -106,17 +106,36 @@ def _dispatch_legacy(format_id, item_dicts, *, lang, channel, batch_id, batch_ts
     return gen_fn(item_dicts, **kw)
 
 
-def _candidates_to_dicts(candidates) -> list[dict]:
+def _candidate_to_source_dict(c) -> dict:
+    """Minimal dict for cluster mate articles passed to the generator."""
+    return {
+        'url':                  c.url,
+        'platform':             c.platform,
+        'hotness':              c.hotness,
+        'title_original':       c.title_original,
+        'canonical_title':      c.canonical_title,
+        'description_original': c.description_original,
+        'title':                c.canonical_title or c.title_original,
+        'id':                   c.crawler_item_id,
+    }
+
+
+def _candidates_to_dicts(candidates, cluster_map: dict | None = None) -> list[dict]:
     """
     Convert list[NormalizedCandidate] to the dict format generators expect.
-    Includes all fields generators access (verified against generator.py).
+
+    When cluster_map is provided (from event clustering), each dict is enriched
+    with fact_sources, context_sources, reaction_sources, event_hotness, and
+    cluster_size so generators can produce richer multi-source narratives.
     """
-    return [
-        {
+    result = []
+    for c in candidates:
+        d = {
             'url':                  c.url,
             'platform':             c.platform,
             'hotness':              c.hotness,
             'category':             c.category,
+            'story_category':       c.category,
             'canonical_title':      c.canonical_title,
             'title_original':       c.title_original,
             'description_original': c.description_original,
@@ -127,9 +146,29 @@ def _candidates_to_dicts(candidates) -> list[dict]:
             # Legacy field aliases expected by some generators
             'title':                c.canonical_title or c.title_original,
             'id':                   c.crawler_item_id,
+            # New-development signal (Step 7)
+            'is_new_development':   c.is_new_development,
+            'prior_story_title':    c.prior_story_title,
         }
-        for c in candidates
-    ]
+        if cluster_map and c.candidate_id in cluster_map:
+            cluster = cluster_map[c.candidate_id]
+            # Exclude the representative itself from the source lists
+            d['fact_sources']     = [
+                _candidate_to_source_dict(m) for m in cluster.fact_sources
+                if m.candidate_id != c.candidate_id
+            ]
+            d['context_sources']  = [
+                _candidate_to_source_dict(m) for m in cluster.context_sources
+                if m.candidate_id != c.candidate_id
+            ]
+            d['reaction_sources'] = [
+                _candidate_to_source_dict(m) for m in cluster.reaction_sources
+                if m.candidate_id != c.candidate_id
+            ]
+            d['event_hotness'] = cluster.event_hotness
+            d['cluster_size']  = cluster.member_count
+        result.append(d)
+    return result
 
 
 def main():
@@ -232,7 +271,7 @@ def main():
             results[format_id] = None
             continue
 
-        item_dicts = _candidates_to_dicts(candidates)
+        item_dicts = _candidates_to_dicts(candidates, cluster_map=batch_result.cluster_map)
         logger.info("  %s (format %d): generating with %d item(s)",
                     fmt_name, format_id, len(item_dicts))
 

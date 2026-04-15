@@ -155,6 +155,27 @@ def run_batch(
     # Attach snapshot path to result
     result.snapshot_path = snap_path
 
+    # 8. Event clustering — enrich selected candidates with cluster mates
+    #    Runs after Stage 4 so DB writes are already committed.
+    #    Failure is non-fatal: generators fall back to single-source mode.
+    try:
+        from engine.event_layer.clustering import build_clusters
+        from engine.event_layer.hotness import compute_event_hotness
+
+        all_selected = [
+            c for cands in result.format_assignments.values() for c in cands
+        ]
+        cluster_map = build_clusters(all_selected, candidates)
+        for cluster in cluster_map.values():
+            compute_event_hotness(cluster)
+        result.cluster_map = cluster_map
+        _logger.info(
+            "Event clustering complete: %d clusters built for %d selected candidates",
+            len(cluster_map), len(all_selected),
+        )
+    except Exception as _cluster_exc:
+        _logger.warning("Event clustering skipped (error): %s", _cluster_exc)
+
     return result
 
 

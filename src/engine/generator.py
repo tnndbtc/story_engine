@@ -14,7 +14,7 @@ import subprocess
 from pathlib import Path
 
 from db.crawler_reader import get_background_items
-from db.models import save_story, save_failed_story
+from db.models import save_story, save_failed_story, store_event
 from engine.format_registry import FORMAT_REGISTRY, FORMAT_CONTEXT_COUNTS
 
 logger = logging.getLogger(__name__)
@@ -22,6 +22,52 @@ logger = logging.getLogger(__name__)
 PROMPTS_DIR = Path(__file__).resolve().parent.parent / 'prompts'
 CLAUDE_TIMEOUT = 120  # seconds
 CLAUDE_MODEL = os.environ.get('CLAUDE_MODEL', 'sonnet')  # opus / sonnet / haiku
+
+
+def _save_story_and_remember(
+    *,
+    title: str,
+    format: str,
+    channel: int,
+    lang: str,
+    hook: str,
+    bullets: list,
+    twist: str,
+    sources: list[dict],
+    comments_used: list | None = None,
+    batch_id: int | None = None,
+    batch_ts: int | None = None,
+) -> int:
+    """
+    Save a story and record its event fingerprint in event_memory.
+
+    Wraps save_story() + store_event() so future batches can avoid
+    re-telling the same event within the 7-day dedup window.
+    store_event() failure is logged and swallowed — it must never break generation.
+    """
+    story_id = save_story(
+        title=title,
+        format=format,
+        channel=channel,
+        lang=lang,
+        hook=hook,
+        bullets=bullets,
+        twist=twist,
+        sources=sources,
+        comments_used=comments_used,
+        batch_id=batch_id,
+        batch_ts=batch_ts,
+    )
+    try:
+        store_event(
+            story_id=story_id,
+            story_set_id=batch_id,
+            story_title=title,
+            sources=sources,
+        )
+    except Exception as _e:
+        logger.warning("store_event failed (story #%d): %s", story_id, _e)
+    return story_id
 
 
 def _call_claude(prompt: str) -> str:
@@ -188,6 +234,47 @@ def _lang_instruction(lang: str) -> str:
     return "Write the script in English."
 
 
+def _build_cluster_context_block(item: dict) -> str:
+    """
+    Build a "## Corroborating Sources" prompt section from cluster mates.
+
+    Uses fact_sources and context_sources from the item dict (populated by
+    _candidates_to_dicts when cluster_map is available). Reaction sources
+    (social/Reddit) are excluded here — they appear via top_comments instead.
+
+    Returns an empty string when no cluster data is present (singleton cluster
+    or embeddings not yet available), so callers can append unconditionally.
+    """
+    fact_sources    = item.get('fact_sources', [])
+    context_sources = item.get('context_sources', [])
+    corroborating   = fact_sources + context_sources
+    if not corroborating:
+        return ''
+
+    lines = [
+        "## Corroborating Sources",
+        "NOTE: These articles cover the SAME event from different outlets. "
+        "Use them to verify facts, add quotes, or surface angles the main source missed.",
+        "",
+    ]
+    for i, src in enumerate(corroborating[:4], 1):  # cap at 4 to control token use
+        role  = 'fact' if src in fact_sources else 'context'
+        title = src.get('canonical_title') or src.get('title_original') or src.get('title', '')
+        desc  = src.get('description_original', '') or ''
+        lines.append(
+            f"Source {i} [{role}]: {src.get('platform', 'unknown')}\n"
+            f"  Title: {title}\n"
+            f"  URL: {src.get('url', '')}"
+            + (f"\n  Summary: {desc[:200]}" if desc else "")
+        )
+
+    cluster_size = item.get('cluster_size', 1)
+    if cluster_size > 1:
+        lines.append(f"\n(Event confirmed across {cluster_size} sources in total)")
+
+    return "\n".join(lines)
+
+
 def _format_source(item: dict) -> dict:
     """Format a crawler item as a source reference for the story."""
     return {
@@ -269,6 +356,20 @@ def generate_explainer(item: dict, lang: str = 'en', channel: int = 1, batch_id:
             engagement_parts.append(f"{key}: {signals[key]:,}" if isinstance(signals[key], (int, float)) else f"{key}: {signals[key]}")
     engagement_str = ', '.join(engagement_parts) if engagement_parts else 'N/A'
 
+    # New-development annotation: prepend update notice when item is a follow-up
+    update_notice = ""
+    if item.get('is_new_development') and item.get('prior_story_title'):
+        update_notice = (
+            f"\n\n[UPDATE STORY] This article is a NEW DEVELOPMENT following a story "
+            f"already told: \"{item['prior_story_title']}\". "
+            f"Frame your script as an update — acknowledge the prior context briefly, "
+            f"then focus on what is new."
+        )
+
+    # Cluster block — same-event corroboration (fact + context sources)
+    cluster_block = _build_cluster_context_block(item)
+
+    # Background context — historical/category context (different from cluster)
     context_items: list[dict] = []
     category = item.get('story_category') if item else None
     exclude_urls = [item.get('url', '')] if item else []
@@ -278,14 +379,21 @@ def generate_explainer(item: dict, lang: str = 'en', channel: int = 1, batch_id:
         limit=2,
         hours=168,
     )
-    context_block = ""
+    background_block = ""
     if context_items:
-        context_block = (
+        background_block = (
             "\n\n## Background Context\n"
             "NOTE: Do not build the story around these articles. "
             "Use them only for facts, history, statistics, and supporting detail.\n\n"
             + _build_stories_block(context_items)
         )
+
+    # Combine: update notice → cluster sources → historical background
+    context_block = update_notice
+    if cluster_block:
+        context_block += "\n\n" + cluster_block
+    if background_block:
+        context_block += background_block
 
     prompt = template.format(
         title=item.get('canonical_title') or item['title_original'],
@@ -304,7 +412,7 @@ def generate_explainer(item: dict, lang: str = 'en', channel: int = 1, batch_id:
         raw = _call_claude(prompt)
         script = _parse_json_response(raw)
 
-        story_id = save_story(
+        story_id = _save_story_and_remember(
             title=script['title'],
             format='explainer',
             channel=channel,
@@ -373,7 +481,7 @@ def generate_top5(items: list[dict], lang: str = 'en', channel: int = 1, batch_i
         raw = _call_claude(prompt)
         script = _parse_json_response(raw)
 
-        story_id = save_story(
+        story_id = _save_story_and_remember(
             title=script['title'],
             format='top5',
             channel=channel,
@@ -437,6 +545,19 @@ def _build_stories_block(
                 f"  URL: {item['url']}"
             )
 
+            # Cluster metadata: show coverage breadth when multi-source data exists
+            cluster_size = item.get('cluster_size', 0)
+            fact_count   = len(item.get('fact_sources', []))
+            if cluster_size > 1:
+                coverage = f"{cluster_size} sources"
+                if fact_count:
+                    coverage += f" (incl. {fact_count} authoritative)"
+                block += f"\n  Coverage: {coverage}"
+
+            # New-development flag: tell the LLM this is an update, not a retelling
+            if item.get('is_new_development') and item.get('prior_story_title'):
+                block += f"\n  [UPDATE] This is a new development following: \"{item['prior_story_title']}\""
+
             comments_block = _format_comments_block(item)
             if comments_block:
                 block += f"\n{comments_block}"
@@ -473,7 +594,7 @@ def generate_radar(items: list[dict], lang: str = 'zh', channel: int = 2, batch_
         raw = _call_claude(prompt)
         script = _parse_json_response(raw)
 
-        story_id = save_story(
+        story_id = _save_story_and_remember(
             title=script['title'],
             format='radar',
             channel=channel,
@@ -523,7 +644,7 @@ def generate_regional(items: list[dict], region_name: str, lang: str = 'zh', cha
         raw = _call_claude(prompt)
         script = _parse_json_response(raw)
 
-        story_id = save_story(
+        story_id = _save_story_and_remember(
             title=script['title'],
             format='regional',
             channel=channel,
@@ -560,7 +681,7 @@ def generate_two_takes(items: list[dict], lang: str = 'zh', channel: int = 2, ba
         raw = _call_claude(prompt)
         script = _parse_json_response(raw)
 
-        story_id = save_story(
+        story_id = _save_story_and_remember(
             title=script['title'],
             format='two_takes',
             channel=channel,
@@ -597,7 +718,7 @@ def generate_pattern(items: list[dict], lang: str = 'zh', channel: int = 2, batc
         raw = _call_claude(prompt)
         script = _parse_json_response(raw)
 
-        story_id = save_story(
+        story_id = _save_story_and_remember(
             title=script['title'],
             format='pattern',
             channel=channel,
@@ -646,7 +767,7 @@ def generate_viral(items: list[dict], lang: str = 'zh', channel: int = 2, batch_
         raw = _call_claude(prompt)
         script = _parse_json_response(raw)
 
-        story_id = save_story(
+        story_id = _save_story_and_remember(
             title=script['title'],
             format='viral',
             channel=channel,
@@ -696,7 +817,7 @@ def generate_deep_dive(items: list[dict], topic: str, lang: str = 'zh', channel:
         raw = _call_claude(prompt)
         script = _parse_json_response(raw)
 
-        story_id = save_story(
+        story_id = _save_story_and_remember(
             title=script['title'],
             format='deep_dive',
             channel=channel,
@@ -746,7 +867,7 @@ def generate_niche(items: list[dict], niche: str, lang: str = 'zh', channel: int
         raw = _call_claude(prompt)
         script = _parse_json_response(raw)
 
-        story_id = save_story(
+        story_id = _save_story_and_remember(
             title=script['title'],
             format='niche',
             channel=channel,
@@ -816,8 +937,15 @@ def generate_by_format(
 
     template = template_path.read_text()
     stories_block = _build_stories_block(items, context_items or None)  # includes top_comments when available
+
+    # For single-item formats, inject cluster corroboration block when available.
+    # Multi-item formats already surface cluster_size/fact_count via _render_items.
+    cluster_inject = ""
+    if len(items) == 1:
+        cluster_inject = _build_cluster_context_block(items[0])
+
     prompt = template.format(
-        stories_block=stories_block,
+        stories_block=stories_block + ("\n\n" + cluster_inject if cluster_inject else ""),
         lang_instruction=_lang_instruction(lang),
     )
 
@@ -831,7 +959,7 @@ def generate_by_format(
     try:
         script = _generate_script(prompt)
 
-        story_id = save_story(
+        story_id = _save_story_and_remember(
             title=script.get('title', format_name),
             format=format_key,
             channel=channel,

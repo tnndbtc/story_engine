@@ -381,6 +381,43 @@ def get_regional_items(
     return [_item_to_dict(row) for row in rows]
 
 
+def get_embeddings(item_ids: list[int]) -> dict[int, list[float]]:
+    """
+    Fetch embeddings for a list of crawler item IDs.
+
+    Returns {item_id: embedding_vector} for items that have a complete embedding.
+    Items without embeddings are absent from the result.
+
+    The embedding is stored in crawler_admin_itemderivation.content_body as a
+    JSON float array (BAAI/bge-small-en-v1.5, 384 dimensions).
+    """
+    if not item_ids:
+        return {}
+    conn = get_crawler_connection()
+    placeholders = ','.join('?' * len(item_ids))
+    rows = conn.execute(
+        f"""
+        SELECT item_id, content_body
+        FROM crawler_admin_itemderivation
+        WHERE item_id IN ({placeholders})
+          AND derivation_type = 'embedding'
+          AND status = 'complete'
+          AND content_body IS NOT NULL
+        """,
+        item_ids,
+    ).fetchall()
+    conn.close()
+    result: dict[int, list[float]] = {}
+    for row in rows:
+        try:
+            vec = json.loads(row['content_body'])
+            if isinstance(vec, list) and vec:
+                result[row['item_id']] = vec
+        except (json.JSONDecodeError, TypeError, KeyError):
+            pass
+    return result
+
+
 def get_item_count(hours: int = 24) -> int:
     """Get total items collected in the last N hours."""
     conn = get_crawler_connection()

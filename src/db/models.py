@@ -70,6 +70,21 @@ CREATE TABLE IF NOT EXISTS used_items (
 CREATE INDEX IF NOT EXISTS idx_used_items_crawler_id ON used_items(crawler_item_id);
 CREATE INDEX IF NOT EXISTS idx_used_items_url ON used_items(crawler_url);
 CREATE INDEX IF NOT EXISTS idx_used_items_story_set ON used_items(story_set_id);
+
+CREATE TABLE IF NOT EXISTS event_memory (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id      TEXT NOT NULL,              -- sha256[:16] of story_title
+    story_title   TEXT NOT NULL,              -- zh story title (debug)
+    source_titles TEXT NOT NULL DEFAULT '[]', -- JSON array of English source titles
+    source_urls   TEXT NOT NULL DEFAULT '[]', -- JSON array of source URLs
+    story_id      INTEGER REFERENCES stories(id),
+    story_set_id  INTEGER REFERENCES story_sets(id),
+    created_at    INTEGER NOT NULL,           -- UNIX epoch seconds
+    expires_at    INTEGER NOT NULL            -- created_at + window_days * 86400
+);
+
+CREATE INDEX IF NOT EXISTS idx_event_memory_expires  ON event_memory(expires_at);
+CREATE INDEX IF NOT EXISTS idx_event_memory_event_id ON event_memory(event_id);
 """
 
 
@@ -158,6 +173,23 @@ def init_db():
         )
     except sqlite3.OperationalError:
         pass  # column already exists
+
+    # Migration: create event_memory table if not present (2026-04-15 event dedup)
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS event_memory (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id      TEXT NOT NULL,
+            story_title   TEXT NOT NULL,
+            source_titles TEXT NOT NULL DEFAULT '[]',
+            source_urls   TEXT NOT NULL DEFAULT '[]',
+            story_id      INTEGER REFERENCES stories(id),
+            story_set_id  INTEGER REFERENCES story_sets(id),
+            created_at    INTEGER NOT NULL,
+            expires_at    INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_event_memory_expires  ON event_memory(expires_at);
+        CREATE INDEX IF NOT EXISTS idx_event_memory_event_id ON event_memory(event_id);
+    """)
 
     # Migration: convert text timestamps to UNIX integers
     _migrate_timestamps(conn)
@@ -503,6 +535,90 @@ def get_stories(
     ).fetchall()
     conn.close()
     return [_row_to_dict(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Event memory functions
+# ---------------------------------------------------------------------------
+
+def store_event(
+    story_id: int,
+    story_set_id: int | None,
+    story_title: str,
+    sources: list[dict],
+    window_days: int = 7,
+) -> None:
+    """
+    Store a generated story's event fingerprint in event_memory.
+
+    Called by generator.py after every successful save_story(). Allows the
+    event_layer/memory.py dedup module to compare future candidates against
+    recently told stories.
+
+    Args:
+        story_id:     ID of the saved story.
+        story_set_id: batch_id of the story set (same as batch_id in generator.py).
+        story_title:  zh story title — used as the event key and debug label.
+        sources:      List of source dicts from save_story() — must contain
+                      'url' and 'title' keys (same format as stories.sources JSON).
+        window_days:  How many days to retain this event in memory (default 7).
+    """
+    import hashlib as _hashlib
+    source_titles = [s.get('title') or '' for s in sources if s.get('title')]
+    source_urls   = [s.get('url')   or '' for s in sources if s.get('url')]
+    event_id      = _hashlib.sha256(story_title.encode('utf-8')).hexdigest()[:16]
+    now           = int(time.time())
+    expires_at    = now + window_days * 86400
+    conn = get_connection()
+    conn.execute(
+        """INSERT OR IGNORE INTO event_memory
+           (event_id, story_title, source_titles, source_urls,
+            story_id, story_set_id, created_at, expires_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            event_id,
+            story_title,
+            json.dumps(source_titles, ensure_ascii=False),
+            json.dumps(source_urls),
+            story_id,
+            story_set_id,
+            now,
+            expires_at,
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
+def load_recent_events(window_days: int = 7) -> list[dict]:
+    """
+    Load non-expired event memory entries (within window_days).
+
+    Returns list of dicts with keys:
+        event_id, story_title, source_titles (list), source_urls (list),
+        story_id, story_set_id, created_at, expires_at
+    """
+    now = int(time.time())
+    cutoff = now - window_days * 86400
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT * FROM event_memory WHERE expires_at > ? ORDER BY created_at DESC",
+        (now,),
+    ).fetchall()
+    conn.close()
+    result = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d['source_titles'] = json.loads(d['source_titles']) if d['source_titles'] else []
+        except (json.JSONDecodeError, TypeError):
+            d['source_titles'] = []
+        try:
+            d['source_urls'] = json.loads(d['source_urls']) if d['source_urls'] else []
+        except (json.JSONDecodeError, TypeError):
+            d['source_urls'] = []
+        result.append(d)
+    return result
 
 
 def _row_to_dict(row: sqlite3.Row) -> dict:
