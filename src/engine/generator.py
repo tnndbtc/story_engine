@@ -37,6 +37,7 @@ def _save_story_and_remember(
     comments_used: list | None = None,
     batch_id: int | None = None,
     batch_ts: int | None = None,
+    embedding_center: list[float] | None = None,
 ) -> int:
     """
     Save a story and record its event fingerprint in event_memory.
@@ -44,6 +45,12 @@ def _save_story_and_remember(
     Wraps save_story() + store_event() so future batches can avoid
     re-telling the same event within the 7-day dedup window.
     store_event() failure is logged and swallowed — it must never break generation.
+
+    Args:
+        embedding_center: Mean embedding vector of the event's source articles.
+                          Pass item.get('embedding_center') for single-event formats.
+                          Leave None for multi-item format stories.
+                          Enables Phase 2 cosine dedup in memory.py.
     """
     story_id = save_story(
         title=title,
@@ -64,6 +71,7 @@ def _save_story_and_remember(
             story_set_id=batch_id,
             story_title=title,
             sources=sources,
+            embedding_center=embedding_center,
         )
     except Exception as _e:
         logger.warning("store_event failed (story #%d): %s", story_id, _e)
@@ -423,6 +431,7 @@ def generate_explainer(item: dict, lang: str = 'en', channel: int = 1, batch_id:
             sources=[_format_source(item)],
             batch_id=batch_id,
             batch_ts=batch_ts,
+            embedding_center=item.get('embedding_center'),
         )
 
         logger.info(f"Explainer saved: story #{story_id} — {script['title'][:50]}")
@@ -971,6 +980,9 @@ def generate_by_format(
             comments_used=comments_used or None,
             batch_id=batch_id,
             batch_ts=batch_ts,
+            # Single-item formats: pass embedding_center for Phase 2 cosine dedup.
+            # Multi-item formats: None (Jaccard fallback is fine for aggregated stories).
+            embedding_center=items[0].get('embedding_center') if len(items) == 1 else None,
         )
         logger.info(f"{format_name} saved: story #{story_id} — {script.get('title', '')[:50]}")
         return story_id

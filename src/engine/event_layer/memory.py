@@ -1,82 +1,84 @@
 """
-event_layer/memory.py — Event dedup memory (Phase 1).
+event_layer/memory.py — Event dedup memory (Phase 1 + Phase 2).
 
 Compares incoming candidates against recently told stories so the pipeline
 does not re-tell the same event within the dedup window.
 
 Three-way decision
 ------------------
-duplicate       sim >= _DUPLICATE_THRESHOLD (0.35)
+duplicate       sim >= threshold
                 Same event retold. Hard-filtered if seen < 1 day ago;
                 soft repetition_penalty applied if 1–7 days ago.
 
-new_development _NEW_DEV_LOWER (0.10) <= sim < _DUPLICATE_THRESHOLD
+new_development lower <= sim < threshold
                 Clearly related (same person/topic/policy) but a different angle
                 or genuine update (e.g. "Congress reacts to Swalwell resignation"
                 after "Swalwell resigns"). Allow through; generators frame it as
                 an update, not a retelling.
 
-new_event       sim < _NEW_DEV_LOWER
+new_event       sim < lower
                 Unrelated — allow through normally.
 
-Thresholds (Jaccard, stopword-filtered tokens, calibrated on English news headlines)
--------------------------------------------------------------------------------------
-_DUPLICATE_THRESHOLD = 0.35
-    "Eric Swalwell resigns from Congress" vs "Rep Eric Swalwell resigns from
-    US House" → 0.50 (same event, caught correctly).
-    "Tony Gonzales resigns from Congress" vs Swalwell stored event → 0.33
-    (new_development — correct: same political moment, different person).
+Similarity method (auto-selected per candidate)
+-----------------------------------------------
+Phase 2 (cosine):   Used when BOTH the candidate has a crawler embedding AND
+                    the matched event has a stored embedding_center.
+                    Thresholds: _DUPLICATE_THRESHOLD_COSINE = 0.85
+                                _NEW_DEV_LOWER_COSINE       = 0.65
+                    BGE-small-en-v1.5: same-event rephrases ~0.85+,
+                    topically-related ~0.65–0.84, unrelated < 0.60.
 
-_NEW_DEV_LOWER = 0.10
-    "Swalwell successor named to fill vacated seat" vs Swalwell stored event
-    → 0.11 (shares "swalwell" token → correctly flagged as new_development).
+Phase 1 (Jaccard):  Fallback when either side lacks an embedding.
+                    Thresholds: _DUPLICATE_THRESHOLD_JACCARD = 0.35
+                                _NEW_DEV_LOWER_JACCARD       = 0.10
 
 Public API
 ----------
 classify_candidates(candidates, window_days) -> dict[str, tuple[str, str, float]]
     Returns {url: (decision, prior_story_title, days_since_last_seen)} for
-    candidates that score above _NEW_DEV_LOWER. Decision is 'duplicate' or
-    'new_development'. days_since_last_seen is the age of the matched event
-    in days. URLs absent from the result are new events (allowed through).
+    candidates that score above the active lower threshold.
+    Decision is 'duplicate' or 'new_development'.
+    days_since_last_seen is the age of the matched event in days (float).
+    URLs absent from the result are new events (allowed through).
 
 store_event(...)
     Thin delegation to db.models.store_event(). Imported here so callers only
     need to import from event_layer.memory.
-
-Phase 2 upgrade path
---------------------
-1. Crawler adds `embedding` (float[]) to trenditem rows.
-2. store_event() saves embedding_center (mean of source embeddings) to event_memory.
-3. Replace _similarity() below with cosine(candidate.embedding, event.embedding_center).
-4. Update thresholds: _DUPLICATE_THRESHOLD ≈ 0.85, _NEW_DEV_LOWER ≈ 0.65 (cosine).
 """
 
 from __future__ import annotations
 
 import logging
+import math
 import re
 import time
 
+from db.crawler_reader import get_embeddings
 from db.models import load_recent_events, store_event as _store_event  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
-# Jaccard thresholds (Phase 1, stopword-filtered tokens).
+# ---------------------------------------------------------------------------
+# Thresholds
+# ---------------------------------------------------------------------------
+
+# Phase 2 — cosine similarity (BGE-small-en-v1.5, 384-dim)
+# Used when BOTH candidate and stored event have embeddings.
+_DUPLICATE_THRESHOLD_COSINE = 0.85
+_NEW_DEV_LOWER_COSINE       = 0.65
+
+# Phase 1 — Jaccard similarity (stopword-filtered tokens)
+# Fallback when embeddings are unavailable on either side.
 #
-# _DUPLICATE_THRESHOLD = 0.35
+# _DUPLICATE_THRESHOLD_JACCARD = 0.35
 #   "Eric Swalwell resigns from Congress" vs "Rep Eric Swalwell resigns from
 #   US House" → 0.50 (caught). Set at 0.35 to exclude the 0.30–0.34 band that
 #   caused false positives on same-template-different-entity pairs.
 #
-# _NEW_DEV_LOWER = 0.10
-#   Catches follow-up angles that share one or two key tokens (a name, a topic
-#   keyword). "Swalwell successor named to fill vacated seat" shares only
-#   "swalwell" → Jaccard ≈ 0.11 (above threshold → new_development ✓).
-#   "Tony Gonzales resigns from Congress" on the day Swalwell also resigned
-#   shares "congress" + "resigns" → ≈ 0.33 (new_development — correct, they
-#   ARE related events from the same political moment).
-_DUPLICATE_THRESHOLD = 0.35   # >= this → same event retold, exclude
-_NEW_DEV_LOWER       = 0.10   # >= this (and < DUPLICATE) → new development, flag
+# _NEW_DEV_LOWER_JACCARD = 0.10
+#   Catches follow-up angles that share one or two key tokens.
+_DUPLICATE_THRESHOLD_JACCARD = 0.35
+_NEW_DEV_LOWER_JACCARD       = 0.10
 
 # Minimum token count in a title (after stopword removal) to attempt matching.
 _MIN_TOKENS = 2
@@ -112,6 +114,18 @@ _STOPWORDS: frozenset[str] = frozenset({
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+def _cosine(a: list[float], b: list[float]) -> float:
+    """Cosine similarity in pure Python (no numpy dependency)."""
+    if len(a) != len(b) or not a:
+        return 0.0
+    dot = sum(x * y for x, y in zip(a, b))
+    norm_a = math.sqrt(sum(x * x for x in a))
+    norm_b = math.sqrt(sum(y * y for y in b))
+    if norm_a == 0.0 or norm_b == 0.0:
+        return 0.0
+    return dot / (norm_a * norm_b)
+
 
 def _tokenize(text: str) -> set[str]:
     """
@@ -177,12 +191,18 @@ def classify_candidates(
     """
     Three-way classification of candidates against recent event memory.
 
-    For each candidate, computes max Jaccard similarity against all source
-    titles and the story title of events told within window_days.
+    Similarity method is auto-selected per candidate:
+      - Phase 2 (cosine): when BOTH the candidate has a crawler embedding AND
+        the best-matched event has a stored embedding_center. Uses cosine
+        thresholds (_DUPLICATE_THRESHOLD_COSINE / _NEW_DEV_LOWER_COSINE).
+      - Phase 1 (Jaccard): fallback when either side lacks an embedding. Uses
+        Jaccard thresholds (_DUPLICATE_THRESHOLD_JACCARD / _NEW_DEV_LOWER_JACCARD).
+
+    Fetches candidate embeddings in one batch DB call at the start.
 
     Returns:
         {url: (decision, prior_story_title, days_since_last_seen)} for
-        candidates scoring above _NEW_DEV_LOWER.
+        candidates scoring above the active lower threshold.
         Decision is 'duplicate' or 'new_development'.
         days_since_last_seen is the age of the matched event in days (float).
         URLs absent from the result are new events — no entry added.
@@ -191,49 +211,86 @@ def classify_candidates(
     if not recent_events:
         return {}
 
+    # Batch-fetch embeddings for all candidates in one DB round-trip.
+    item_ids = [c.crawler_item_id for c in candidates if c.crawler_item_id]
+    candidate_embeddings: dict[int, list[float]] = {}
+    if item_ids:
+        try:
+            candidate_embeddings = get_embeddings(item_ids)
+        except Exception as _emb_exc:
+            logger.warning("event_memory: embedding fetch failed, using Jaccard only: %s", _emb_exc)
+
+    cosine_count  = 0
+    jaccard_count = 0
     now = time.time()
     decisions: dict[str, tuple[str, str, float]] = {}
 
     for candidate in candidates:
-        title = candidate.title_original or ''
-        if not title:
-            continue
+        title   = candidate.title_original or ''
+        cand_emb = candidate_embeddings.get(candidate.crawler_item_id)
 
         best_sim   = 0.0
         best_event = None
+        used_cosine = False
 
         for event in recent_events:
-            sim = _best_sim_to_event(title, event)
-            if sim > best_sim:
-                best_sim   = sim
-                best_event = event
+            event_emb = event.get('embedding_center')
+            if cand_emb and event_emb:
+                # Phase 2: cosine on stored embedding_center
+                sim = _cosine(cand_emb, event_emb)
+                _cosine_used = True
+            else:
+                # Phase 1 fallback: Jaccard on title tokens
+                if not title:
+                    continue
+                sim = _best_sim_to_event(title, event)
+                _cosine_used = False
 
-        if best_sim < _NEW_DEV_LOWER or best_event is None:
+            if sim > best_sim:
+                best_sim    = sim
+                best_event  = event
+                used_cosine = _cosine_used
+
+        if best_event is None:
+            continue
+
+        # Apply thresholds appropriate to the similarity method used
+        dup_thresh = _DUPLICATE_THRESHOLD_COSINE if used_cosine else _DUPLICATE_THRESHOLD_JACCARD
+        dev_lower  = _NEW_DEV_LOWER_COSINE       if used_cosine else _NEW_DEV_LOWER_JACCARD
+
+        if best_sim < dev_lower:
             continue   # new_event — no entry
 
-        prior_title = best_event.get('story_title', '')
+        prior_title = best_event.get('story_title') or ''
         created_at  = best_event.get('created_at') or 0
         days_since  = max(0.0, (now - created_at) / 86400.0) if created_at else 999.0
+        method      = 'cosine' if used_cosine else 'jaccard'
 
-        if best_sim >= _DUPLICATE_THRESHOLD:
+        if used_cosine:
+            cosine_count += 1
+        else:
+            jaccard_count += 1
+
+        if best_sim >= dup_thresh:
             decisions[candidate.url] = ('duplicate', prior_title, days_since)
             logger.debug(
-                "event_memory duplicate: url=%r sim=%.2f days_since=%.1f matched=%r",
-                candidate.url[:70], best_sim, days_since, prior_title[:50],
+                "event_memory duplicate [%s]: url=%r sim=%.3f days_since=%.1f matched=%r",
+                method, candidate.url[:70], best_sim, days_since, prior_title[:50],
             )
         else:
             decisions[candidate.url] = ('new_development', prior_title, days_since)
             logger.debug(
-                "event_memory new_development: url=%r sim=%.2f days_since=%.1f prior=%r",
-                candidate.url[:70], best_sim, days_since, prior_title[:50],
+                "event_memory new_development [%s]: url=%r sim=%.3f days_since=%.1f prior=%r",
+                method, candidate.url[:70], best_sim, days_since, prior_title[:50],
             )
 
     dup_count = sum(1 for d, _, _2 in decisions.values() if d == 'duplicate')
     dev_count = sum(1 for d, _, _2 in decisions.values() if d == 'new_development')
-    if decisions:
+    if decisions or (cosine_count + jaccard_count) > 0:
         logger.info(
-            "event_memory: %d duplicate, %d new_development out of %d candidates",
-            dup_count, dev_count, len(candidates),
+            "event_memory: %d duplicate, %d new_development out of %d candidates "
+            "(cosine=%d jaccard=%d)",
+            dup_count, dev_count, len(candidates), cosine_count, jaccard_count,
         )
 
     return decisions

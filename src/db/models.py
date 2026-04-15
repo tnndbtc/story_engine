@@ -72,15 +72,16 @@ CREATE INDEX IF NOT EXISTS idx_used_items_url ON used_items(crawler_url);
 CREATE INDEX IF NOT EXISTS idx_used_items_story_set ON used_items(story_set_id);
 
 CREATE TABLE IF NOT EXISTS event_memory (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    event_id      TEXT NOT NULL,              -- sha256[:16] of story_title
-    story_title   TEXT NOT NULL,              -- zh story title (debug)
-    source_titles TEXT NOT NULL DEFAULT '[]', -- JSON array of English source titles
-    source_urls   TEXT NOT NULL DEFAULT '[]', -- JSON array of source URLs
-    story_id      INTEGER REFERENCES stories(id),
-    story_set_id  INTEGER REFERENCES story_sets(id),
-    created_at    INTEGER NOT NULL,           -- UNIX epoch seconds
-    expires_at    INTEGER NOT NULL            -- created_at + window_days * 86400
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id         TEXT NOT NULL,              -- sha256[:16] of story_title
+    story_title      TEXT NOT NULL,              -- zh story title (debug)
+    source_titles    TEXT NOT NULL DEFAULT '[]', -- JSON array of English source titles
+    source_urls      TEXT NOT NULL DEFAULT '[]', -- JSON array of source URLs
+    embedding_center TEXT,                       -- JSON float array (384-dim BGE); NULL for legacy rows
+    story_id         INTEGER REFERENCES stories(id),
+    story_set_id     INTEGER REFERENCES story_sets(id),
+    created_at       INTEGER NOT NULL,           -- UNIX epoch seconds
+    expires_at       INTEGER NOT NULL            -- created_at + window_days * 86400
 );
 
 CREATE INDEX IF NOT EXISTS idx_event_memory_expires  ON event_memory(expires_at);
@@ -190,6 +191,12 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_event_memory_expires  ON event_memory(expires_at);
         CREATE INDEX IF NOT EXISTS idx_event_memory_event_id ON event_memory(event_id);
     """)
+
+    # Migration: add embedding_center column to event_memory (Phase 2 cosine dedup)
+    try:
+        conn.execute("ALTER TABLE event_memory ADD COLUMN embedding_center TEXT")
+    except sqlite3.OperationalError:
+        pass  # column already exists
 
     # Migration: convert text timestamps to UNIX integers
     _migrate_timestamps(conn)
@@ -547,6 +554,7 @@ def store_event(
     story_title: str,
     sources: list[dict],
     window_days: int = 7,
+    embedding_center: list[float] | None = None,
 ) -> None:
     """
     Store a generated story's event fingerprint in event_memory.
@@ -556,30 +564,36 @@ def store_event(
     recently told stories.
 
     Args:
-        story_id:     ID of the saved story.
-        story_set_id: batch_id of the story set (same as batch_id in generator.py).
-        story_title:  zh story title — used as the event key and debug label.
-        sources:      List of source dicts from save_story() — must contain
-                      'url' and 'title' keys (same format as stories.sources JSON).
-        window_days:  How many days to retain this event in memory (default 7).
+        story_id:          ID of the saved story.
+        story_set_id:      batch_id of the story set.
+        story_title:       zh story title — used as the event key and debug label.
+        sources:           List of source dicts — must contain 'url' and 'title' keys.
+        window_days:       How many days to retain this event in memory (default 7).
+        embedding_center:  Mean embedding vector of the event's source articles
+                           (BAAI/bge-small-en-v1.5, 384-dim). When provided,
+                           memory.py uses cosine similarity (Phase 2) instead of
+                           Jaccard (Phase 1) for future dedup comparisons.
+                           None for multi-item format stories or missing embeddings.
     """
     import hashlib as _hashlib
-    source_titles = [s.get('title') or '' for s in sources if s.get('title')]
-    source_urls   = [s.get('url')   or '' for s in sources if s.get('url')]
-    event_id      = _hashlib.sha256(story_title.encode('utf-8')).hexdigest()[:16]
-    now           = int(time.time())
-    expires_at    = now + window_days * 86400
+    source_titles    = [s.get('title') or '' for s in sources if s.get('title')]
+    source_urls      = [s.get('url')   or '' for s in sources if s.get('url')]
+    event_id         = _hashlib.sha256(story_title.encode('utf-8')).hexdigest()[:16]
+    now              = int(time.time())
+    expires_at       = now + window_days * 86400
+    emb_json         = json.dumps(embedding_center) if embedding_center else None
     conn = get_connection()
     conn.execute(
         """INSERT OR IGNORE INTO event_memory
            (event_id, story_title, source_titles, source_urls,
-            story_id, story_set_id, created_at, expires_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            embedding_center, story_id, story_set_id, created_at, expires_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             event_id,
             story_title,
             json.dumps(source_titles, ensure_ascii=False),
             json.dumps(source_urls),
+            emb_json,
             story_id,
             story_set_id,
             now,
@@ -617,6 +631,12 @@ def load_recent_events(window_days: int = 7) -> list[dict]:
             d['source_urls'] = json.loads(d['source_urls']) if d['source_urls'] else []
         except (json.JSONDecodeError, TypeError):
             d['source_urls'] = []
+        # Phase 2: parse embedding_center — None for legacy rows without embeddings
+        try:
+            raw_emb = d.get('embedding_center')
+            d['embedding_center'] = json.loads(raw_emb) if raw_emb else None
+        except (json.JSONDecodeError, TypeError):
+            d['embedding_center'] = None
         result.append(d)
     return result
 

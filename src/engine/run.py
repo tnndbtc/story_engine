@@ -165,8 +165,9 @@ def _candidates_to_dicts(candidates, cluster_map: dict | None = None) -> list[di
                 _candidate_to_source_dict(m) for m in cluster.reaction_sources
                 if m.candidate_id != c.candidate_id
             ]
-            d['event_hotness'] = cluster.event_hotness
-            d['cluster_size']  = cluster.member_count
+            d['event_hotness']    = cluster.event_hotness
+            d['cluster_size']     = cluster.member_count
+            d['embedding_center'] = cluster.embedding_center  # Phase 2 dedup
         result.append(d)
     return result
 
