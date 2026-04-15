@@ -65,6 +65,13 @@ class EventCluster:
     embedding_center: list[float] | None = None      # mean of member embeddings
     event_hotness:    float = 0.0                    # set by hotness.compute_event_hotness()
     member_count:     int = 1
+    novelty_score:    float = 1.0                    # 0.0–1.0; set by selector after memory check
+                                                     # 1.0 = new event (or soft-penalised duplicate
+                                                     #        whose penalty is in effective_hotness)
+                                                     # 0.7 = new development (follow-up)
+    timeline:         list[dict] = field(default_factory=list)
+                                                     # [{timestamp, title, platform, role}]
+                                                     # sorted ascending by freshness
 
 
 # ---------------------------------------------------------------------------
@@ -202,6 +209,20 @@ def build_clusters(
         else:
             context_sources.insert(0, sel_cand)
 
+        all_members_sorted = sorted(
+            fact_sources + context_sources + reaction_sources,
+            key=lambda c: c.freshness,
+        )
+        timeline = [
+            {
+                'timestamp': c.freshness.isoformat(),
+                'title':     c.title_original or c.canonical_title or '',
+                'platform':  c.platform,
+                'role':      _source_role(c.platform),
+            }
+            for c in all_members_sorted
+        ]
+
         cluster = EventCluster(
             event_id         = event_id,
             representative   = sel_cand,
@@ -210,6 +231,7 @@ def build_clusters(
             reaction_sources = reaction_sources,
             embedding_center = _embedding_center(member_embeddings),
             member_count     = 1 + len(mates),
+            timeline         = timeline,
         )
         clusters[sel_cand.candidate_id] = cluster
 
@@ -232,6 +254,14 @@ def build_clusters(
 def _singleton_cluster(event_id: str, candidate: NormalizedCandidate) -> EventCluster:
     """Wrap a single candidate as a lone-member cluster."""
     role = _source_role(candidate.platform)
+    timeline = [
+        {
+            'timestamp': candidate.freshness.isoformat(),
+            'title':     candidate.title_original or candidate.canonical_title or '',
+            'platform':  candidate.platform,
+            'role':      role,
+        }
+    ]
     return EventCluster(
         event_id         = event_id,
         representative   = candidate,
@@ -239,4 +269,5 @@ def _singleton_cluster(event_id: str, candidate: NormalizedCandidate) -> EventCl
         context_sources  = [candidate] if role == 'context'  else [],
         reaction_sources = [candidate] if role == 'reaction' else [],
         member_count     = 1,
+        timeline         = timeline,
     )

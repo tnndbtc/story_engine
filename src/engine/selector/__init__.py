@@ -168,11 +168,36 @@ def run_batch(
         cluster_map = build_clusters(all_selected, candidates)
         for cluster in cluster_map.values():
             compute_event_hotness(cluster)
+
+        # Populate novelty_score from memory classification on representative.
+        # Note: is_used=True candidates are hard-filtered in Stage 1 Step 5 and
+        # never reach all_selected, so only two live branches exist here:
+        #   is_new_development=True → 0.7 (follow-up, fresh angle)
+        #   else                    → 1.0 (new event or soft-penalised duplicate
+        #                                  whose penalty was already applied to
+        #                                  effective_hotness in stage1_normalize)
+        _cand_lookup = {c.candidate_id: c for c in all_selected}
+        for cand_id, cluster in cluster_map.items():
+            rep = _cand_lookup.get(cand_id)
+            if rep is None:
+                continue
+            if rep.is_new_development:
+                cluster.novelty_score = 0.7
+            else:
+                cluster.novelty_score = 1.0
+
         result.cluster_map = cluster_map
         _logger.info(
             "Event clustering complete: %d clusters built for %d selected candidates",
             len(cluster_map), len(all_selected),
         )
+
+        # Build event graph — links related but distinct events
+        try:
+            from engine.event_layer.graph import build_event_graph
+            result.event_graph = build_event_graph(cluster_map)
+        except Exception as _graph_exc:
+            _logger.warning("Event graph build skipped (error): %s", _graph_exc)
     except Exception as _cluster_exc:
         _logger.warning("Event clustering skipped (error): %s", _cluster_exc)
 

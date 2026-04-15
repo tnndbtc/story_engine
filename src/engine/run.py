@@ -168,6 +168,8 @@ def _candidates_to_dicts(candidates, cluster_map: dict | None = None) -> list[di
             d['event_hotness']    = cluster.event_hotness
             d['cluster_size']     = cluster.member_count
             d['embedding_center'] = cluster.embedding_center  # Phase 2 dedup
+            d['novelty_score']    = cluster.novelty_score
+            d['timeline']         = cluster.timeline
         result.append(d)
     return result
 

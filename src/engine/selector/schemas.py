@@ -156,3 +156,7 @@ class BatchResult:
     # cluster_map: {candidate_id → EventCluster}
     # Typed as dict[str, Any] to avoid a circular import with event_layer.clustering.
     # Callers that need the full type can import EventCluster directly.
+    event_graph:        Any = None
+    # event_graph: EventGraph | None
+    # Graph linking related but distinct events via embedding cosine + entity overlap.
+    # None if clustering failed or produced < 2 clusters.
