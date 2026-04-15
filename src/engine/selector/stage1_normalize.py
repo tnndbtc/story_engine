@@ -33,6 +33,35 @@ from engine.selector.trace import open_trace, write_trace
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Unified scoring constants (event_layer signal integration)
+# ---------------------------------------------------------------------------
+
+# Novelty bonus for 'new_development' events (follow-up on a known story).
+# Applied multiplicatively to effective_hotness so these evolving stories
+# rank above stale same-score events.
+_NOVELTY_BONUS = 0.25       # +25% for a fresh angle on a known story
+
+# Soft repetition penalty based on how recently the same event was told.
+# Replaces the previous binary is_used=True filter for 'duplicate' events
+# that are older than 1 day — allows re-surfacing if the pool is thin while
+# suppressing recent spam.
+_PENALTY_VERY_RECENT = 0.30   # < 1 day: essentially suppressed
+_PENALTY_RECENT      = 0.60   # 1–3 days
+_PENALTY_AGING       = 0.80   # 3–7 days
+_PENALTY_NONE        = 1.00   # ≥ 7 days: no penalty (dedup window expired)
+
+
+def _repetition_penalty(days_since: float) -> float:
+    """Soft score multiplier based on age of the most recently told matching event."""
+    if days_since < 1.0:
+        return _PENALTY_VERY_RECENT
+    elif days_since < 3.0:
+        return _PENALTY_RECENT
+    elif days_since < 7.0:
+        return _PENALTY_AGING
+    return _PENALTY_NONE
+
 
 # Path to the crawler's auto_keywords.json (used for keyword_map_sha).
 # Derived relative to CRAWLER_DB_PATH so story_engine stays independent of
@@ -355,9 +384,21 @@ def stage1_normalize(
     all_candidates = _deduped
 
     # Step 3c — Event memory classification (three-way: duplicate / new_development / new_event)
-    # duplicates    → excluded (is_used=True); same event retold within dedup window.
-    # new_development → allowed through with flag; generators frame as update.
-    # new_event     → no action; allowed through normally.
+    #
+    # All signals from memory now flow into effective_hotness (unified scoring).
+    #
+    # duplicate (sim >= 0.35):
+    #   Very recent (< 1 day) → hard filter (is_used=True). Same story, no time gap.
+    #   Older (1–7 days)       → soft repetition_penalty on effective_hotness.
+    #                            Allows re-surfacing only if pool is thin.
+    #
+    # new_development (0.10 <= sim < 0.35):
+    #   novelty_bonus (+25%) rewards fresh angles on known stories.
+    #   Mild repetition_penalty (0.8–1.0) avoids hammering the same angle daily.
+    #
+    # new_event (sim < 0.10):
+    #   No action — full score, no penalty.
+    #
     # Phase 1 uses Jaccard on titles; Phase 2 will use cosine on crawler embeddings.
     _emem_decisions: dict = {}
     try:
@@ -367,12 +408,31 @@ def stage1_normalize(
             decision_entry = _emem_decisions.get(c.url)
             if decision_entry is None:
                 continue
-            decision, prior_title = decision_entry
-            if decision == 'duplicate' and not c.is_used:
-                c.is_used = True
+            decision, prior_title, days_since = decision_entry
+            if decision == 'duplicate':
+                if days_since < 1.0 and not c.is_used:
+                    # Hard filter: told < 1 day ago — never retell verbatim
+                    c.is_used = True
+                elif not c.is_used:
+                    # Soft penalty: allow re-surfacing but ranked well below fresh events
+                    penalty = _repetition_penalty(days_since)
+                    c.effective_hotness *= penalty
+                    logger.debug(
+                        "event_memory duplicate (soft): url=%r days_since=%.1f penalty=%.2f",
+                        c.url[:70], days_since, penalty,
+                    )
             elif decision == 'new_development':
                 c.is_new_development = True
                 c.prior_story_title  = prior_title
+                # Novelty bonus: promote follow-up angles above stale same-hotness events
+                c.effective_hotness *= (1.0 + _NOVELTY_BONUS)
+                # Mild repetition factor: avoid hammering the same angle every day
+                c.effective_hotness *= _repetition_penalty(days_since)
+                logger.debug(
+                    "event_memory new_development: url=%r days_since=%.1f "
+                    "effective_hotness→%.1f",
+                    c.url[:70], days_since, c.effective_hotness,
+                )
     except Exception as _emem_exc:
         logger.warning("event_memory classification skipped (error): %s", _emem_exc)
 

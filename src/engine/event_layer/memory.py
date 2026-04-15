@@ -32,10 +32,11 @@ _NEW_DEV_LOWER = 0.10
 
 Public API
 ----------
-classify_candidates(candidates, window_days) -> dict[str, tuple[str, str]]
-    Returns {url: (decision, prior_story_title)} for candidates that score
-    above _NEW_DEV_LOWER. Decision is 'duplicate' or 'new_development'.
-    URLs absent from the result are new events (allowed through unchanged).
+classify_candidates(candidates, window_days) -> dict[str, tuple[str, str, float]]
+    Returns {url: (decision, prior_story_title, days_since_last_seen)} for
+    candidates that score above _NEW_DEV_LOWER. Decision is 'duplicate' or
+    'new_development'. days_since_last_seen is the age of the matched event
+    in days. URLs absent from the result are new events (allowed through).
 
 store_event(...)
     Thin delegation to db.models.store_event(). Imported here so callers only
@@ -53,6 +54,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 
 from db.models import load_recent_events, store_event as _store_event  # noqa: F401
 
@@ -170,7 +172,7 @@ def _best_sim_to_event(candidate_title: str, event: dict) -> float:
 def classify_candidates(
     candidates,          # list[NormalizedCandidate]
     window_days: int = 7,
-) -> dict[str, tuple[str, str]]:
+) -> dict[str, tuple[str, str, float]]:
     """
     Three-way classification of candidates against recent event memory.
 
@@ -178,15 +180,18 @@ def classify_candidates(
     titles and the story title of events told within window_days.
 
     Returns:
-        {url: (decision, prior_story_title)} for candidates scoring above
-        _NEW_DEV_LOWER. Decision is 'duplicate' or 'new_development'.
+        {url: (decision, prior_story_title, days_since_last_seen)} for
+        candidates scoring above _NEW_DEV_LOWER.
+        Decision is 'duplicate' or 'new_development'.
+        days_since_last_seen is the age of the matched event in days (float).
         URLs absent from the result are new events — no entry added.
     """
     recent_events = load_recent_events(window_days=window_days)
     if not recent_events:
         return {}
 
-    decisions: dict[str, tuple[str, str]] = {}
+    now = time.time()
+    decisions: dict[str, tuple[str, str, float]] = {}
 
     for candidate in candidates:
         title = candidate.title_original or ''
@@ -206,22 +211,24 @@ def classify_candidates(
             continue   # new_event — no entry
 
         prior_title = best_event.get('story_title', '')
+        created_at  = best_event.get('created_at') or 0
+        days_since  = max(0.0, (now - created_at) / 86400.0) if created_at else 999.0
 
         if best_sim >= _DUPLICATE_THRESHOLD:
-            decisions[candidate.url] = ('duplicate', prior_title)
+            decisions[candidate.url] = ('duplicate', prior_title, days_since)
             logger.debug(
-                "event_memory duplicate: url=%r sim=%.2f matched=%r",
-                candidate.url[:70], best_sim, prior_title[:50],
+                "event_memory duplicate: url=%r sim=%.2f days_since=%.1f matched=%r",
+                candidate.url[:70], best_sim, days_since, prior_title[:50],
             )
         else:
-            decisions[candidate.url] = ('new_development', prior_title)
+            decisions[candidate.url] = ('new_development', prior_title, days_since)
             logger.debug(
-                "event_memory new_development: url=%r sim=%.2f prior=%r",
-                candidate.url[:70], best_sim, prior_title[:50],
+                "event_memory new_development: url=%r sim=%.2f days_since=%.1f prior=%r",
+                candidate.url[:70], best_sim, days_since, prior_title[:50],
             )
 
-    dup_count = sum(1 for d, _ in decisions.values() if d == 'duplicate')
-    dev_count = sum(1 for d, _ in decisions.values() if d == 'new_development')
+    dup_count = sum(1 for d, _, _2 in decisions.values() if d == 'duplicate')
+    dev_count = sum(1 for d, _, _2 in decisions.values() if d == 'new_development')
     if decisions:
         logger.info(
             "event_memory: %d duplicate, %d new_development out of %d candidates",
