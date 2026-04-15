@@ -78,6 +78,7 @@ CREATE TABLE IF NOT EXISTS event_memory (
     source_titles    TEXT NOT NULL DEFAULT '[]', -- JSON array of English source titles
     source_urls      TEXT NOT NULL DEFAULT '[]', -- JSON array of source URLs
     embedding_center TEXT,                       -- JSON float array (384-dim BGE); NULL for legacy rows
+    entities         TEXT,                       -- JSON array of {text, type}; NULL for legacy rows
     story_id         INTEGER REFERENCES stories(id),
     story_set_id     INTEGER REFERENCES story_sets(id),
     created_at       INTEGER NOT NULL,           -- UNIX epoch seconds
@@ -195,6 +196,12 @@ def init_db():
     # Migration: add embedding_center column to event_memory (Phase 2 cosine dedup)
     try:
         conn.execute("ALTER TABLE event_memory ADD COLUMN embedding_center TEXT")
+    except sqlite3.OperationalError:
+        pass  # column already exists
+
+    # Migration: add entities column to event_memory (LLM entity extraction)
+    try:
+        conn.execute("ALTER TABLE event_memory ADD COLUMN entities TEXT")
     except sqlite3.OperationalError:
         pass  # column already exists
 
@@ -555,6 +562,7 @@ def store_event(
     sources: list[dict],
     window_days: int = 7,
     embedding_center: list[float] | None = None,
+    entities: list[dict] | None = None,
 ) -> None:
     """
     Store a generated story's event fingerprint in event_memory.
@@ -574,6 +582,9 @@ def store_event(
                            memory.py uses cosine similarity (Phase 2) instead of
                            Jaccard (Phase 1) for future dedup comparisons.
                            None for multi-item format stories or missing embeddings.
+        entities:          List of {text, type} dicts extracted by LLM (Haiku).
+                           e.g. [{"text": "Eric Swalwell", "type": "PERSON"}, ...]
+                           None if extraction failed or was not attempted.
     """
     import hashlib as _hashlib
     source_titles    = [s.get('title') or '' for s in sources if s.get('title')]
@@ -582,18 +593,20 @@ def store_event(
     now              = int(time.time())
     expires_at       = now + window_days * 86400
     emb_json         = json.dumps(embedding_center) if embedding_center else None
+    ent_json         = json.dumps(entities, ensure_ascii=False) if entities else None
     conn = get_connection()
     conn.execute(
         """INSERT OR IGNORE INTO event_memory
            (event_id, story_title, source_titles, source_urls,
-            embedding_center, story_id, story_set_id, created_at, expires_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            embedding_center, entities, story_id, story_set_id, created_at, expires_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             event_id,
             story_title,
             json.dumps(source_titles, ensure_ascii=False),
             json.dumps(source_urls),
             emb_json,
+            ent_json,
             story_id,
             story_set_id,
             now,
@@ -637,6 +650,12 @@ def load_recent_events(window_days: int = 7) -> list[dict]:
             d['embedding_center'] = json.loads(raw_emb) if raw_emb else None
         except (json.JSONDecodeError, TypeError):
             d['embedding_center'] = None
+        # Entities: parse JSON array — None for legacy rows
+        try:
+            raw_ent = d.get('entities')
+            d['entities'] = json.loads(raw_ent) if raw_ent else None
+        except (json.JSONDecodeError, TypeError):
+            d['entities'] = None
         result.append(d)
     return result
 

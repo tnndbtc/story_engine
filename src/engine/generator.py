@@ -24,6 +24,88 @@ CLAUDE_TIMEOUT = 120  # seconds
 CLAUDE_MODEL = os.environ.get('CLAUDE_MODEL', 'sonnet')  # opus / sonnet / haiku
 
 
+def _extract_entities(title: str, sources: list[dict]) -> list[dict] | None:
+    """
+    Extract named entities from a story title + source titles using Claude Haiku.
+
+    Returns a list of {text, type} dicts, e.g.:
+        [{"text": "Eric Swalwell", "type": "PERSON"},
+         {"text": "Congress",      "type": "ORG"},
+         {"text": "Washington",    "type": "GPE"}]
+
+    Entity types: PERSON, ORG, GPE (place), EVENT, PRODUCT, DATE
+    Returns None on any failure — callers must treat None gracefully.
+    Failure is logged and swallowed; entity extraction must never block saving.
+    """
+    source_titles = [s.get('title') or s.get('title_original') or '' for s in sources if s]
+    source_titles = [t for t in source_titles if t][:3]  # cap at 3 source titles
+
+    text_block = f"Story title: {title}"
+    if source_titles:
+        text_block += "\nSource titles:\n" + "\n".join(f"- {t}" for t in source_titles)
+
+    prompt = (
+        f"{text_block}\n\n"
+        "Extract all named entities from the text above.\n"
+        "Return a JSON array of objects with 'text' and 'type' fields.\n"
+        "Types: PERSON, ORG, GPE, EVENT, PRODUCT, DATE\n"
+        "Return ONLY the JSON array. No explanation. Example:\n"
+        '[{"text": "Eric Swalwell", "type": "PERSON"}, {"text": "Congress", "type": "ORG"}]'
+    )
+
+    try:
+        result = subprocess.run(
+            [
+                'claude', '-p',
+                '--model', 'haiku',
+                '--system-prompt',
+                'You are a named entity extractor. Output ONLY a valid JSON array. '
+                'No markdown, no explanation. Start with [ and end with ].',
+                '--disable-slash-commands',
+                '--tools', '',
+                '--setting-sources', 'user',
+                '--no-session-persistence',
+                '--output-format', 'text',
+            ],
+            input=prompt,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode != 0:
+            logger.warning("_extract_entities: claude -p failed (exit %d)", result.returncode)
+            return None
+
+        raw = result.stdout.strip()
+        # Strip markdown fences if present
+        if raw.startswith('```'):
+            raw = raw.split('```')[1]
+            if raw.startswith('json'):
+                raw = raw[4:]
+            raw = raw.strip()
+
+        entities = json.loads(raw)
+        if not isinstance(entities, list):
+            logger.warning("_extract_entities: unexpected response type %s", type(entities))
+            return None
+
+        # Validate and clean: keep only dicts with text + type
+        valid = [
+            {'text': e['text'], 'type': e['type']}
+            for e in entities
+            if isinstance(e, dict) and e.get('text') and e.get('type')
+        ]
+        logger.debug("_extract_entities: extracted %d entities from %r", len(valid), title[:50])
+        return valid or None
+
+    except (subprocess.TimeoutExpired, FileNotFoundError, json.JSONDecodeError) as _e:
+        logger.warning("_extract_entities failed: %s", _e)
+        return None
+    except Exception as _e:
+        logger.warning("_extract_entities unexpected error: %s", _e)
+        return None
+
+
 def _save_story_and_remember(
     *,
     title: str,
@@ -66,12 +148,14 @@ def _save_story_and_remember(
         batch_ts=batch_ts,
     )
     try:
+        entities = _extract_entities(title, sources)
         store_event(
             story_id=story_id,
             story_set_id=batch_id,
             story_title=title,
             sources=sources,
             embedding_center=embedding_center,
+            entities=entities,
         )
     except Exception as _e:
         logger.warning("store_event failed (story #%d): %s", story_id, _e)
