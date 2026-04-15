@@ -53,7 +53,10 @@ _PENALTY_NONE        = 1.00   # ≥ 7 days: no penalty (dedup window expired)
 
 
 def _repetition_penalty(days_since: float) -> float:
-    """Soft score multiplier based on age of the most recently told matching event."""
+    """
+    Soft score multiplier for DUPLICATE events based on recency.
+    Used only when decision == 'duplicate' and days_since >= 1.0.
+    """
     if days_since < 1.0:
         return _PENALTY_VERY_RECENT
     elif days_since < 3.0:
@@ -61,6 +64,29 @@ def _repetition_penalty(days_since: float) -> float:
     elif days_since < 7.0:
         return _PENALTY_AGING
     return _PENALTY_NONE
+
+
+def _new_dev_repetition_factor(days_since: float) -> float:
+    """
+    Softer repetition factor for NEW_DEVELOPMENT events.
+
+    new_development events are genuine new angles on a known story — they
+    should always score AT LEAST as high as a fresh unrelated event.
+    Net multiplier with novelty bonus: (1 + 0.25) × factor >= 1.0 for all tiers.
+
+    Tiers (combined with _NOVELTY_BONUS = 0.25):
+      < 1 day:   1.25 × 0.80 = 1.00  (no net penalty for same-day follow-up)
+      1–3 days:  1.25 × 0.88 = 1.10  (slight lift — update is still fresh)
+      3–7 days:  1.25 × 0.96 = 1.20  (stronger lift — story is maturing)
+      ≥ 7 days:  1.25 × 1.00 = 1.25  (max novelty boost, dedup window almost done)
+    """
+    if days_since < 1.0:
+        return 0.80
+    elif days_since < 3.0:
+        return 0.88
+    elif days_since < 7.0:
+        return 0.96
+    return 1.00
 
 
 # Path to the crawler's auto_keywords.json (used for keyword_map_sha).
@@ -426,8 +452,11 @@ def stage1_normalize(
                 c.prior_story_title  = prior_title
                 # Novelty bonus: promote follow-up angles above stale same-hotness events
                 c.effective_hotness *= (1.0 + _NOVELTY_BONUS)
-                # Mild repetition factor: avoid hammering the same angle every day
-                c.effective_hotness *= _repetition_penalty(days_since)
+                # Softer repetition factor (never < 0.80): new angle, not a retelling.
+                # Net multiplier always >= 1.0 so new developments outrank same-score
+                # fresh events at every age tier. Uses _new_dev_repetition_factor,
+                # NOT _repetition_penalty (which goes as low as 0.30 for duplicates).
+                c.effective_hotness *= _new_dev_repetition_factor(days_since)
                 logger.debug(
                     "event_memory new_development: url=%r days_since=%.1f "
                     "effective_hotness→%.1f",

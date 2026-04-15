@@ -7,7 +7,8 @@ does not re-tell the same event within the dedup window.
 Three-way decision
 ------------------
 duplicate       sim >= _DUPLICATE_THRESHOLD (0.35)
-                Same event retold — exclude from selection.
+                Same event retold. Hard-filtered if seen < 1 day ago;
+                soft repetition_penalty applied if 1–7 days ago.
 
 new_development _NEW_DEV_LOWER (0.10) <= sim < _DUPLICATE_THRESHOLD
                 Clearly related (same person/topic/policy) but a different angle
