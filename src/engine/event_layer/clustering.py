@@ -4,8 +4,16 @@ event_layer/clustering.py — Event clustering via embedding cosine similarity.
 For each selected candidate, finds cluster mates among the full candidate pool
 using cosine similarity on crawler embeddings (BAAI/bge-small-en-v1.5, 384-dim).
 
-Phase 1 (current): cosine threshold only (fast, no LLM cost).
-Phase 2 (future):  add LLM classifier for borderline pairs (0.60–0.75 range).
+Two-tier clustering decision (Option A upgrade):
+  Layer 1 — candidate filter:  cosine >= COSINE_CLUSTER_THRESHOLD (0.75)
+  Layer 2 — validation gate:   auto-merge if cosine >= COSINE_AUTO_MERGE (0.85),
+                                otherwise require >= 1 shared keyword in titles.
+
+This prevents topically-related-but-distinct events from merging incorrectly
+while still catching same-event rephrases across locales and platforms.
+
+Phase 3 (future): LLM classifier for borderline pairs where keyword check is
+                  unreliable (e.g. very short titles, pure CJK vs pure EN).
 
 Source role classification (platform-based):
   fact:     Reuters / AP / BBC / Guardian / NYT / WaPo / Al Jazeera / FT / Bloomberg
@@ -14,10 +22,12 @@ Source role classification (platform-based):
 
 Key constants
 -------------
+COSINE_AUTO_MERGE = 0.85
+    Auto-accept threshold: same-event rephrases on BGE-small-en-v1.5 score here.
+
 COSINE_CLUSTER_THRESHOLD = 0.75
-    Two articles scoring >= this share the same real-world event. Calibrated
-    against BGE-small-en-v1.5: same-event rephrases typically score 0.85+,
-    topically-related-but-different score 0.60-0.74, unrelated < 0.50.
+    Candidate filter: items in [0.75, 0.85) are accepted only with keyword overlap.
+    Items below 0.75 fall into the event_graph band (related but distinct events).
 
 MAX_CLUSTER_MEMBERS = 5
     Cap on corroborating sources per cluster to bound prompt size.
@@ -28,6 +38,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import math
+import re
 from dataclasses import dataclass, field
 from datetime import timezone
 
@@ -36,7 +47,12 @@ from engine.selector.schemas import NormalizedCandidate
 
 logger = logging.getLogger(__name__)
 
-COSINE_CLUSTER_THRESHOLD = 0.75
+# Two-tier clustering thresholds:
+#   >= COSINE_AUTO_MERGE   → same event, merge immediately (high confidence)
+#   >= COSINE_CLUSTER_THRESHOLD and keyword overlap >= 1 → merge after validation
+#   <  COSINE_CLUSTER_THRESHOLD → reject (or fall into event_graph band)
+COSINE_AUTO_MERGE        = 0.85   # auto-accept: no further validation needed
+COSINE_CLUSTER_THRESHOLD = 0.75   # candidate filter: requires keyword validation
 MAX_CLUSTER_MEMBERS = 5
 
 FACT_PLATFORMS: frozenset[str] = frozenset({
@@ -74,6 +90,25 @@ class EventCluster:
                                                      # sorted ascending by freshness
 
 
+# Stopwords for keyword overlap (mirrors memory.py — kept local to avoid coupling)
+_STOPWORDS: frozenset[str] = frozenset({
+    'a', 'an', 'the', 'this', 'that', 'these', 'those',
+    'from', 'to', 'in', 'on', 'at', 'by', 'for', 'with', 'as', 'of',
+    'about', 'into', 'through', 'over', 'under', 'after', 'before',
+    'between', 'up', 'down', 'out', 'off', 'and', 'or', 'but', 'nor',
+    'so', 'yet', 'both', 'either', 'neither', 'than', 'not', 'no',
+    'it', 'its', 'he', 'she', 'they', 'we', 'you', 'i',
+    'his', 'her', 'their', 'our', 'your', 'my',
+    'me', 'him', 'them', 'us', 'who', 'which', 'what', 'where',
+    'is', 'are', 'was', 'were', 'be', 'been', 'being',
+    'have', 'has', 'had', 'do', 'does', 'did',
+    'will', 'would', 'shall', 'should', 'may', 'might', 'can', 'could',
+    'also', 'just', 'still', 'now', 'here', 'there', 'when', 'how', 'why',
+    'more', 'most', 'much', 'many', 'some', 'any', 'all', 'each', 'every',
+    'says', 'said', 'say',
+})
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
@@ -88,6 +123,41 @@ def _cosine(a: list[float], b: list[float]) -> float:
     if norm_a == 0.0 or norm_b == 0.0:
         return 0.0
     return dot / (norm_a * norm_b)
+
+
+def _tokenize(text: str) -> set[str]:
+    """Lowercase alphanumeric tokens (ASCII + CJK), stopwords removed."""
+    tokens = set(re.findall(r"[a-zA-Z0-9\u4e00-\u9fff]+", text.lower()))
+    return tokens - _STOPWORDS
+
+
+def _keyword_overlap(a: NormalizedCandidate, b: NormalizedCandidate) -> bool:
+    """
+    Return True when the two candidates share at least one meaningful keyword.
+
+    Used as the validation gate for borderline cosine pairs (0.75 <= sim < 0.85).
+
+    Two-pass comparison to handle cross-locale pairs (e.g. ZH vs EN):
+      Pass 1 — title_original: works when both posts are in the same language.
+               A ZH post vs EN post will have zero token overlap here.
+      Pass 2 — canonical_title: English-normalised title present for all items.
+               Cross-locale pairs that share an event will overlap here even
+               when their title_original tokens are disjoint.
+    Returns True as soon as either pass finds overlap.
+    """
+    # Pass 1: title_original (same-locale pairs)
+    orig_a = a.title_original or ''
+    orig_b = b.title_original or ''
+    if orig_a and orig_b and (_tokenize(orig_a) & _tokenize(orig_b)):
+        return True
+
+    # Pass 2: canonical_title (cross-locale pairs — both normalised to English)
+    canon_a = a.canonical_title or ''
+    canon_b = b.canonical_title or ''
+    if canon_a and canon_b and (_tokenize(canon_a) & _tokenize(canon_b)):
+        return True
+
+    return False
 
 
 def _source_role(platform: str) -> str:
@@ -123,8 +193,10 @@ def build_clusters(
     Build EventCluster objects for each selected candidate.
 
     For each selected candidate that has an embedding, scans the full pool
-    for cluster mates above COSINE_CLUSTER_THRESHOLD and classifies them by
-    source role (fact / context / reaction).
+    for cluster mates using the two-tier decision:
+      sim >= COSINE_AUTO_MERGE (0.85)        → auto-merge
+      sim >= COSINE_CLUSTER_THRESHOLD (0.75) → merge only if keyword overlap >= 1
+    Mates are classified by source role (fact / context / reaction).
 
     Candidates without embeddings become singleton clusters with the
     representative classified into the appropriate role bucket.
@@ -169,14 +241,20 @@ def build_clusters(
             clusters[sel_cand.candidate_id] = cluster
             continue
 
-        # Score every pool candidate against the selected one
+        # Score every pool candidate against the selected one.
+        # Two-tier decision:
+        #   sim >= COSINE_AUTO_MERGE (0.85)        → same event, auto-accept
+        #   sim >= COSINE_CLUSTER_THRESHOLD (0.75) → candidate; accept only if
+        #                                            titles share >= 1 keyword
         mates: list[tuple[float, NormalizedCandidate]] = []
         for pool_cand, pool_emb in pool_index:
             if pool_cand.candidate_id == sel_cand.candidate_id:
                 continue
             sim = _cosine(sel_emb, pool_emb)
-            if sim >= COSINE_CLUSTER_THRESHOLD:
-                mates.append((sim, pool_cand))
+            if sim >= COSINE_AUTO_MERGE:
+                mates.append((sim, pool_cand))                  # auto-merge
+            elif sim >= COSINE_CLUSTER_THRESHOLD and _keyword_overlap(sel_cand, pool_cand):
+                mates.append((sim, pool_cand))                  # validated merge
 
         # Keep top MAX_CLUSTER_MEMBERS by similarity
         mates.sort(key=lambda x: -x[0])
@@ -236,10 +314,13 @@ def build_clusters(
         clusters[sel_cand.candidate_id] = cluster
 
         if mates:
+            auto_count      = sum(1 for sim, _ in mates if sim >= COSINE_AUTO_MERGE)
+            validated_count = len(mates) - auto_count
             logger.debug(
-                "Cluster %r: %d mates (fact=%d ctx=%d react=%d)",
-                sel_cand.title_original[:50],
-                len(mates), len(fact_sources), len(context_sources), len(reaction_sources),
+                "Cluster %r: %d mates (auto=%d validated=%d | fact=%d ctx=%d react=%d)",
+                (sel_cand.title_original or sel_cand.canonical_title or '')[:50],
+                len(mates), auto_count, validated_count,
+                len(fact_sources), len(context_sources), len(reaction_sources),
             )
 
     embedded_count = sum(1 for c in selected if c.crawler_item_id in embeddings)
