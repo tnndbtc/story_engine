@@ -37,7 +37,9 @@ from engine.generator import (
     generate_deep_dive,
     generate_niche,
     generate_by_format,
+    generate_story_batch,
 )
+from engine.selector.story_orchestrate import story_orchestrate
 
 # Config path — story_mix.json lives at the project root (two levels above src/)
 CONFIG_PATH = str(Path(__file__).resolve().parent.parent.parent / 'story_mix.json')
@@ -178,9 +180,18 @@ def main():
     parser = argparse.ArgumentParser(description='Generate stories from crawled data')
     parser.add_argument('--lang', choices=['en', 'zh'], default='en', help='Output language')
     parser.add_argument('--channel', type=int, choices=[1, 2, 3], default=1, help='Output channel')
-    parser.add_argument('--format', nargs='+', default=['all'],
-                        help='Formats to generate (space-separated): all, all_extended, explainer, top5, format_10, ...')
+    parser.add_argument('--format', nargs='+', default=None,
+                        help='Formats to generate (space-separated): all, all_extended, explainer, top5, format_10, ... '
+                             'Omit entirely when using --deep-story-only.')
     parser.add_argument('--dry-run', action='store_true', help='Show selections without generating')
+    parser.add_argument('--deep-story', action='store_true',
+                        help='Generate a hierarchical deep story + supporting stories batch')
+    parser.add_argument('--deep-story-only', action='store_true',
+                        help='Run ONLY the deep story pipeline — skip all flat format generation. '
+                             'Implies --deep-story. Use this to replace the formats 1-9 run with deep story.')
+    parser.add_argument('--no-repetition-penalty', action='store_true',
+                        help='(Phase 3.2) Disable the repetition penalty that down-scores '
+                             'clusters seen in recent batches. Penalty is ON by default.')
     parser.add_argument('--hours', type=int, default=48,
                         help='Lookback window in hours for candidate fetch (default 48)')
     parser.add_argument('--config-profile', default=os.getenv('STORY_RUN_PROFILE'),
@@ -189,17 +200,26 @@ def main():
                              'on top of story_mix.json. Default: base only.')
     args = parser.parse_args()
 
+    # --deep-story-only implies --deep-story
+    if args.deep_story_only:
+        args.deep_story = True
+
     logger.info("=== story_engine generation run ===")
-    logger.info("  lang=%s  channel=%d  format=%s  dry_run=%s  hours=%d  profile=%s",
+    logger.info("  lang=%s  channel=%d  format=%s  dry_run=%s  hours=%d  profile=%s  deep_story=%s  deep_story_only=%s",
                 args.lang, args.channel, args.format, args.dry_run, args.hours,
-                args.config_profile or '(base)')
+                args.config_profile or '(base)', args.deep_story, args.deep_story_only)
 
     # Initialize DB (creates tables + runs migrations)
     init_db()
 
     # Step 1 — Convert CLI format strings to int IDs
+    # In --deep-story-only mode, we still run selection with formats 1-9 so that
+    # Stage 4 assigns candidates and build_clusters() has representatives to work with.
+    # Flat format GENERATION is skipped in Step 3, but the selection pipeline must
+    # see real format_ids — otherwise all_selected=[] → cluster_map={} → nothing generated.
     format_ids: list[int] = []
-    for f in args.format:
+    fmt_input = args.format or ['all']
+    for f in fmt_input:
         if f == 'all':
             format_ids.extend(range(1, 10))        # legacy 1–9
         elif f == 'all_extended':
@@ -224,13 +244,23 @@ def main():
             deduped.append(fid)
     format_ids = deduped
 
-    logger.info("Running %d format(s): %s", len(format_ids), format_ids)
+    if args.deep_story_only:
+        logger.info(
+            "--deep-story-only: selection will use %d format(s) to seed clustering "
+            "(flat generation skipped)",
+            len(format_ids),
+        )
+    else:
+        logger.info("Running %d format(s): %s", len(format_ids), format_ids)
 
     if args.dry_run:
         logger.info("[DRY RUN] Selection and generation skipped")
         return 0
 
     # Step 2 — Run selection (all 4 stages) — one call, returns full item data
+    # In deep-story-only mode, format_ids is still populated (1–9 by default) so
+    # Stage 4 assigns candidates and build_clusters() has representatives to cluster.
+    # The flat format generation loop in Step 3 is the only thing skipped.
     try:
         batch_result = selector.run_batch(
             format_ids     = format_ids,
@@ -264,67 +294,113 @@ def main():
             )
 
     # Step 3 — Run generation per format using pre-selected items
+    # Skipped entirely in --deep-story-only mode.
     results: dict[int, int | None] = {}
 
-    for format_id, candidates in batch_result.format_assignments.items():
-        fmt_name = FORMAT_NAMES.get(format_id, f'format_{format_id}')
+    if not args.deep_story_only:
+        for format_id, candidates in batch_result.format_assignments.items():
+            fmt_name = FORMAT_NAMES.get(format_id, f'format_{format_id}')
 
-        if not candidates:
-            logger.info("  %s (format %d): no items assigned — skipping", fmt_name, format_id)
-            results[format_id] = None
-            continue
+            if not candidates:
+                logger.info("  %s (format %d): no items assigned — skipping", fmt_name, format_id)
+                results[format_id] = None
+                continue
 
-        item_dicts = _candidates_to_dicts(candidates, cluster_map=batch_result.cluster_map)
-        logger.info("  %s (format %d): generating with %d item(s)",
-                    fmt_name, format_id, len(item_dicts))
+            item_dicts = _candidates_to_dicts(candidates, cluster_map=batch_result.cluster_map)
+            logger.info("  %s (format %d): generating with %d item(s)",
+                        fmt_name, format_id, len(item_dicts))
 
-        try:
-            if format_id <= 9:
-                story_id = _dispatch_legacy(
-                    format_id, item_dicts,
-                    lang=args.lang, channel=args.channel,
-                    batch_id=set_id, batch_ts=batch_ts,
+            try:
+                if format_id <= 9:
+                    story_id = _dispatch_legacy(
+                        format_id, item_dicts,
+                        lang=args.lang, channel=args.channel,
+                        batch_id=set_id, batch_ts=batch_ts,
+                    )
+                else:
+                    story_id = generate_by_format(
+                        format_id, item_dicts,
+                        lang=args.lang, channel=args.channel,
+                        batch_id=set_id, batch_ts=batch_ts,
+                    )
+                results[format_id] = story_id
+            except Exception as e:
+                logger.error("  %s (format %d) generation failed: %s", fmt_name, format_id, e)
+                results[format_id] = None
+
+    # Step 3b — Deep story generation (opt-in via --deep-story flag)
+    if args.deep_story:
+        cluster_map = batch_result.cluster_map
+        if not cluster_map:
+            logger.warning("--deep-story: no cluster_map available — skipping")
+        elif len(cluster_map) < 2:
+            logger.warning(
+                "--deep-story: only %d cluster(s) available — need at least 2 "
+                "(1 deep + 1 supporting). Skipping.",
+                len(cluster_map),
+            )
+        else:
+            logger.info("--deep-story: orchestrating %d clusters...", len(cluster_map))
+            try:
+                orchestration_result = story_orchestrate(
+                    cluster_map,
+                    apply_repetition_penalty=not args.no_repetition_penalty,
                 )
-            else:
-                story_id = generate_by_format(
-                    format_id, item_dicts,
-                    lang=args.lang, channel=args.channel,
-                    batch_id=set_id, batch_ts=batch_ts,
-                )
-            results[format_id] = story_id
-        except Exception as e:
-            logger.error("  %s (format %d) generation failed: %s", fmt_name, format_id, e)
-            results[format_id] = None
+                if orchestration_result is None:
+                    logger.warning("--deep-story: story_orchestrate() returned None — skipping")
+                else:
+                    generate_story_batch(
+                        orchestration_result = orchestration_result,
+                        lang     = args.lang,
+                        channel  = args.channel,
+                        batch_id = set_id,
+                        batch_ts = batch_ts,
+                    )
+                    logger.info("--deep-story: hierarchical story batch saved successfully")
+            except Exception as _deep_err:
+                logger.error("--deep-story: generation failed — %s", _deep_err, exc_info=True)
+                # Non-fatal: flat format generation is unaffected
 
     # Step 4 — Mark story set status (generation outcome)
-    succeeded = sum(1 for v in results.values() if v is not None)
-    total = len(results)
-    if succeeded == total and not batch_result.partial:
+    if args.deep_story_only:
+        # No flat formats were attempted — status reflects deep story only
         gen_status = 'complete'
-    elif succeeded > 0:
-        gen_status = 'partial'
     else:
-        gen_status = 'failed'
+        succeeded = sum(1 for v in results.values() if v is not None)
+        total = len(results)
+        if succeeded == total and not batch_result.partial:
+            gen_status = 'complete'
+        elif succeeded > 0:
+            gen_status = 'partial'
+        else:
+            gen_status = 'failed'
 
     # Update story_sets status to reflect generation outcome
     # (Stage 4 already set it to "complete"/"partial" for selection;
     #  here we refine it based on generation success)
     complete_story_set(set_id, gen_status)
-    logger.info("Story set #%d marked as '%s' (%d/%d formats generated)",
-                set_id, gen_status, succeeded, total)
+
+    if args.deep_story_only:
+        logger.info("Story set #%d marked as '%s' (deep-story-only mode)", set_id, gen_status)
+    else:
+        logger.info("Story set #%d marked as '%s' (%d/%d formats generated)",
+                    set_id, gen_status, succeeded, total)
 
     # Step 5 — Summary
     logger.info("=== Generation complete ===")
-    for fid, story_id in results.items():
-        fmt_name = FORMAT_NAMES.get(fid, f'format_{fid}')
-        if story_id:
-            logger.info("  %s (format %d): story #%d", fmt_name, fid, story_id)
-        else:
-            logger.info("  %s (format %d): skipped or failed", fmt_name, fid)
+    if args.deep_story_only:
+        logger.info("  deep-story-only mode — see hierarchical_stories table for output")
+    else:
+        for fid, story_id in results.items():
+            fmt_name = FORMAT_NAMES.get(fid, f'format_{fid}')
+            if story_id:
+                logger.info("  %s (format %d): story #%d", fmt_name, fid, story_id)
+            else:
+                logger.info("  %s (format %d): skipped or failed", fmt_name, fid)
 
-    if all(v is None for v in results.values()):
-        logger.warning("All formats failed or were skipped")
-        return 1
+        if all(v is None for v in results.values()):
+            logger.warning("All formats failed or were skipped")
+            return 1
 
     return 0
 

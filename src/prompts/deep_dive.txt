@@ -40,5 +40,8 @@ RULES:
 - Total spoken time: ~5 minutes (roughly 700-900 words)
 - Tone: Thoughtful, analytical, well-sourced — like a quality podcast segment
 - DO NOT make up facts. Only use information from the items provided above.
+- DO NOT invent names, quotes, statistics, or details not explicitly present in the provided titles or descriptions. If a source's description is too thin to support a bullet point, omit that bullet entirely — do not fill the gap with your own knowledge.
 - Cite specific items as evidence (name the source/platform/region).
+- The TWIST must be derived only from the fact or reaction sources provided above. Do not introduce macro trends, geopolitical forecasts, or historical patterns that are not directly stated in the sources. If no genuine twist exists in the sources, write a forward-looking question instead.
+- fact_sources and context_sources are labelled in the input. fact_sources report the event directly — use them as primary evidence. context_sources provide background or downstream effects — use them only to add depth, never as the lead claim of any bullet point.
 - You CAN read titles/descriptions in any language — your output must be in the specified script language.

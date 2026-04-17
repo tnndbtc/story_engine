@@ -332,37 +332,61 @@ def _lang_instruction(lang: str) -> str:
 
 def _build_cluster_context_block(item: dict) -> str:
     """
-    Build a "## Corroborating Sources" prompt section from cluster mates.
+    Build a structured corroborating sources prompt block from cluster mates.
 
-    Uses fact_sources and context_sources from the item dict (populated by
-    _candidates_to_dicts when cluster_map is available). Reaction sources
-    (social/Reddit) are excluded here — they appear via top_comments instead.
+    GAP-GEN-1: Sources are presented in three LABELLED sections so Claude
+    knows the hierarchy: fact_sources = primary evidence; reaction_sources =
+    public response; context_sources = background depth only.
 
     Returns an empty string when no cluster data is present (singleton cluster
     or embeddings not yet available), so callers can append unconditionally.
     """
-    fact_sources    = item.get('fact_sources', [])
-    context_sources = item.get('context_sources', [])
-    corroborating   = fact_sources + context_sources
-    if not corroborating:
+    fact_sources     = item.get('fact_sources', [])
+    context_sources  = item.get('context_sources', [])
+    reaction_sources = item.get('reaction_sources', [])
+
+    if not fact_sources and not context_sources and not reaction_sources:
         return ''
 
-    lines = [
-        "## Corroborating Sources",
-        "NOTE: These articles cover the SAME event from different outlets. "
-        "Use them to verify facts, add quotes, or surface angles the main source missed.",
-        "",
-    ]
-    for i, src in enumerate(corroborating[:4], 1):  # cap at 4 to control token use
-        role  = 'fact' if src in fact_sources else 'context'
+    def _fmt_source(src: dict, idx: int) -> str:
         title = src.get('canonical_title') or src.get('title_original') or src.get('title', '')
         desc  = src.get('description_original', '') or ''
-        lines.append(
-            f"Source {i} [{role}]: {src.get('platform', 'unknown')}\n"
-            f"  Title: {title}\n"
-            f"  URL: {src.get('url', '')}"
-            + (f"\n  Summary: {desc[:200]}" if desc else "")
+        return (
+            f"  [{idx}] {src.get('platform', 'unknown')}: {title}\n"
+            f"       URL: {src.get('url', '')}"
+            + (f"\n       Summary: {desc[:200]}" if desc else "")
         )
+
+    lines = ["## Corroborating Sources"]
+    idx = 1
+
+    if fact_sources:
+        lines.append(
+            "\n### CORE EVENT SOURCES (fact sources — Reuters, AP, BBC, Bloomberg etc.)\n"
+            "Use these as primary evidence. Each bullet's lead claim must trace back here."
+        )
+        for src in fact_sources[:3]:
+            lines.append(_fmt_source(src, idx))
+            idx += 1
+
+    if reaction_sources:
+        lines.append(
+            "\n### REACTIONS (public and market responses — Reddit, YouTube, Twitter)\n"
+            "Use these to show how people / markets responded. Do not use as factual claims."
+        )
+        for src in reaction_sources[:2]:
+            lines.append(_fmt_source(src, idx))
+            idx += 1
+
+    if context_sources:
+        lines.append(
+            "\n### CONTEXT & BACKGROUND (regional outlets, analysis pieces)\n"
+            "Use these for depth and supporting detail ONLY.\n"
+            "Do NOT use a context source as the lead claim of any bullet point."
+        )
+        for src in context_sources[:2]:
+            lines.append(_fmt_source(src, idx))
+            idx += 1
 
     cluster_size = item.get('cluster_size', 1)
     if cluster_size > 1:
@@ -1150,5 +1174,378 @@ def generate_by_format(
         save_failed_story(
             title=format_name, format=format_key, lang=lang,
             error=str(e), batch_id=batch_id, batch_ts=batch_ts,
+        )
+        raise
+
+
+# ── Deep story generation ──────────────────────────────────────────────────────
+
+def _cluster_to_item_dict(cluster) -> dict:
+    """
+    Convert an EventCluster to the item dict format generators expect.
+    Mirrors _candidates_to_dicts() / _candidate_to_source_dict() in run.py.
+    """
+    rep = cluster.representative
+    return {
+        'url':                  rep.url,
+        'platform':             rep.platform,
+        'hotness':              rep.hotness,
+        'category':             rep.category,
+        'story_category':       rep.category,
+        'canonical_title':      rep.canonical_title,
+        'title_original':       rep.title_original,
+        'description_original': rep.description_original,
+        'region_key':           rep.region_key,
+        'region_name':          rep.region_name,
+        'engagement_signals':   rep.engagement_signals,
+        'raw_payload':          rep.raw_payload,
+        'title':                rep.canonical_title or rep.title_original,
+        'id':                   rep.crawler_item_id,
+        'is_new_development':   rep.is_new_development,
+        'prior_story_title':    rep.prior_story_title,
+        # Cluster-level fields
+        'fact_sources':     [
+            {
+                'url':                  m.url,
+                'platform':             m.platform,
+                'hotness':              m.hotness,
+                'title_original':       m.title_original,
+                'canonical_title':      m.canonical_title,
+                'description_original': m.description_original,
+                'title':                m.canonical_title or m.title_original,
+                'id':                   m.crawler_item_id,
+            }
+            for m in cluster.fact_sources
+            if m.candidate_id != rep.candidate_id
+        ],
+        'context_sources':  [
+            {
+                'url':                  m.url,
+                'platform':             m.platform,
+                'hotness':              m.hotness,
+                'title_original':       m.title_original,
+                'canonical_title':      m.canonical_title,
+                'description_original': m.description_original,
+                'title':                m.canonical_title or m.title_original,
+                'id':                   m.crawler_item_id,
+            }
+            for m in cluster.context_sources
+            if m.candidate_id != rep.candidate_id
+        ],
+        'reaction_sources': [
+            {
+                'url':                  m.url,
+                'platform':             m.platform,
+                'hotness':              m.hotness,
+                'title_original':       m.title_original,
+                'canonical_title':      m.canonical_title,
+                'description_original': m.description_original,
+                'title':                m.canonical_title or m.title_original,
+                'id':                   m.crawler_item_id,
+            }
+            for m in cluster.reaction_sources
+            if m.candidate_id != rep.candidate_id
+        ],
+        'event_hotness':    cluster.event_hotness,
+        'cluster_size':     cluster.member_count,
+        'embedding_center': cluster.embedding_center,
+        'novelty_score':    cluster.novelty_score,
+        'timeline':         cluster.timeline,
+    }
+
+
+def generate_deep_story(
+    cluster,
+    lang:     str = 'en',
+    channel:  int = 1,
+    batch_id: int | None = None,
+    batch_ts: int | None = None,
+) -> dict:
+    """
+    Generate a deep story (full hook + bullets + twist) from an EventCluster.
+
+    Uses the existing deep_dive.txt prompt via _generate_script().
+    Returns the parsed script dict: {title, hook, bullets, twist}.
+    Does NOT save to DB — caller (generate_story_batch) handles persistence.
+    """
+    item = _cluster_to_item_dict(cluster)
+    template = (PROMPTS_DIR / 'deep_dive.txt').read_text()
+
+    cluster_block = _build_cluster_context_block(item)
+    context_block = cluster_block
+
+    # new-development annotation
+    if item.get('is_new_development') and item.get('prior_story_title'):
+        update_notice = (
+            f"\n\n[UPDATE STORY] This article is a NEW DEVELOPMENT following: "
+            f"\"{item['prior_story_title']}\". Frame as an update."
+        )
+        context_block = update_notice + ("\n\n" + cluster_block if cluster_block else "")
+
+    prompt = template.format(
+        topic=item.get('story_category') or item.get('category') or 'world news',
+        stories_block=(
+            f"Title: {item.get('title', '')}\n"
+            f"Platform: {item.get('platform', '')}\n"
+            f"URL: {item.get('url', '')}\n"
+            f"Description: {item.get('description_original') or 'No description available'}"
+        ) + ("\n\n" + context_block if context_block else ""),
+        lang_instruction=_lang_instruction(lang),
+    )
+
+    logger.info(
+        "generate_deep_story: generating for cluster %s (%d members)",
+        cluster.event_id, cluster.member_count,
+    )
+    script = _generate_script(prompt)
+    script['event_id']       = cluster.event_id
+    script['cluster_size']   = cluster.member_count
+    script['source_diversity'] = getattr(cluster, 'source_diversity', 0.0)
+    script['sources']        = _build_source_list(item)
+    return script
+
+
+def generate_supporting_stories(
+    clusters: list,
+    lang:     str = 'en',
+) -> list[dict]:
+    """
+    Generate short supporting story summaries for a list of EventClusters.
+
+    Sends all clusters in a single Claude call using support_story.txt.
+    Returns a list of validated dicts: {event_id, title, summary, why_it_matters, sources}.
+
+    On total JSON parse failure → falls back to individual per-cluster calls.
+    Per-element validation failures → element is skipped + WARNING logged.
+    """
+    if not clusters:
+        return []
+
+    prompt_template = (PROMPTS_DIR / 'support_story.txt').read_text()
+
+    # Build the events block
+    events_lines = []
+    for i, cluster in enumerate(clusters, 1):
+        item = _cluster_to_item_dict(cluster)
+        rep  = cluster.representative
+        title = rep.canonical_title or rep.title_original or ''
+        desc  = rep.description_original or ''
+
+        # Include top fact source title for grounding
+        top_fact = next(
+            (m for m in cluster.fact_sources if m.candidate_id != rep.candidate_id),
+            None,
+        )
+        fact_line = ''
+        if top_fact:
+            fact_line = f"\n  Fact source ({top_fact.platform}): {top_fact.canonical_title or top_fact.title_original or ''}"
+
+        events_lines.append(
+            f"Event {i}:\n"
+            f"  Title: {title}\n"
+            f"  Platform: {rep.platform}\n"
+            f"  URL: {rep.url}"
+            + (f"\n  Description: {desc[:200]}" if desc else "")
+            + fact_line
+        )
+
+    events_block = "\n\n".join(events_lines)
+    prompt = prompt_template.format(
+        n=len(clusters),
+        events_block=events_block,
+        lang_instruction=_lang_instruction(lang),
+    )
+
+    def _validate_element(el: dict, cluster) -> dict | None:
+        """Validate one supporting story element. Returns cleaned dict or None."""
+        if not isinstance(el, dict):
+            return None
+        if not el.get('title') or not isinstance(el['title'], str):
+            logger.warning("generate_supporting_stories: missing/invalid title — skipping element")
+            return None
+        if not el.get('summary') or not isinstance(el['summary'], str):
+            logger.warning("generate_supporting_stories: missing/invalid summary — skipping element")
+            return None
+        if not el.get('why_it_matters') or not isinstance(el['why_it_matters'], str):
+            logger.warning("generate_supporting_stories: missing/invalid why_it_matters — skipping")
+            return None
+        # sources must be a non-empty list of dicts with title + url
+        sources = el.get('sources')
+        if not sources or not isinstance(sources, list):
+            logger.warning("generate_supporting_stories: missing/invalid sources — skipping element")
+            return None
+        valid_sources = [
+            s for s in sources
+            if isinstance(s, dict) and s.get('title') and s.get('url')
+        ]
+        if not valid_sources:
+            logger.warning("generate_supporting_stories: no valid source objects — skipping element")
+            return None
+        return {
+            'event_id':       cluster.event_id,
+            'title':          el['title'],
+            'summary':        el['summary'],
+            'why_it_matters': el['why_it_matters'],
+            'sources':        valid_sources,
+        }
+
+    def _parse_and_validate(raw: str) -> list[dict] | None:
+        """Parse JSON array from Claude response. Returns None on total failure."""
+        cleaned = raw.strip()
+        if cleaned.startswith('```'):
+            lines = cleaned.split('\n')
+            lines = [l for l in lines if not l.strip().startswith('```')]
+            cleaned = '\n'.join(lines).strip()
+        # Find array bounds
+        start = cleaned.find('[')
+        end   = cleaned.rfind(']')
+        if start == -1 or end == -1 or end <= start:
+            return None
+        try:
+            import json as _json
+            return _json.loads(cleaned[start:end + 1])
+        except Exception:
+            return None
+
+    # ── Batch call ─────────────────────────────────────────────────────────────
+    try:
+        raw   = _call_claude(prompt)
+        array = _parse_and_validate(raw)
+
+        if array is None:
+            raise ValueError("Total JSON array parse failure")
+
+        results = []
+        for i, (el, cluster) in enumerate(zip(array, clusters)):
+            validated = _validate_element(el, cluster)
+            if validated:
+                results.append(validated)
+            else:
+                logger.warning(
+                    "generate_supporting_stories: element %d failed validation — skipped", i + 1
+                )
+        return results
+
+    except Exception as _batch_err:
+        logger.warning(
+            "generate_supporting_stories: batch call failed (%s) — "
+            "falling back to individual per-cluster calls",
+            _batch_err,
+        )
+
+    # ── Fallback: individual per-cluster calls ─────────────────────────────────
+    results = []
+    for cluster in clusters:
+        try:
+            item  = _cluster_to_item_dict(cluster)
+            rep   = cluster.representative
+            title = rep.canonical_title or rep.title_original or ''
+            desc  = rep.description_original or ''
+
+            single_prompt = prompt_template.format(
+                n=1,
+                events_block=(
+                    f"Event 1:\n"
+                    f"  Title: {title}\n"
+                    f"  Platform: {rep.platform}\n"
+                    f"  URL: {rep.url}"
+                    + (f"\n  Description: {desc[:200]}" if desc else "")
+                ),
+                lang_instruction=_lang_instruction(lang),
+            )
+            raw   = _call_claude(single_prompt)
+            array = _parse_and_validate(raw)
+
+            if array and len(array) > 0:
+                validated = _validate_element(array[0], cluster)
+                if validated:
+                    results.append(validated)
+        except Exception as _e:
+            logger.warning(
+                "generate_supporting_stories: fallback failed for cluster %s: %s",
+                cluster.event_id, _e,
+            )
+
+    return results
+
+
+def generate_story_batch(
+    orchestration_result: dict,
+    lang:     str = 'en',
+    channel:  int = 1,
+    batch_id: int | None = None,
+    batch_ts: int | None = None,
+) -> dict:
+    """
+    Generate a full hierarchical story batch from story_orchestrate() output.
+
+    Args:
+        orchestration_result: {"deep_story": EventCluster, "supporting_stories": [...]}
+        lang:     Output language ('en' or 'zh').
+        channel:  Output channel (1, 2, or 3).
+        batch_id: story_set_id for DB linkage.
+        batch_ts: Batch timestamp (UNIX ms).
+
+    Returns:
+        {
+          "deep_story":        {event_id, title, hook, bullets, twist, sources, ...},
+          "supporting_stories": [{event_id, title, summary, why_it_matters, sources}, ...]
+        }
+
+    Saves result to hierarchical_stories table via save_hierarchical_story().
+    On any failure, saves a failed row via save_failed_hierarchical_story().
+    """
+    from db.models import save_hierarchical_story, save_failed_hierarchical_story
+
+    deep_cluster       = orchestration_result['deep_story']
+    support_clusters   = orchestration_result.get('supporting_stories', [])
+
+    try:
+        logger.info(
+            "generate_story_batch: generating deep story (event_id=%s) + "
+            "%d supporting stories",
+            deep_cluster.event_id, len(support_clusters),
+        )
+
+        deep_story = generate_deep_story(
+            cluster=deep_cluster,
+            lang=lang,
+            channel=channel,
+            batch_id=batch_id,
+            batch_ts=batch_ts,
+        )
+
+        supporting_stories = generate_supporting_stories(
+            clusters=support_clusters,
+            lang=lang,
+        )
+
+        result = {
+            'deep_story':        deep_story,
+            'supporting_stories': supporting_stories,
+        }
+
+        story_id = save_hierarchical_story(
+            story_set_id       = batch_id or 0,
+            batch_ts           = batch_ts or 0,
+            lang               = lang,
+            channel            = channel,
+            deep_story         = deep_story,
+            supporting_stories = supporting_stories,
+            status             = 'ready',
+        )
+        logger.info(
+            "generate_story_batch: saved as hierarchical_story #%d", story_id
+        )
+        return result
+
+    except Exception as e:
+        logger.error("generate_story_batch: failed — %s", e, exc_info=True)
+        save_failed_hierarchical_story(
+            story_set_id = batch_id or 0,
+            batch_ts     = batch_ts or 0,
+            lang         = lang,
+            channel      = channel,
+            error        = str(e),
         )
         raise

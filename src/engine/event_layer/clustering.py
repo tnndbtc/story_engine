@@ -58,6 +58,7 @@ logger = logging.getLogger(__name__)
 COSINE_AUTO_MERGE        = 0.85   # auto-accept: no further validation needed
 COSINE_CLUSTER_THRESHOLD = 0.75   # candidate filter: requires keyword validation
 MAX_CLUSTER_MEMBERS = 5
+MAX_CLUSTER_AGE_DIFF_HOURS = 48   # context mates older than this are excluded
 
 FACT_PLATFORMS: frozenset[str] = frozenset({
     'reuters', 'ap', 'apnews', 'bbc', 'guardian', 'nytimes', 'wapo',
@@ -114,6 +115,9 @@ class EventCluster:
     timeline:         list[dict] = field(default_factory=list)
                                                      # [{timestamp, title, platform, role}]
                                                      # sorted ascending by freshness
+    source_diversity: float = 0.0                    # distinct platforms / member_count; set by build_clusters()
+    cluster_countries: set = field(default_factory=set)  # union of candidate_entities['countries']
+    cluster_orgs:      set = field(default_factory=set)  # union of candidate_entities['orgs']
 
 
 # Stopwords for keyword overlap (mirrors memory.py — kept local to avoid coupling)
@@ -385,7 +389,34 @@ def build_clusters(
                 continue
             sim = _cosine(sel_emb, pool_emb)
             if sim >= COSINE_AUTO_MERGE:
-                mates.append((sim, pool_cand))                  # auto-merge
+                # GAP-PURITY-2: run entity gate on auto-merge tier too.
+                # Skip gate only when BOTH sides have no entity data (NER skipped).
+                ents_a = sel_cand.candidate_entities or {}
+                ents_b = pool_cand.candidate_entities or {}
+                if ents_a or ents_b:
+                    auto_allow, auto_reason = _entity_gate(sel_cand, pool_cand)
+                    if not auto_allow:
+                        logger.debug(
+                            "Auto-merge blocked by entity gate [%s] sim=%.3f: %r vs %r",
+                            auto_reason, sim,
+                            (sel_cand.canonical_title or sel_cand.title_original or '')[:40],
+                            (pool_cand.canonical_title or pool_cand.title_original or '')[:40],
+                        )
+                        continue
+                # GAP-PURITY-1: time proximity check for context-role mates.
+                mate_role = _source_role(pool_cand.platform)
+                if mate_role == 'context':
+                    age_diff = abs(
+                        (sel_cand.freshness - pool_cand.freshness).total_seconds()
+                    ) / 3600
+                    if age_diff > MAX_CLUSTER_AGE_DIFF_HOURS:
+                        logger.debug(
+                            "Auto-merge context mate skipped — age_diff=%.1fh > %dh: %r",
+                            age_diff, MAX_CLUSTER_AGE_DIFF_HOURS,
+                            (pool_cand.canonical_title or pool_cand.title_original or '')[:40],
+                        )
+                        continue
+                mates.append((sim, pool_cand))
             elif sim >= COSINE_CLUSTER_THRESHOLD:
                 ents_a = sel_cand.candidate_entities or {}
                 ents_b = pool_cand.candidate_entities or {}
@@ -403,6 +434,18 @@ def build_clusters(
                 log_purity_decision(sim, purity, allow, reason)
 
                 if allow:
+                    # GAP-PURITY-1: time proximity check for context-role mates.
+                    if _source_role(pool_cand.platform) == 'context':
+                        age_diff = abs(
+                            (sel_cand.freshness - pool_cand.freshness).total_seconds()
+                        ) / 3600
+                        if age_diff > MAX_CLUSTER_AGE_DIFF_HOURS:
+                            logger.debug(
+                                "Borderline context mate skipped — age_diff=%.1fh > %dh: %r",
+                                age_diff, MAX_CLUSTER_AGE_DIFF_HOURS,
+                                (pool_cand.canonical_title or pool_cand.title_original or '')[:40],
+                            )
+                            continue
                     mates.append((sim, pool_cand))
                     logger.debug(
                         "Merge allowed [%s] sim=%.3f purity=%.3f: %r + %r",
@@ -463,6 +506,20 @@ def build_clusters(
             for c in all_members_sorted
         ]
 
+        all_members = [sel_cand] + [mate for _, mate in mates]
+
+        # Compute source_diversity: distinct platforms / member_count
+        distinct_platforms = {m.platform for m in all_members}
+        source_diversity = len(distinct_platforms) / max(len(all_members), 1)
+
+        # Aggregate entity sets across all cluster members
+        cluster_countries: set[str] = set()
+        cluster_orgs:      set[str] = set()
+        for member in all_members:
+            ents = member.candidate_entities or {}
+            cluster_countries.update(ents.get('countries', []))
+            cluster_orgs.update(ents.get('orgs', []))
+
         cluster = EventCluster(
             event_id         = event_id,
             representative   = sel_cand,
@@ -472,6 +529,9 @@ def build_clusters(
             embedding_center = _embedding_center(member_embeddings),
             member_count     = 1 + len(mates),
             timeline         = timeline,
+            source_diversity = source_diversity,
+            cluster_countries = cluster_countries,
+            cluster_orgs      = cluster_orgs,
         )
         clusters[sel_cand.candidate_id] = cluster
 
@@ -505,12 +565,16 @@ def _singleton_cluster(event_id: str, candidate: NormalizedCandidate) -> EventCl
             'role':      role,
         }
     ]
+    ents = candidate.candidate_entities or {}
     return EventCluster(
-        event_id         = event_id,
-        representative   = candidate,
-        fact_sources     = [candidate] if role == 'fact'     else [],
-        context_sources  = [candidate] if role == 'context'  else [],
-        reaction_sources = [candidate] if role == 'reaction' else [],
-        member_count     = 1,
-        timeline         = timeline,
+        event_id          = event_id,
+        representative    = candidate,
+        fact_sources      = [candidate] if role == 'fact'     else [],
+        context_sources   = [candidate] if role == 'context'  else [],
+        reaction_sources  = [candidate] if role == 'reaction' else [],
+        member_count      = 1,
+        timeline          = timeline,
+        source_diversity  = 1.0,
+        cluster_countries = set(ents.get('countries', [])),
+        cluster_orgs      = set(ents.get('orgs', [])),
     )

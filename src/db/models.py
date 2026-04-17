@@ -103,6 +103,23 @@ CREATE TABLE IF NOT EXISTS purity_log (
 
 CREATE INDEX IF NOT EXISTS idx_purity_log_created ON purity_log(created_at);
 CREATE INDEX IF NOT EXISTS idx_purity_log_allowed ON purity_log(allowed);
+
+CREATE TABLE IF NOT EXISTS hierarchical_stories (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    story_set_id        INTEGER,
+    batch_ts            INTEGER,
+    lang                TEXT,
+    channel             INTEGER,
+    status              TEXT NOT NULL DEFAULT 'ready',  -- ready / failed / partial
+    deep_story          TEXT,                           -- JSON dict
+    supporting_stories  TEXT,                           -- JSON array
+    generated_at        INTEGER,
+    created_at          INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_hierarchical_stories_batch_ts ON hierarchical_stories(batch_ts);
+CREATE INDEX IF NOT EXISTS idx_hierarchical_stories_status   ON hierarchical_stories(status);
+CREATE INDEX IF NOT EXISTS idx_hierarchical_stories_set_id   ON hierarchical_stories(story_set_id);
 """
 
 
@@ -244,6 +261,28 @@ def init_db():
         conn.commit()
     except sqlite3.OperationalError:
         pass  # table already exists
+
+    # Migration: create hierarchical_stories table if not present (deep story architecture)
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS hierarchical_stories (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            story_set_id        INTEGER,
+            batch_ts            INTEGER,
+            lang                TEXT,
+            channel             INTEGER,
+            status              TEXT NOT NULL DEFAULT 'ready',
+            deep_story          TEXT,
+            supporting_stories  TEXT,
+            generated_at        INTEGER,
+            created_at          INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_hierarchical_stories_batch_ts
+            ON hierarchical_stories(batch_ts);
+        CREATE INDEX IF NOT EXISTS idx_hierarchical_stories_status
+            ON hierarchical_stories(status);
+        CREATE INDEX IF NOT EXISTS idx_hierarchical_stories_set_id
+            ON hierarchical_stories(story_set_id);
+    """)
 
     # Migration: convert text timestamps to UNIX integers
     _migrate_timestamps(conn)
@@ -513,6 +552,76 @@ def save_failed_story(title: str, format: str, lang: str, error: str,
         VALUES (?, ?, 1, ?, 'failed', ?, ?, ?, ?)
         """,
         (title, format, lang, now, error, batch_id, now),
+    )
+    story_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return story_id
+
+
+def save_hierarchical_story(
+    story_set_id:       int,
+    batch_ts:           int,
+    lang:               str,
+    channel:            int,
+    deep_story:         dict,
+    supporting_stories: list[dict],
+    status:             str = 'ready',
+) -> int:
+    """
+    Save a hierarchical (deep story + supporting stories) batch to the database.
+
+    Mirrors save_story() pattern exactly.
+    Returns the inserted row id.
+    """
+    now = batch_ts or _now()
+    conn = get_connection()
+    cursor = conn.execute(
+        """
+        INSERT INTO hierarchical_stories
+            (story_set_id, batch_ts, lang, channel, status,
+             deep_story, supporting_stories, generated_at, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            story_set_id,
+            batch_ts,
+            lang,
+            channel,
+            status,
+            json.dumps(deep_story,         ensure_ascii=False),
+            json.dumps(supporting_stories, ensure_ascii=False),
+            now,
+            now,
+        ),
+    )
+    story_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return story_id
+
+
+def save_failed_hierarchical_story(
+    story_set_id: int,
+    batch_ts:     int,
+    lang:         str,
+    channel:      int,
+    error:        str,
+) -> int:
+    """
+    Record a failed hierarchical story generation attempt for observability.
+    Mirrors save_failed_story() pattern.
+    """
+    now = batch_ts or _now()
+    conn = get_connection()
+    cursor = conn.execute(
+        """
+        INSERT INTO hierarchical_stories
+            (story_set_id, batch_ts, lang, channel, status,
+             deep_story, supporting_stories, generated_at, created_at)
+        VALUES (?, ?, ?, ?, 'failed', NULL, NULL, ?, ?)
+        """,
+        (story_set_id, batch_ts, lang, channel, now, now),
     )
     story_id = cursor.lastrowid
     conn.commit()
