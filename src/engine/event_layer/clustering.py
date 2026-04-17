@@ -40,9 +40,13 @@ import logging
 import math
 import re
 from dataclasses import dataclass, field
-from datetime import timezone
+
+import json
+import os
+from pathlib import Path
 
 from db.crawler_reader import get_embeddings
+from db.models import DB_PATH, log_purity_decision
 from engine.selector.schemas import NormalizedCandidate
 
 logger = logging.getLogger(__name__)
@@ -63,6 +67,28 @@ REACTION_PLATFORMS: frozenset[str] = frozenset({
     'reddit', 'twitter', 'x', 'youtube', 'bilibili', 'weibo',
     'instagram', 'tiktok', 'mastodon',
 })
+
+# ---------------------------------------------------------------------------
+# Purity gate config — loaded dynamically from clustering_config.json
+# ---------------------------------------------------------------------------
+
+_CLUSTERING_CONFIG_PATH: Path = Path(__file__).resolve().parents[3] / 'config' / 'clustering_config.json'
+
+
+def _load_clustering_config() -> dict:
+    """
+    Load clustering_config.json for dynamic purity gate settings.
+    Returns safe defaults if file is missing or unreadable.
+    Defaults to gate DISABLED so missing config never blocks merges.
+    """
+    try:
+        with open(_CLUSTERING_CONFIG_PATH) as _f:
+            return json.load(_f)
+    except Exception:
+        return {
+            'purity_gate_enabled':   False,
+            'purity_gate_threshold': 0.55,
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -160,6 +186,108 @@ def _keyword_overlap(a: NormalizedCandidate, b: NormalizedCandidate) -> bool:
     return False
 
 
+def _entity_gate(
+    a: 'NormalizedCandidate',
+    b: 'NormalizedCandidate',
+) -> tuple[bool, str]:
+    """
+    Validation gate for borderline cosine pairs (0.75 <= sim < 0.85).
+    Returns (allow_merge, reason_string) for logging.
+
+    Replaces the bare _keyword_overlap() check. Wraps keyword overlap
+    with entity-level rules that catch cross-country and cross-event-type
+    false merges that keyword overlap misses.
+
+    Rules applied in order (first match wins):
+      1. Country conflict  → BLOCK  (both sides have countries, none overlap)
+      2. Event type clash  → BLOCK  (POLICY_ACTION vs INCIDENT only)
+      3. Keyword overlap   → ALLOW  (existing check preserved)
+      4. Country match     → ALLOW  (same canonical country on both sides)
+      5. Org overlap       → ALLOW  (shared ALL-CAPS acronym)
+      6. No signal         → BLOCK  (no positive evidence found)
+
+    Entities come from candidate.candidate_entities populated at Stage 1
+    by title_ner.extract_title_entities(). None → treat as neutral (empty dict).
+    Countries are canonical lowercase strings (demonym-normalized by title_ner).
+    """
+    ents_a = a.candidate_entities or {}
+    ents_b = b.candidate_entities or {}
+
+    countries_a = set(ents_a.get('countries', []))
+    countries_b = set(ents_b.get('countries', []))
+    etype_a     = ents_a.get('event_type', 'UNKNOWN')
+    etype_b     = ents_b.get('event_type', 'UNKNOWN')
+
+    # Rule 1: Country conflict
+    # Both sides identified countries and they don't intersect → different events.
+    # Only fires when BOTH sides have country data; one empty side → skip rule.
+    if countries_a and countries_b and not (countries_a & countries_b):
+        return False, f"country_conflict({sorted(countries_a)} vs {sorted(countries_b)})"
+
+    # Rule 2: Event type mismatch
+    # POLICY_ACTION vs INCIDENT is a hard incompatibility.
+    # UNKNOWN and ANALYSIS are not used as blockers — too imprecise.
+    _HARD_TYPES: frozenset[str] = frozenset({'POLICY_ACTION', 'INCIDENT'})
+    if etype_a in _HARD_TYPES and etype_b in _HARD_TYPES and etype_a != etype_b:
+        return False, f"event_type_mismatch({etype_a} vs {etype_b})"
+
+    # Rule 3: Keyword overlap (existing check — preserved as positive signal)
+    if _keyword_overlap(a, b):
+        return True, "keyword_overlap"
+
+    # Rule 4: Country match (same canonical country on both sides)
+    shared_countries = countries_a & countries_b
+    if shared_countries:
+        return True, f"country_match({sorted(shared_countries)})"
+
+    # Rule 5: Org overlap (shared ALL-CAPS acronym e.g. NATO, IMF, WHO)
+    orgs_a = set(ents_a.get('orgs', []))
+    orgs_b = set(ents_b.get('orgs', []))
+    shared_orgs = orgs_a & orgs_b
+    if orgs_a and orgs_b and shared_orgs:
+        return True, f"org_overlap({sorted(shared_orgs)})"
+
+    # Rule 6: No positive signal found → block
+    return False, "no_entity_signal"
+
+
+def _entity_overlap_score(ents_a: dict, ents_b: dict) -> float:
+    """
+    Jaccard overlap score between the combined entity sets of two candidates.
+    Used by _purity_score() for diagnostic logging only (not a hard gate).
+
+    Returns 0.5 when either side has no entities — neutral, not penalising.
+    Returns Jaccard(all_a, all_b) otherwise (countries ∪ orgs on each side).
+    """
+    all_a = set(ents_a.get('countries', [])) | set(ents_a.get('orgs', []))
+    all_b = set(ents_b.get('countries', [])) | set(ents_b.get('orgs', []))
+    if not all_a or not all_b:
+        return 0.5  # neutral: NER found nothing on one or both sides
+    union = all_a | all_b
+    return len(all_a & all_b) / len(union) if union else 0.5
+
+
+def _purity_score(cosine: float, ents_a: dict, ents_b: dict) -> float:
+    """
+    Event purity score for a candidate merge pair. DIAGNOSTIC ONLY — not a gate.
+
+    Formula:
+        0.5 × cosine + 0.3 × entity_overlap + 0.2 × event_type_match
+
+    Weights are provisional — do not use as a hard gate until 2+ weeks of
+    logged data justifies a threshold. Logged at DEBUG level for every merge
+    in the 0.75-0.85 tier so data can be collected.
+
+    Typical ranges on this embedding model:
+        same-event rephrases:     0.80+
+        related-but-distinct:     0.55–0.79
+        unrelated:                below 0.55
+    """
+    entity_overlap = _entity_overlap_score(ents_a, ents_b)
+    etype_match    = 1.0 if ents_a.get('event_type') == ents_b.get('event_type') else 0.0
+    return round(0.5 * cosine + 0.3 * entity_overlap + 0.2 * etype_match, 4)
+
+
 def _source_role(platform: str) -> str:
     p = platform.lower()
     if p in FACT_PLATFORMS:
@@ -231,6 +359,11 @@ def build_clusters(
 
     clusters: dict[str, EventCluster] = {}
 
+    # Load purity gate config dynamically — picks up changes without restart
+    _cfg             = _load_clustering_config()
+    _gate_enabled    = _cfg.get('purity_gate_enabled', False)
+    _gate_threshold  = float(_cfg.get('purity_gate_threshold', 0.55))
+
     for sel_cand in selected:
         event_id = hashlib.sha256(sel_cand.url.encode()).hexdigest()[:16]
         sel_emb  = embeddings.get(sel_cand.crawler_item_id)
@@ -253,8 +386,37 @@ def build_clusters(
             sim = _cosine(sel_emb, pool_emb)
             if sim >= COSINE_AUTO_MERGE:
                 mates.append((sim, pool_cand))                  # auto-merge
-            elif sim >= COSINE_CLUSTER_THRESHOLD and _keyword_overlap(sel_cand, pool_cand):
-                mates.append((sim, pool_cand))                  # validated merge
+            elif sim >= COSINE_CLUSTER_THRESHOLD:
+                ents_a = sel_cand.candidate_entities or {}
+                ents_b = pool_cand.candidate_entities or {}
+                purity = _purity_score(sim, ents_a, ents_b)
+                allow, reason = _entity_gate(sel_cand, pool_cand)
+
+                # Purity gate (Sprint 3): additional hard filter when enabled.
+                # Auto-calibrated by purity_calibrator.py — disabled until
+                # min_samples_to_enable threshold is reached.
+                if allow and _gate_enabled and purity < _gate_threshold:
+                    allow  = False
+                    reason = f"purity_gate({purity:.3f}<{_gate_threshold:.3f})"
+
+                # Log every borderline decision for calibration data collection
+                log_purity_decision(sim, purity, allow, reason)
+
+                if allow:
+                    mates.append((sim, pool_cand))
+                    logger.debug(
+                        "Merge allowed [%s] sim=%.3f purity=%.3f: %r + %r",
+                        reason, sim, purity,
+                        (sel_cand.canonical_title or sel_cand.title_original or '')[:40],
+                        (pool_cand.canonical_title or pool_cand.title_original or '')[:40],
+                    )
+                else:
+                    logger.debug(
+                        "Merge blocked [%s] sim=%.3f purity=%.3f: %r vs %r",
+                        reason, sim, purity,
+                        (sel_cand.canonical_title or sel_cand.title_original or '')[:40],
+                        (pool_cand.canonical_title or pool_cand.title_original or '')[:40],
+                    )
 
         # Keep top MAX_CLUSTER_MEMBERS by similarity
         mates.sort(key=lambda x: -x[0])
@@ -317,7 +479,7 @@ def build_clusters(
             auto_count      = sum(1 for sim, _ in mates if sim >= COSINE_AUTO_MERGE)
             validated_count = len(mates) - auto_count
             logger.debug(
-                "Cluster %r: %d mates (auto=%d validated=%d | fact=%d ctx=%d react=%d)",
+                "Cluster %r: %d mates (auto=%d entity_gated=%d | fact=%d ctx=%d react=%d)",
                 (sel_cand.title_original or sel_cand.canonical_title or '')[:50],
                 len(mates), auto_count, validated_count,
                 len(fact_sources), len(context_sources), len(reaction_sources),

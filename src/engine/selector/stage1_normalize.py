@@ -30,6 +30,7 @@ from engine.selector.config import BatchConfig
 from engine.selector.schemas import NormalizedCandidate, TraceRecord
 from engine.selector.snapshot import cleanup_old_snapshots, save_snapshot
 from engine.selector.trace import open_trace, write_trace
+from engine.event_layer.title_ner import extract_title_entities
 
 logger = logging.getLogger(__name__)
 
@@ -391,6 +392,11 @@ def stage1_normalize(
             raw_payload          = row.get('raw_payload') or None,
             is_used              = is_used,
         )
+        # Sprint 1: fast pre-clustering NER — attach entity signals for
+        # use by _entity_gate() in clustering.py. Runs on canonical_title
+        # (English-normalized) with fallback to title_original. Never raises.
+        _ner_title = candidate.canonical_title or candidate.title_original or ''
+        candidate.candidate_entities = extract_title_entities(_ner_title) if _ner_title else None
         all_candidates.append(candidate)
 
     # Step 3b — URL deduplication (same URL can appear from multiple surfaces)

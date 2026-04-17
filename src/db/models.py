@@ -33,7 +33,11 @@ CREATE TABLE IF NOT EXISTS stories (
     hook            TEXT,
     bullets         TEXT,               -- JSON array of strings
     twist           TEXT,
-    sources         TEXT,               -- JSON array of {url, platform, hotness, title}
+    sources         TEXT,               -- JSON array of {url, platform, hotness, title, role?}
+                                        -- role is 'fact'|'context'|'reaction' for cluster members
+    topic_clusters  TEXT,               -- NULL for single-item formats / singleton clusters
+                                        -- JSON: [{event_id, representative,
+                                        --   fact_sources, context_sources, reaction_sources}]
     comments_used   TEXT,               -- JSON array of {text, likes, platform}
     error_message   TEXT,
     created_at      INTEGER             -- UNIX epoch seconds
@@ -87,6 +91,18 @@ CREATE TABLE IF NOT EXISTS event_memory (
 
 CREATE INDEX IF NOT EXISTS idx_event_memory_expires  ON event_memory(expires_at);
 CREATE INDEX IF NOT EXISTS idx_event_memory_event_id ON event_memory(event_id);
+
+CREATE TABLE IF NOT EXISTS purity_log (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    sim         REAL    NOT NULL,       -- cosine similarity score (0.75–0.85 tier)
+    purity      REAL    NOT NULL,       -- computed purity score
+    allowed     INTEGER NOT NULL,       -- 1 = merged, 0 = blocked
+    reason      TEXT    NOT NULL,       -- e.g. keyword_overlap, country_conflict, purity_gate
+    created_at  INTEGER NOT NULL        -- UNIX epoch seconds
+);
+
+CREATE INDEX IF NOT EXISTS idx_purity_log_created ON purity_log(created_at);
+CREATE INDEX IF NOT EXISTS idx_purity_log_allowed ON purity_log(allowed);
 """
 
 
@@ -204,6 +220,30 @@ def init_db():
         conn.execute("ALTER TABLE event_memory ADD COLUMN entities TEXT")
     except sqlite3.OperationalError:
         pass  # column already exists
+
+    # Migration: add topic_clusters column to stories if not present
+    try:
+        conn.execute("ALTER TABLE stories ADD COLUMN topic_clusters TEXT")
+    except sqlite3.OperationalError:
+        pass  # column already exists
+
+    # Migration: add purity_log table if not present (Sprint 3 auto-calibration)
+    try:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS purity_log (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                sim         REAL    NOT NULL,
+                purity      REAL    NOT NULL,
+                allowed     INTEGER NOT NULL,
+                reason      TEXT    NOT NULL,
+                created_at  INTEGER NOT NULL
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_purity_log_created ON purity_log(created_at)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_purity_log_allowed ON purity_log(allowed)")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass  # table already exists
 
     # Migration: convert text timestamps to UNIX integers
     _migrate_timestamps(conn)
@@ -420,6 +460,7 @@ def save_story(
     comments_used: list[dict] | None = None,
     batch_id: int | None = None,
     batch_ts: int | None = None,
+    topic_clusters: list[dict] | None = None,
 ) -> int:
     """
     Save a generated story to the database.
@@ -434,9 +475,9 @@ def save_story(
     cursor = conn.execute(
         """
         INSERT INTO stories (title, format, channel, lang, status, generated_at,
-                             hook, bullets, twist, sources, comments_used, batch_id,
-                             created_at)
-        VALUES (?, ?, ?, ?, 'ready', ?, ?, ?, ?, ?, ?, ?, ?)
+                             hook, bullets, twist, sources, topic_clusters,
+                             comments_used, batch_id, created_at)
+        VALUES (?, ?, ?, ?, 'ready', ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             title,
@@ -448,6 +489,7 @@ def save_story(
             json.dumps(bullets, ensure_ascii=False),
             twist,
             json.dumps(sources, ensure_ascii=False),
+            json.dumps(topic_clusters, ensure_ascii=False) if topic_clusters else None,
             json.dumps(comments_used or [], ensure_ascii=False),
             batch_id,
             now,
@@ -658,6 +700,33 @@ def load_recent_events(window_days: int = 7) -> list[dict]:
             d['entities'] = None
         result.append(d)
     return result
+
+
+def log_purity_decision(
+    sim: float,
+    purity: float,
+    allowed: bool,
+    reason: str,
+) -> None:
+    """
+    Log a clustering purity gate decision to purity_log.
+
+    Called for every borderline pair (0.75 <= cosine < 0.85) during clustering.
+    Used by the purity_calibrator.py script to auto-calibrate the gate threshold.
+
+    Never raises — clustering must never be blocked by a logging failure.
+    """
+    try:
+        conn = get_connection()
+        conn.execute(
+            """INSERT INTO purity_log (sim, purity, allowed, reason, created_at)
+               VALUES (?, ?, ?, ?, ?)""",
+            (float(sim), float(purity), int(allowed), str(reason), int(time.time())),
+        )
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass  # never block clustering
 
 
 def _row_to_dict(row: sqlite3.Row) -> dict:

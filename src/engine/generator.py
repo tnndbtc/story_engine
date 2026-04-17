@@ -120,6 +120,7 @@ def _save_story_and_remember(
     batch_id: int | None = None,
     batch_ts: int | None = None,
     embedding_center: list[float] | None = None,
+    topic_clusters: list[dict] | None = None,
 ) -> int:
     """
     Save a story and record its event fingerprint in event_memory.
@@ -133,6 +134,8 @@ def _save_story_and_remember(
                           Pass item.get('embedding_center') for single-event formats.
                           Leave None for multi-item format stories.
                           Enables Phase 2 cosine dedup in memory.py.
+        topic_clusters:   Structured cluster data for multi-item format stories.
+                          None for single-item formats (cluster members are in sources).
     """
     story_id = save_story(
         title=title,
@@ -146,6 +149,7 @@ def _save_story_and_remember(
         comments_used=comments_used,
         batch_id=batch_id,
         batch_ts=batch_ts,
+        topic_clusters=topic_clusters,
     )
     try:
         entities = _extract_entities(title, sources)
@@ -377,6 +381,67 @@ def _format_source(item: dict) -> dict:
     }
 
 
+def _build_source_list(item: dict) -> list[dict]:
+    """
+    Build full source list for single-item format stories.
+    Includes the representative article plus all cluster members
+    (fact_sources, context_sources, reaction_sources) that were
+    gathered by build_clusters() and injected by _candidates_to_dicts().
+    The 'role' field on members enables downstream provenance tracing.
+    """
+    sources = [_format_source(item)]
+    for bucket_key in ('fact_sources', 'context_sources', 'reaction_sources'):
+        for member in item.get(bucket_key, []):
+            sources.append({
+                'url':      member.get('url', ''),
+                'platform': member.get('platform', ''),
+                'hotness':  round(float(member.get('hotness', 0.0)), 1),
+                'title':    member.get('canonical_title') or member.get('title_original', ''),
+                'role':     bucket_key.replace('_sources', ''),
+            })
+    return sources
+
+
+def _build_topic_clusters(items: list[dict]) -> list[dict] | None:
+    """
+    Build structured topic cluster data for multi-item format stories.
+
+    Each item dict is already enriched by _candidates_to_dicts() in run.py,
+    so fact_sources / context_sources / reaction_sources are embedded as
+    lists of source dicts (from _candidate_to_source_dict()).
+
+    Returns None when no item has any cluster members at all (all singletons)
+    — no point writing an empty structure to the DB.
+
+    topic_clusters schema per element:
+      {
+        event_id:         str,          # sha256[:16] of representative URL
+        representative:   source_dict,  # {url, platform, hotness, title}
+        fact_sources:     [source_dict, ...],
+        context_sources:  [source_dict, ...],
+        reaction_sources: [source_dict, ...],
+      }
+    """
+    import hashlib as _hashlib
+    result = []
+    has_any_cluster = False
+    for item in items:
+        fact      = item.get('fact_sources', [])
+        context   = item.get('context_sources', [])
+        reaction  = item.get('reaction_sources', [])
+        if fact or context or reaction:
+            has_any_cluster = True
+        event_id = _hashlib.sha256(item.get('url', '').encode()).hexdigest()[:16]
+        result.append({
+            'event_id':         event_id,
+            'representative':   _format_source(item),
+            'fact_sources':     [_format_source(m) for m in fact],
+            'context_sources':  [_format_source(m) for m in context],
+            'reaction_sources': [_format_source(m) for m in reaction],
+        })
+    return result if has_any_cluster else None
+
+
 def _extract_comments(item: dict, max_comments: int = 5) -> list[str]:
     """
     Extract top_comments from item's raw_payload.
@@ -512,7 +577,7 @@ def generate_explainer(item: dict, lang: str = 'en', channel: int = 1, batch_id:
             hook=script.get('hook', ''),
             bullets=script.get('bullets', []),
             twist=script.get('twist', ''),
-            sources=[_format_source(item)],
+            sources=_build_source_list(item),
             batch_id=batch_id,
             batch_ts=batch_ts,
             embedding_center=item.get('embedding_center'),
@@ -585,6 +650,7 @@ def generate_top5(items: list[dict], lang: str = 'en', channel: int = 1, batch_i
             sources=[_format_source(item) for item in items],
             batch_id=batch_id,
             batch_ts=batch_ts,
+            topic_clusters=_build_topic_clusters(items),
         )
 
         logger.info(f"Top 5 saved: story #{story_id} — {script['title'][:50]}")
@@ -698,6 +764,7 @@ def generate_radar(items: list[dict], lang: str = 'zh', channel: int = 2, batch_
             sources=[_format_source(item) for item in items],
             batch_id=batch_id,
             batch_ts=batch_ts,
+            topic_clusters=_build_topic_clusters(items),
         )
         logger.info(f"Radar saved: story #{story_id} — {script['title'][:50]}")
         return story_id
@@ -748,6 +815,7 @@ def generate_regional(items: list[dict], region_name: str, lang: str = 'zh', cha
             sources=[_format_source(item) for item in items],
             batch_id=batch_id,
             batch_ts=batch_ts,
+            topic_clusters=_build_topic_clusters(items),
         )
         logger.info(f"Regional saved: story #{story_id} — {script['title'][:50]}")
         return story_id
@@ -785,6 +853,7 @@ def generate_two_takes(items: list[dict], lang: str = 'zh', channel: int = 2, ba
             sources=[_format_source(item) for item in items],
             batch_id=batch_id,
             batch_ts=batch_ts,
+            topic_clusters=_build_topic_clusters(items),
         )
         logger.info(f"Two takes saved: story #{story_id} — {script['title'][:50]}")
         return story_id
@@ -822,6 +891,7 @@ def generate_pattern(items: list[dict], lang: str = 'zh', channel: int = 2, batc
             sources=[_format_source(item) for item in items],
             batch_id=batch_id,
             batch_ts=batch_ts,
+            topic_clusters=_build_topic_clusters(items),
         )
         logger.info(f"Pattern saved: story #{story_id} — {script['title'][:50]}")
         return story_id
@@ -871,6 +941,7 @@ def generate_viral(items: list[dict], lang: str = 'zh', channel: int = 2, batch_
             sources=[_format_source(item) for item in items],
             batch_id=batch_id,
             batch_ts=batch_ts,
+            topic_clusters=_build_topic_clusters(items),
         )
         logger.info(f"Viral saved: story #{story_id} — {script['title'][:50]}")
         return story_id
@@ -921,6 +992,7 @@ def generate_deep_dive(items: list[dict], topic: str, lang: str = 'zh', channel:
             sources=[_format_source(item) for item in items],
             batch_id=batch_id,
             batch_ts=batch_ts,
+            topic_clusters=_build_topic_clusters(items),
         )
         logger.info(f"Deep dive saved: story #{story_id} — {script['title'][:50]}")
         return story_id
@@ -971,6 +1043,7 @@ def generate_niche(items: list[dict], niche: str, lang: str = 'zh', channel: int
             sources=[_format_source(item) for item in items],
             batch_id=batch_id,
             batch_ts=batch_ts,
+            topic_clusters=_build_topic_clusters(items),
         )
         logger.info(f"Niche saved: story #{story_id} — {script['title'][:50]}")
         return story_id
@@ -1067,6 +1140,7 @@ def generate_by_format(
             # Single-item formats: pass embedding_center for Phase 2 cosine dedup.
             # Multi-item formats: None (Jaccard fallback is fine for aggregated stories).
             embedding_center=items[0].get('embedding_center') if len(items) == 1 else None,
+            topic_clusters=_build_topic_clusters(items),
         )
         logger.info(f"{format_name} saved: story #{story_id} — {script.get('title', '')[:50]}")
         return story_id

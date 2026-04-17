@@ -51,6 +51,21 @@ class NormalizedCandidate:
     is_new_development:  bool = False
     prior_story_title:   str | None = None   # title of the matched past story
 
+    # Fast pre-clustering NER output — populated at Stage 1 normalize.
+    # Used by _entity_gate() in clustering.py to validate borderline merges.
+    # Schema:
+    #   {
+    #     'countries':  list[str],  # canonical lowercase country names
+    #                               # e.g. ["iran", "russia"]
+    #                               # demonyms normalized (Iranian → iran)
+    #     'orgs':       list[str],  # ALL-CAPS acronyms only (NATO, IMF, WHO)
+    #                               # e.g. ["NATO", "ECB"]
+    #     'event_type': str,        # POLICY_ACTION | INCIDENT | ANALYSIS | UNKNOWN
+    #   }
+    # None means NER was skipped (empty title). Treat as neutral in all gates.
+    # 'persons' field intentionally absent — requires trained NER model; deferred.
+    candidate_entities: dict | None = None
+
 
 @dataclass
 class FormatFeasibility:

@@ -200,6 +200,13 @@ conn.execute('PRAGMA foreign_keys=ON')
 cur = conn.execute('DELETE FROM used_items WHERE story_set_id = ?', (set_id,))
 print('  used_items deleted:  ' + str(cur.rowcount))
 
+# Step 1.5 — delete event_memory rows for this batch BEFORE deleting stories.
+# event_memory.story_id → stories(id) and event_memory.story_set_id → story_sets(id)
+# are both FK constraints enforced by PRAGMA foreign_keys=ON.
+# Without this step, Step 2 raises sqlite3.IntegrityError: FOREIGN KEY constraint failed.
+cur = conn.execute('DELETE FROM event_memory WHERE story_set_id = ?', (set_id,))
+print('  event_memory deleted: ' + str(cur.rowcount))
+
 # Step 2 — delete stories linked to this set via batch_id
 story_rows = conn.execute('SELECT id FROM stories WHERE batch_id = ?', (set_id,)).fetchall()
 story_ids = [r['id'] for r in story_rows]
