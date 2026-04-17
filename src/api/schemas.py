@@ -151,5 +151,5 @@ class EngineStatus(BaseModel):
     last_run_at: Optional[datetime]
     last_run_status: Optional[Literal["success", "failed", "partial"]]
     stories_today: int
-    crawler_db_path: str
+    crawler_db_url: str          # password redacted
     crawler_db_reachable: bool

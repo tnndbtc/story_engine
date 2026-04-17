@@ -24,7 +24,7 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
-from db.crawler_reader import get_top_items, CRAWLER_DB_PATH
+from db.crawler_reader import get_top_items, CRAWLER_ROOT
 from db.models import get_used_urls_with_hotness, DB_PATH
 from engine.selector.config import BatchConfig
 from engine.selector.schemas import NormalizedCandidate, TraceRecord
@@ -91,11 +91,11 @@ def _new_dev_repetition_factor(days_since: float) -> float:
 
 
 # Path to the crawler's auto_keywords.json (used for keyword_map_sha).
-# Derived relative to CRAWLER_DB_PATH so story_engine stays independent of
+# Derived from CRAWLER_ROOT so story_engine stays independent of
 # the crawler's Python package structure.
 _AUTO_KEYWORDS_PATH = (
-    Path(CRAWLER_DB_PATH).parent / 'config' / 'auto_keywords.json'
-    if CRAWLER_DB_PATH else None
+    Path(CRAWLER_ROOT) / 'config' / 'auto_keywords.json'
+    if CRAWLER_ROOT else None
 )
 
 

@@ -13,6 +13,8 @@ db.sqlite3
 # Logs
 logs/
 
+snapshots/
+
 # PID files
 .api_server.pid
 

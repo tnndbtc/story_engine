@@ -27,9 +27,7 @@ from api.schemas import (
     LangType,
 )
 from db.models import get_story, get_stories_today, get_stories, get_story_sets, get_stories_by_set
-from db.crawler_reader import get_item_count, CRAWLER_DB_PATH
-
-import os
+from db.crawler_reader import get_item_count, test_connection, CRAWLER_DB_URL
 
 router = APIRouter(prefix="/api")
 
@@ -143,10 +141,16 @@ def get_story_set_detail(set_id: int):
     )
 
 
+def _redact_url(url: str) -> str:
+    """Hide the password in a postgres://user:pass@host/db URL for safe display."""
+    import re
+    return re.sub(r"(postgres://[^:]+:)[^@]+(@)", r"\1***\2", url)
+
+
 @router.get("/status", response_model=EngineStatus)
 def engine_status():
     """Health check — shows scheduler status and crawler DB connectivity."""
-    crawler_reachable = os.path.exists(CRAWLER_DB_PATH)
+    crawler_reachable = test_connection()
     items_today = 0
 
     if crawler_reachable:
@@ -163,6 +167,6 @@ def engine_status():
         last_run_at=None,  # TODO: track from a metadata table
         last_run_status=None,
         stories_today=len(stories),
-        crawler_db_path=CRAWLER_DB_PATH,
+        crawler_db_url=_redact_url(CRAWLER_DB_URL),
         crawler_db_reachable=crawler_reachable,
     )
