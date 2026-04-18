@@ -19,6 +19,11 @@ INPUT NOTES:
 
 ---
 
+CATEGORY TUNING (apply throughout — adjusts tone, stakes, and conflict framing):
+{category_tuning}
+
+---
+
 CORE RULES (STRICT):
 
 1. HOOK (CRITICAL)

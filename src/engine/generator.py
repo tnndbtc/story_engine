@@ -1268,6 +1268,95 @@ def generate_deep_story(
     Returns the parsed script dict: {title, hook, bullets, twist}.
     Does NOT save to DB — caller (generate_story_batch) handles persistence.
     """
+    # ---------------------------------------------------------------------------
+    # Category tuning blocks — injected into {category_tuning} placeholder.
+    # Maps story_category (or consolidated group) → tuning instructions.
+    # Falls back to empty string for unlisted categories (no tuning applied).
+    # ---------------------------------------------------------------------------
+    _CATEGORY_TUNING: dict[str, str] = {
+        # ai + technology + science → consolidated as ai_tech
+        'ai': """\
+Category: AI / Technology
+- Focus: hidden failure, trust vs capability gap, "looks like it works, but doesn't"
+- Emotional tone: unsettling, loss of control, delayed realization
+- Stakes: automation failure, invisible errors, over-reliance on systems
+- Scenario style: user trusts system → system silently fails → delayed consequence
+- Conflict: human trust vs machine reality
+- Language bias: emphasize "you think it worked, but it didn't"; avoid hype or futuristic exaggeration""",
+
+        'technology': """\
+Category: AI / Technology
+- Focus: hidden failure, trust vs capability gap, "looks like it works, but doesn't"
+- Emotional tone: unsettling, loss of control, delayed realization
+- Stakes: automation failure, invisible errors, over-reliance on systems
+- Scenario style: user trusts system → system silently fails → delayed consequence
+- Conflict: human trust vs machine reality
+- Language bias: emphasize "you think it worked, but it didn't"; avoid hype or futuristic exaggeration""",
+
+        'science': """\
+Category: AI / Technology
+- Focus: hidden failure, trust vs capability gap, "looks like it works, but doesn't"
+- Emotional tone: unsettling, loss of control, delayed realization
+- Stakes: automation failure, invisible errors, over-reliance on systems
+- Scenario style: user trusts system → system silently fails → delayed consequence
+- Conflict: human trust vs machine reality
+- Language bias: emphasize "you think it worked, but it didn't"; avoid hype or futuristic exaggeration""",
+
+        'business': """\
+Category: Business / Finance
+- Focus: money flow, winners vs losers, power imbalance
+- Emotional tone: unfairness, quiet tension, slow-burn risk
+- Stakes: financial loss, job security, market shifts
+- Scenario style: decision → hidden cost → delayed consequence
+- Conflict: company vs user, growth vs sustainability, profit vs responsibility
+- Language bias: emphasize "someone is paying for this"; highlight who benefits vs who loses""",
+
+        'politics': """\
+Category: Politics
+- Focus: power, control, real-world consequences on ordinary people
+- Emotional tone: urgency, tension, concern (not extreme outrage)
+- Stakes: policy impact, rights or restrictions, societal effect
+- Scenario style: decision → downstream effect → public impact
+- Conflict: authority vs individual, policy vs reality
+- Language bias: emphasize "this affects people, not just systems"; avoid partisan framing; avoid emotional extremes unless grounded in the sources""",
+
+        'entertainment': """\
+Category: Entertainment / Sports
+- Focus: people, reputation, unexpected behavior
+- Emotional tone: curiosity, surprise, tension (not fear)
+- Stakes: image, influence, public perception
+- Scenario style: public moment → hidden context → unexpected shift
+- Conflict: persona vs reality, expectation vs behavior
+- Language bias: emphasize "what people thought vs what actually happened"; keep tone engaging, not heavy""",
+
+        'sports': """\
+Category: Entertainment / Sports
+- Focus: people, reputation, unexpected behavior
+- Emotional tone: curiosity, surprise, tension (not fear)
+- Stakes: image, influence, public perception
+- Scenario style: public moment → hidden context → unexpected shift
+- Conflict: persona vs reality, expectation vs behavior
+- Language bias: emphasize "what people thought vs what actually happened"; keep tone engaging, not heavy""",
+
+        'society': """\
+Category: Society / World
+- Focus: human scale over institutional scale; what happens to ordinary people
+- Emotional tone: curiosity, mild unease, "this is bigger than it looks"
+- Stakes: daily life, community, cross-border ripple effects
+- Scenario style: small local signal → broader systemic implication most people missed
+- Conflict: expectation vs reality, local vs global
+- Language bias: emphasize "most people haven't noticed this yet"; show how a distant event quietly reaches the viewer""",
+
+        'world': """\
+Category: Society / World
+- Focus: human scale over institutional scale; what happens to ordinary people
+- Emotional tone: curiosity, mild unease, "this is bigger than it looks"
+- Stakes: daily life, community, cross-border ripple effects
+- Scenario style: small local signal → broader systemic implication most people missed
+- Conflict: expectation vs reality, local vs global
+- Language bias: emphasize "most people haven't noticed this yet"; show how a distant event quietly reaches the viewer""",
+    }
+
     item = _cluster_to_item_dict(cluster)
     template = (PROMPTS_DIR / 'deep_dive.txt').read_text()
 
@@ -1282,6 +1371,9 @@ def generate_deep_story(
         )
         context_block = update_notice + ("\n\n" + cluster_block if cluster_block else "")
 
+    raw_category = (item.get('story_category') or item.get('category') or '').lower()
+    category_tuning = _CATEGORY_TUNING.get(raw_category, '')
+
     prompt = template.format(
         topic=item.get('story_category') or item.get('category') or 'world news',
         stories_block=(
@@ -1291,6 +1383,7 @@ def generate_deep_story(
             f"Description: {item.get('description_original') or 'No description available'}"
         ) + ("\n\n" + context_block if context_block else ""),
         lang_instruction=_lang_instruction(lang),
+        category_tuning=category_tuning,
     )
 
     logger.info(
