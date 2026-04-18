@@ -1,0 +1,59 @@
+{
+  "profile_id": "run6_others",
+  "extends": "story_mix.json",
+  "_notes": [
+    "18:00 run — Society / World channel (test run).",
+    "",
+    "Isolates world + society to evaluate content quality separately from",
+    "the politics channel. These categories were previously used as filler",
+    "in other profiles, making it hard to judge their standalone value.",
+    "",
+    "Platform weights are neutral — let natural hotness decide.",
+    "No heavy boosts: goal is to observe what floats to the top organically."
+  ],
+
+  "soft_targets": {
+    "category_mix": {
+      "society":       0.60,
+      "world":         0.40,
+      "politics":      0.00,
+      "entertainment": 0.00,
+      "sports":        0.00,
+      "business":      0.00,
+      "technology":    0.00,
+      "ai":            0.00,
+      "science":       0.00
+    }
+  },
+
+  "ranking": {
+    "topic_boosts": {
+      "society":       2.50,
+      "world":         2.00,
+      "politics":      0.10,
+      "entertainment": 0.10,
+      "sports":        0.10,
+      "business":      0.10,
+      "technology":    0.10,
+      "ai":            0.10,
+      "science":       0.10
+    },
+    "platform_weight_overrides": {
+      "news_rss":      1.30,
+      "reddit":        1.20,
+      "weibo":         1.00,
+      "baidu":         0.60,
+      "google_trends": 0.50,
+      "wikipedia":     0.80,
+      "bilibili":      0.30,
+      "youtube":       0.30,
+      "nicovideo":     0.20,
+      "hackernews":    0.20,
+      "devto":         0.10,
+      "lobsters":      0.10,
+      "stackoverflow": 0.10,
+      "paperswithcode": 0.05,
+      "arxiv_ai_rss":  0.05
+    }
+  }
+}
