@@ -59,6 +59,25 @@ MAX_SUPPORTING          = 4     # upper bound on supporting stories
 MIN_SUPPORTING          = 2     # below this → invoke under-supply fallback
 ENTITY_OVERLAP_HARD_CAP = 0.6   # hard skip if entity overlap with deep_story exceeds this
 
+# Step 3 — Entity overlap interval scoring (Q3)
+OVERLAP_OPTIMAL_MIN          = 0.10   # below this: weak link, no bonus
+OVERLAP_OPTIMAL_MAX          = 0.40   # above this: soft penalty zone
+OVERLAP_BONUS                = 0.12   # bonus for optimal narrative coupling (10%–40%)
+OVERLAP_PENALTY              = 0.08   # penalty for soft repetition zone (40%–60%)
+
+# Step 3 — Two-stage pipeline (Q7)
+TOP_K_STAGE1                 = 12     # top candidates from Stage 1 passed to Stage 2
+
+# Step 3 — Conflict relevance keywords (Q2)
+CONFLICT_KEYWORDS: tuple = (
+    "war", "attack", "sanction", "protest", "ban",
+    "regulation", "crisis", "lawsuit", "strike", "violence", "security",
+)
+LLM_BOOST_VARIANCE_THRESHOLD = 0.05   # LLM boost triggered when top score variance < this
+
+# Step 3 — New dimension quality gate (Q6)
+NEW_DIMENSION_THRESHOLD      = 0.35   # minimum score for a story to add a new dimension
+
 # Step 5 — Repeat control
 REPEAT_WINDOW_BATCHES = 5       # number of previous batches to check for repeats
 REPEAT_EVICT_HOURS    = 24      # also evict batches older than this many hours
@@ -278,6 +297,134 @@ def _cluster_category(cluster) -> str:
     return getattr(rep, 'category', None) or 'unknown'
 
 
+# ── Narrative alignment helpers ───────────────────────────────────────────────
+
+def _overlap_curve(overlap: float) -> float:
+    """
+    Interval-based entity overlap bonus/penalty (Q3).
+      0%–10%   → 0.0   (weak link, no signal)
+      10%–40%  → +0.12 (optimal narrative coupling)
+      40%–60%  → -0.08 (soft repetition suppression)
+      >60%     → hard-filtered upstream; never reaches here
+    """
+    if overlap < OVERLAP_OPTIMAL_MIN:
+        return 0.0
+    if overlap <= OVERLAP_OPTIMAL_MAX:
+        return OVERLAP_BONUS
+    return -OVERLAP_PENALTY
+
+
+def _cosine_similarity(vec_a: list, vec_b: list) -> float:
+    """Cosine similarity between two embedding vectors."""
+    dot   = sum(a * b for a, b in zip(vec_a, vec_b))
+    mag_a = math.sqrt(sum(a * a for a in vec_a))
+    mag_b = math.sqrt(sum(b * b for b in vec_b))
+    if mag_a == 0.0 or mag_b == 0.0:
+        return 0.0
+    return dot / (mag_a * mag_b)
+
+
+def _tfidf_similarity(a, b) -> float:
+    """
+    Jaccard word-overlap similarity — lightweight fallback when embeddings
+    are unavailable.
+    """
+    def _words(cluster) -> set:
+        text = " ".join([
+            getattr(cluster, 'canonical_title', '') or '',
+            getattr(cluster, 'description',     '') or '',
+        ]).lower()
+        return set(text.split())
+
+    set_a = _words(a)
+    set_b = _words(b)
+    if not set_a or not set_b:
+        return 0.0
+    return len(set_a & set_b) / len(set_a | set_b)
+
+
+def _semantic_similarity(a, b) -> float:
+    """
+    Cosine similarity if both clusters carry pre-computed embeddings (Q4);
+    falls back to TF-IDF Jaccard similarity when embeddings are absent.
+    """
+    emb_a = getattr(a, 'embedding', None)
+    emb_b = getattr(b, 'embedding', None)
+    if emb_a is not None and emb_b is not None:
+        return _cosine_similarity(emb_a, emb_b)
+    return _tfidf_similarity(a, b)
+
+
+def _keyword_conflict_score(cluster) -> float:
+    """
+    Normalized keyword match score against CONFLICT_KEYWORDS (Q2).
+    Score = matched_keywords / total_keywords, capped at 1.0.
+    Matches whole words only — avoids false positives like "ban" in "urban"
+    or "war" in "award".
+    Note: English-only in MVP; non-English articles return 0.0 silently.
+    """
+    text = " ".join([
+        getattr(cluster, 'canonical_title', '') or '',
+        getattr(cluster, 'description',     '') or '',
+    ]).lower()
+    words = set(text.split())
+    matches = sum(1 for kw in CONFLICT_KEYWORDS if kw in words)
+    return min(matches / len(CONFLICT_KEYWORDS), 1.0)
+
+
+def _conflict_relevance(cluster, deep_cluster) -> float:
+    """
+    Hybrid conflict relevance score (Q2).
+      0.5 * keyword_conflict_score
+    + 0.3 * entity_conflict_overlap  (reuses existing entity_overlap — shared
+                                      entities indicate conflict coupling)
+    + 0.2 * LLM boost                (deferred; only when score variance < threshold)
+    LLM boost is NOT implemented in MVP — weight absorbed into keyword + entity.
+    """
+    kw_score      = _keyword_conflict_score(cluster)
+    entity_coupl  = _entity_overlap(deep_cluster, cluster)
+    # MVP: no LLM boost; redistribute its 0.2 weight proportionally
+    # Effective weights: keyword=0.625, entity=0.375 (normalized from 0.5+0.3)
+    return 0.625 * kw_score + 0.375 * entity_coupl
+
+
+def _support_alignment_score(cluster, deep_cluster) -> float:
+    """
+    Stage 2 narrative alignment score (Q7 / Phase 2).
+      0.4 * semantic_similarity_to_deep_story
+    + 0.3 * conflict_relevance
+    + 0.2 * entity_connection_strength
+    + 0.1 * novelty_bonus
+    """
+    semantic   = _semantic_similarity(cluster, deep_cluster)
+    conflict   = _conflict_relevance(cluster, deep_cluster)
+    entity_con = _entity_overlap(deep_cluster, cluster)
+    novelty    = _get_novelty_score(cluster)
+    return (
+        0.4 * semantic
+      + 0.3 * conflict
+      + 0.2 * entity_con
+      + 0.1 * novelty
+    )
+
+
+def _new_dimension_score(cluster, deep_cluster) -> float:
+    """
+    Measures whether a supporting story adds a new perspective to the deep story (Q6).
+      0.4 * entity_set_difference     (1 - entity_overlap, inverted)
+    + 0.3 * topic_embedding_distance  (1 - semantic_similarity, inverted)
+    + 0.3 * event_type_difference     (1.0 if different types, 0.0 if same)
+    Score >= NEW_DIMENSION_THRESHOLD → story adds a new dimension.
+    Note: topic_embedding_distance uses TF-IDF proxy when embeddings are absent.
+    """
+    entity_diff   = 1.0 - _entity_overlap(deep_cluster, cluster)
+    topic_dist    = 1.0 - _semantic_similarity(cluster, deep_cluster)
+    deep_etype    = _event_type(deep_cluster)
+    cand_etype    = _event_type(cluster)
+    type_diff     = 0.0 if (deep_etype == cand_etype and deep_etype != 'UNKNOWN') else 1.0
+    return 0.4 * entity_diff + 0.3 * topic_dist + 0.3 * type_diff
+
+
 def _cross_platform_diversity_bonus(cluster) -> float:
     """
     Phase 3.2 MVP: +0.1 if the cluster spans >= 2 distinct source-role types.
@@ -475,7 +622,8 @@ def story_orchestrate(
     remaining = [(c, s) for c, s in scored if c.event_id != deep_cluster.event_id]
 
     def _support_score(norm_score: float, overlap: float, topic_bonus: float = 0.0) -> float:
-        return norm_score - 0.3 * overlap + 0.1 * topic_bonus
+        # Q3: interval overlap curve replaces old linear penalty (-0.3 * overlap)
+        return norm_score + _overlap_curve(overlap) + 0.1 * topic_bonus
 
     def _filter_and_score_candidates(
         pool: list[tuple],
@@ -507,6 +655,34 @@ def story_orchestrate(
             "(%d candidates now available)",
             MIN_SUPPORTING, relaxed_cap, len(support_candidates),
         )
+
+    # ── Stage 1 → Stage 2 handoff (Q7) ──────────────────────────────────────────
+    # Cap at TOP_K_STAGE1 before narrative refinement to control cost + latency.
+    stage1_candidates = support_candidates[:TOP_K_STAGE1]
+
+    # Phase 3 Q6 — new dimension quality gate
+    # Filter out stories that don't add a new perspective vs. the deep story.
+    stage2_candidates = [
+        (c, s) for c, s in stage1_candidates
+        if _new_dimension_score(c, deep_cluster) >= NEW_DIMENSION_THRESHOLD
+    ]
+    if len(stage2_candidates) < MIN_SUPPORTING:
+        logger.warning(
+            "story_orchestrate: new_dimension gate — only %d candidate(s) passed "
+            "(threshold=%.2f); falling back to full Stage 1 set",
+            len(stage2_candidates), NEW_DIMENSION_THRESHOLD,
+        )
+        stage2_candidates = stage1_candidates
+
+    # Stage 2 — re-rank by narrative alignment score (Q7)
+    support_candidates = sorted(
+        stage2_candidates,
+        key=lambda x: (-_support_alignment_score(x[0], deep_cluster), -x[1]),
+    )
+    logger.debug(
+        "story_orchestrate: Stage 2 — %d candidates re-ranked by alignment score",
+        len(support_candidates),
+    )
 
     # Selection loop — applies event_type diversity cap + topic_diversity_bonus
     seen_event_types: dict[str, int] = {}
