@@ -221,7 +221,7 @@ def _get_top_items_single_pass(
         params.append(category_filter)
 
     if buckets:
-        placeholders = ",".join("%s" * len(buckets))
+        placeholders = ",".join(["%s"] * len(buckets))
         conditions.append(f"ti.bucket IN ({placeholders})")
         params.extend(buckets)
 
@@ -230,12 +230,12 @@ def _get_top_items_single_pass(
         params.append(lang_group)
 
     if exclude_platforms:
-        placeholders = ",".join("%s" * len(exclude_platforms))
+        placeholders = ",".join(["%s"] * len(exclude_platforms))
         conditions.append(f"ts.platform NOT IN ({placeholders})")
         params.extend(exclude_platforms)
 
     if platforms:
-        placeholders = ",".join("%s" * len(platforms))
+        placeholders = ",".join(["%s"] * len(platforms))
         conditions.append(f"ts.platform IN ({placeholders})")
         params.extend(platforms)
 
@@ -392,7 +392,7 @@ def get_regional_items(
     platform_clause = ""
     params: list = []
     if exclude_platforms:
-        placeholders = ",".join("%s" * len(exclude_platforms))
+        placeholders = ",".join(["%s"] * len(exclude_platforms))
         platform_clause = f"AND ts.platform NOT IN ({placeholders})"
         params.extend(exclude_platforms)
     params.append(exclude_region)
@@ -453,7 +453,7 @@ def get_embeddings(item_ids: list[int]) -> dict[int, list[float]]:
     if not item_ids:
         return {}
     conn = get_crawler_connection()
-    placeholders = ",".join("%s" * len(item_ids))
+    placeholders = ",".join(["%s"] * len(item_ids))
     rows = _exec(
         conn,
         f"""
@@ -549,7 +549,7 @@ def get_background_items(
         params.append(category)
 
     if exclude_urls:
-        placeholders = ",".join("%s" * len(exclude_urls))
+        placeholders = ",".join(["%s"] * len(exclude_urls))
         conditions.append(f"ti.url NOT IN ({placeholders})")
         params.extend(exclude_urls)
 

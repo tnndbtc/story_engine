@@ -3,8 +3,8 @@
   "purity_gate_threshold": 0.55,
   "min_samples_to_enable": 300,
   "threshold_min": 0.45,
-  "threshold_max": 0.70,
+  "threshold_max": 0.7,
   "change_min_delta": 0.03,
-  "last_calibrated_at": null,
+  "last_calibrated_at": "2026-04-18 03:17:01",
   "sample_count_at_calibration": 0
 }

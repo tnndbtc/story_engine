@@ -133,8 +133,9 @@ def get_story_set_detail(set_id: int):
     if not stories:
         raise HTTPException(status_code=404, detail=f"Story set {set_id} not found or empty")
 
+    first_ts = (stories[0].get('generated_at') or '') if stories else ''
     return StoriesListResponse(
-        date=stories[0].get('generated_at', '')[:10] if stories else '',
+        date=first_ts[:10],
         generated_at=datetime.utcnow(),
         total=len(stories),
         stories=[_dict_to_story(s) for s in stories],

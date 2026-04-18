@@ -441,23 +441,29 @@ def get_story_sets(limit: int = 20, profile_id: str | None = None) -> list[dict]
     conn = get_connection()
     if profile_id is not None:
         rows = conn.execute(
-            """SELECT ss.*, COUNT(CASE WHEN s.status = 'ready' THEN 1 END) as story_count
+            """SELECT ss.*,
+                  COUNT(CASE WHEN s.status = 'ready' THEN 1 END) as story_count,
+                  COUNT(DISTINCT CASE WHEN hs.status = 'ready' THEN hs.id END) as hier_count
                FROM story_sets ss
                LEFT JOIN stories s ON s.batch_id = ss.id
+               LEFT JOIN hierarchical_stories hs ON hs.story_set_id = ss.id
                WHERE ss.profile_id = ?
                GROUP BY ss.id
-               HAVING story_count > 0
+               HAVING story_count > 0 OR hier_count > 0
                ORDER BY ss.id DESC
                LIMIT ?""",
             (profile_id, limit)
         ).fetchall()
     else:
         rows = conn.execute(
-            """SELECT ss.*, COUNT(CASE WHEN s.status = 'ready' THEN 1 END) as story_count
+            """SELECT ss.*,
+                  COUNT(CASE WHEN s.status = 'ready' THEN 1 END) as story_count,
+                  COUNT(DISTINCT CASE WHEN hs.status = 'ready' THEN hs.id END) as hier_count
                FROM story_sets ss
                LEFT JOIN stories s ON s.batch_id = ss.id
+               LEFT JOIN hierarchical_stories hs ON hs.story_set_id = ss.id
                GROUP BY ss.id
-               HAVING story_count > 0
+               HAVING story_count > 0 OR hier_count > 0
                ORDER BY ss.id DESC
                LIMIT ?""",
             (limit,)
@@ -473,14 +479,93 @@ def get_story_sets(limit: int = 20, profile_id: str | None = None) -> list[dict]
 
 
 def get_stories_by_set(set_id: int) -> list[dict]:
-    """Get all stories in a specific story set."""
+    """Get all stories in a specific story set.
+
+    For deep-story-only sets (no flat stories), converts the hierarchical story
+    and its supporting stories into Story-compatible dicts so the existing
+    /story-sets/{id} endpoint and trend_ui StoryCard can render them without
+    any frontend changes.
+    """
+    import json as _json
+
     conn = get_connection()
+
+    # --- flat stories (legacy / flat-format runs) ---
     rows = conn.execute(
         "SELECT * FROM stories WHERE batch_id = ? AND status = 'ready' ORDER BY id",
         (set_id,)
     ).fetchall()
+    flat = [_row_to_dict(r) for r in rows]
+
+    if flat:
+        conn.close()
+        return flat
+
+    # --- hierarchical (deep-story-only) sets ---
+    # Convert the deep story + supporting stories to Story-compatible dicts so
+    # the same API endpoint and frontend component can render them.
+    hier_rows = conn.execute(
+        "SELECT * FROM hierarchical_stories WHERE story_set_id = ? AND status = 'ready' ORDER BY id",
+        (set_id,)
+    ).fetchall()
     conn.close()
-    return [_row_to_dict(r) for r in rows]
+
+    result: list[dict] = []
+    for hr in hier_rows:
+        hr = dict(hr)
+        ts = _ts_to_iso(hr['generated_at']) if hr.get('generated_at') else None
+        channel = hr.get('channel', 2)
+        lang = hr.get('lang', 'zh')
+
+        def _norm_sources(raw_sources: list) -> list:
+            """Ensure every source has platform and hotness (required by SourceItem schema)."""
+            result_srcs = []
+            for src in raw_sources:
+                result_srcs.append({
+                    'url':      src.get('url', ''),
+                    'title':    src.get('title', ''),
+                    'platform': src.get('platform', 'news_rss'),
+                    'hotness':  src.get('hotness', 0.0),
+                })
+            return result_srcs
+
+        # Deep story → one Story entry (format='deep_story')
+        ds = _json.loads(hr['deep_story']) if hr.get('deep_story') else {}
+        if ds:
+            result.append({
+                'id':           hr['id'] * 10000,        # synthetic id — no collision with flat stories
+                'title':        ds.get('title', ''),
+                'format':       'deep_story',
+                'channel':      channel,
+                'lang':         lang,
+                'status':       'ready',
+                'generated_at': ts,
+                'hook':         ds.get('hook', ''),
+                'bullets':      ds.get('bullets', []),
+                'twist':        ds.get('twist', ''),
+                'sources':      _norm_sources(ds.get('sources', [])),
+                'comments_used': [],
+            })
+
+        # Supporting stories → one Story entry each (format='supporting')
+        supporting = _json.loads(hr['supporting_stories']) if hr.get('supporting_stories') else []
+        for idx, ss in enumerate(supporting):
+            result.append({
+                'id':           hr['id'] * 10000 + idx + 1,
+                'title':        ss.get('title', ''),
+                'format':       'supporting',
+                'channel':      channel,
+                'lang':         lang,
+                'status':       'ready',
+                'generated_at': ts,
+                'hook':         ss.get('summary', ''),
+                'bullets':      [],
+                'twist':        ss.get('why_it_matters', ''),
+                'sources':      _norm_sources(ss.get('sources', [])),
+                'comments_used': [],
+            })
+
+    return result
 
 
 # ---------------------------------------------------------------------------
