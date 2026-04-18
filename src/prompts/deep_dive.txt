@@ -77,18 +77,22 @@ NO HALLUCINATION:
 
 OUTPUT FORMAT (JSON ONLY, no markdown, no explanation):
 
+IMPORTANT: Do NOT include any section labels (e.g. "Setup:", "Why it matters:", "Conflict:") in the output.
+All fields must contain clean, speakable prose only — no headers, no prefixes, no labels.
+The content will be read aloud by text-to-speech.
+
 {{
   "title": "High-tension headline (max 80 chars)",
-  "hook": "Hook text",
+  "hook": "Hook text as clean prose",
   "bullets": [
-    "Setup: ...",
-    "Why it matters: ...",
-    "Concrete scenario: ...",
-    "Conflict: ...",
-    "Escalation: ...",
-    "Implication: ..."
+    "First bullet as clean prose...",
+    "Second bullet as clean prose...",
+    "Third bullet as clean prose...",
+    "Fourth bullet as clean prose...",
+    "Fifth bullet as clean prose...",
+    "Sixth bullet as clean prose..."
   ],
-  "twist": "Final insight or question"
+  "twist": "Final insight or question as clean prose"
 }}
 
 ---
