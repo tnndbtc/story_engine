@@ -339,6 +339,221 @@ generate_stories() {
     return
 }
 
+export_last_story() {
+    echo ""
+    echo -e "  ${BOLD}Export Last Story${NC}"
+    echo ""
+
+    local db_path="${STORY_ENGINE_DB:-$SCRIPT_DIR/db.sqlite3}"
+    local export_dir="$SCRIPT_DIR/exports"
+
+    if [ ! -f "$db_path" ]; then
+        echo -e "  ${RED}ERROR: database not found at $db_path${NC}"
+        echo ""; return
+    fi
+
+    # Ask format
+    echo "  Format:"
+    echo "    1) Markdown (.md)"
+    echo "    2) HTML     (.html)"
+    echo "    3) Both"
+    echo "    0) Cancel"
+    echo ""
+    read -p "  Select: " fmt_choice
+    case $fmt_choice in
+        0) echo -e "  ${YELLOW}Cancelled${NC}"; echo ""; return ;;
+        1|2|3) ;;
+        *) echo -e "  ${RED}Invalid option${NC}"; echo ""; return ;;
+    esac
+
+    mkdir -p "$export_dir"
+
+    echo ""
+    echo -e "  ${CYAN}Fetching latest story...${NC}"
+    echo ""
+
+    python3 - "$db_path" "$export_dir" "$fmt_choice" <<'PYEOF'
+import sys, json, os
+from datetime import datetime, timezone
+
+db_path, export_dir, fmt = sys.argv[1], sys.argv[2], sys.argv[3]
+
+try:
+    import sqlite3
+    con = sqlite3.connect(db_path)
+    cur = con.cursor()
+    cur.execute("""
+        SELECT id, story_set_id, batch_ts, lang, channel, status,
+               deep_story, supporting_stories, generated_at
+        FROM hierarchical_stories
+        ORDER BY generated_at DESC LIMIT 1
+    """)
+    row = cur.fetchone()
+    con.close()
+except Exception as e:
+    print(f"  ERROR reading database: {e}", file=sys.stderr)
+    sys.exit(1)
+
+if not row:
+    print("  No stories found in database.")
+    sys.exit(0)
+
+sid, set_id, batch_ts, lang, channel, status, raw_ds, raw_ss, gen_at = row
+ds = json.loads(raw_ds) if raw_ds else {}
+ss = json.loads(raw_ss) if raw_ss else []
+ts = datetime.fromtimestamp(gen_at / 1000, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+date_slug = datetime.fromtimestamp(gen_at / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
+base = os.path.join(export_dir, f"story_{sid}_{date_slug}")
+
+title   = ds.get("title", "Untitled")
+hook    = ds.get("hook", "")
+bullets = ds.get("bullets", [])
+twist   = ds.get("twist", "")
+sources = ds.get("sources", [])
+cluster = ds.get("cluster_size", len(sources))
+
+# ── Markdown ────────────────────────────────────────────────────────────────
+def write_md():
+    lines = []
+    lines.append(f"# {title}\n")
+    lines.append(f"> **Generated:** {ts} | **Language:** {lang} | **Channel:** {channel} | **Story ID:** {sid} | **Sources:** {cluster}\n")
+    lines.append("---\n")
+    lines.append("## Hook\n")
+    lines.append(f"{hook}\n")
+    lines.append("---\n")
+    lines.append("## Key Points\n")
+    for b in bullets:
+        lines.append(f"- {b}\n")
+    lines.append("\n---\n")
+    lines.append("## Twist\n")
+    lines.append(f"{twist}\n")
+    lines.append("---\n")
+    lines.append("## Sources\n")
+    for i, src in enumerate(sources, 1):
+        role = src.get("role", "")
+        hot  = src.get("hotness", "")
+        note = f"*(hotness: {hot})*" if hot and not role else f"*({role})*" if role else ""
+        lines.append(f"{i}. [{src.get('title','Source')}]({src.get('url','')}) {note}\n")
+    if ss:
+        lines.append("\n---\n")
+        lines.append("## Supporting Stories\n")
+        for i, s in enumerate(ss, 1):
+            lines.append(f"\n### {i}. {s.get('title','')}\n")
+            lines.append(f"**Summary:** {s.get('summary','')}\n\n")
+            lines.append(f"**Why It Matters:** {s.get('why_it_matters','')}\n\n")
+            for src in s.get("sources", []):
+                lines.append(f"**Source:** [{src.get('title','Source')}]({src.get('url','')})\n")
+            lines.append("\n---\n")
+    lines.append(f"\n*Exported from Story Engine — Story Set #{set_id} | Cluster size: {cluster}*\n")
+    path = base + ".md"
+    with open(path, "w", encoding="utf-8") as f:
+        f.writelines(lines)
+    print(f"  ✓  Markdown : {path}")
+
+# ── HTML ─────────────────────────────────────────────────────────────────────
+def write_html():
+    def src_badge(src):
+        role = src.get("role", "")
+        hot  = src.get("hotness", "")
+        if hot and not role:
+            return f'<span class="hotness">🔥 {hot}</span>'
+        if role:
+            return f'<span class="role">{role}</span>'
+        return ""
+
+    def esc(s):
+        return str(s).replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace('"',"&quot;")
+
+    bullets_html = "\n".join(f"<li>{esc(b)}</li>" for b in bullets)
+    sources_html = ""
+    for src in sources:
+        sources_html += f"""
+    <div class="source-item">
+      {src_badge(src)}
+      <a href="{esc(src.get('url',''))}" target="_blank">{esc(src.get('title','Source'))}</a>
+    </div>"""
+    ss_html = ""
+    for s in ss:
+        src_links = "".join(
+            f'<a href="{esc(src.get("url",""))}" target="_blank">{esc(src.get("title","Source"))}</a><br>'
+            for src in s.get("sources", [])
+        )
+        ss_html += f"""
+    <div class="support-card">
+      <h3>{esc(s.get('title',''))}</h3>
+      <div class="label">Summary</div>
+      <p>{esc(s.get('summary',''))}</p>
+      <div class="label">Why It Matters</div>
+      <p>{esc(s.get('why_it_matters',''))}</p>
+      <div class="label">Source</div>
+      {src_links}
+    </div>"""
+
+    html = f"""<!DOCTYPE html>
+<html lang="{lang}">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>{esc(title)}</title>
+  <style>
+    :root{{--bg:#0f1117;--surface:#1a1d27;--surface2:#22263a;--accent:#e84545;--accent2:#f0a500;--text:#e8eaf0;--muted:#8892a4;--border:#2e3347;}}
+    *{{box-sizing:border-box;margin:0;padding:0;}}
+    body{{font-family:-apple-system,"PingFang TC","Noto Sans TC","Microsoft JhengHei",sans-serif;background:var(--bg);color:var(--text);line-height:1.8;padding:2rem 1rem;}}
+    .wrapper{{max-width:780px;margin:0 auto;}}
+    .meta{{display:flex;flex-wrap:wrap;gap:.5rem;font-size:.75rem;color:var(--muted);margin-bottom:2rem;}}
+    .meta span{{background:var(--surface2);padding:.2rem .6rem;border-radius:999px;}}
+    h1{{font-size:clamp(1.5rem,5vw,2.2rem);font-weight:800;border-left:4px solid var(--accent);padding-left:1rem;margin-bottom:1.5rem;}}
+    .hook{{background:var(--surface);border:1px solid var(--border);border-top:3px solid var(--accent);border-radius:8px;padding:1.25rem 1.5rem;font-size:1.05rem;font-style:italic;color:#ccd0db;margin-bottom:2rem;}}
+    h2{{font-size:1rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--accent2);margin:2rem 0 1rem;}}
+    .bullets{{list-style:none;display:flex;flex-direction:column;gap:.9rem;}}
+    .bullets li{{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:1rem 1.2rem 1rem 3rem;position:relative;}}
+    .bullets li::before{{content:"▸";position:absolute;left:1rem;color:var(--accent);top:1rem;}}
+    .twist{{background:linear-gradient(135deg,#1e1030 0%,#1a1d27 100%);border:1px solid #3a2a55;border-left:4px solid #9b59b6;border-radius:8px;padding:1.25rem 1.5rem;font-size:1.05rem;margin:2rem 0;}}
+    .sources{{display:flex;flex-direction:column;gap:.6rem;}}
+    .source-item{{background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:.75rem 1rem;font-size:.875rem;}}
+    .source-item a{{color:#5b9cf6;text-decoration:none;}} .source-item a:hover{{text-decoration:underline;}}
+    .hotness{{float:right;background:var(--accent);color:#fff;font-size:.7rem;padding:.15rem .45rem;border-radius:999px;margin-left:.5rem;}}
+    .role{{float:right;background:var(--surface2);color:var(--muted);font-size:.7rem;padding:.15rem .45rem;border-radius:999px;margin-left:.5rem;}}
+    .supporting{{display:flex;flex-direction:column;gap:1.25rem;}}
+    .support-card{{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:1.2rem 1.4rem;}}
+    .support-card h3{{font-size:1rem;font-weight:700;margin-bottom:.5rem;}}
+    .label{{font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--accent2);margin:.8rem 0 .25rem;}}
+    .support-card p{{font-size:.9rem;color:#b0b8c8;}}
+    .support-card a{{color:#5b9cf6;font-size:.85rem;text-decoration:none;}} .support-card a:hover{{text-decoration:underline;}}
+    footer{{margin-top:3rem;padding-top:1.5rem;border-top:1px solid var(--border);font-size:.75rem;color:var(--muted);text-align:center;}}
+  </style>
+</head>
+<body><div class="wrapper">
+  <div class="meta">
+    <span>📅 {ts}</span><span>🌐 {lang}</span><span>📡 Channel {channel}</span>
+    <span>🆔 Story #{sid}</span><span>🔗 {cluster} sources</span><span>📦 Set #{set_id}</span>
+  </div>
+  <h1>{esc(title)}</h1>
+  <div class="hook">{esc(hook)}</div>
+  <h2>Key Points</h2>
+  <ul class="bullets">{bullets_html}</ul>
+  <h2>Twist</h2>
+  <div class="twist">{esc(twist)}</div>
+  <h2>Sources</h2>
+  <div class="sources">{sources_html}</div>
+  {'<h2>Supporting Stories</h2><div class="supporting">' + ss_html + '</div>' if ss else ''}
+  <footer>Exported from Story Engine — Story Set #{set_id} · Cluster size: {cluster} · Generated {ts}</footer>
+</div></body></html>"""
+
+    path = base + ".html"
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(html)
+    print(f"  ✓  HTML     : {path}")
+
+if fmt in ("1", "3"):
+    write_md()
+if fmt in ("2", "3"):
+    write_html()
+PYEOF
+
+    echo ""
+}
+
 configure_env() {
     echo ""
     echo -e "  ${BOLD}Configure Database (.env)${NC}"
@@ -479,6 +694,7 @@ EOF
     echo -e "${BOLD}Generation:${NC}"
     echo "  5)  Generate Stories (zh-Hans)"
     echo "  6)  Reset Last Batch  (delete & free articles for re-run)"
+    echo "  8)  Export Last Story (.md / .html)"
     echo ""
     echo -e "${BOLD}Configuration:${NC}"
     echo "  7)  Configure .env   (DB host / user / password)"
@@ -501,6 +717,7 @@ while true; do
         5) generate_stories ;;
         6) reset_last_batch ;;
         7) configure_env ;;
+        8) export_last_story ;;
         0)
             echo ""
             echo -e "  ${CYAN}Exiting...${NC}"
