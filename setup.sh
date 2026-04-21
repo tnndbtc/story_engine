@@ -341,7 +341,7 @@ generate_stories() {
 
 export_last_story() {
     echo ""
-    echo -e "  ${BOLD}Export Last Story${NC}"
+    echo -e "  ${BOLD}Export Stories${NC}"
     echo ""
 
     local db_path="${STORY_ENGINE_DB:-$SCRIPT_DIR/db.sqlite3}"
@@ -352,133 +352,167 @@ export_last_story() {
         echo ""; return
     fi
 
+    # Ask how many stories
+    read -p "  How many recent stories to export? [1]: " n_choice
+    n_choice="${n_choice:-1}"
+    if ! [[ "$n_choice" =~ ^[1-9][0-9]*$ ]]; then
+        echo -e "  ${RED}Invalid number: $n_choice${NC}"; echo ""; return
+    fi
+
     # Ask format
+    echo ""
     echo "  Format:"
     echo "    1) Markdown (.md)"
     echo "    2) HTML     (.html)"
     echo "    3) Both"
+    echo "    4) Plain text (.txt)  — narration script only"
     echo "    0) Cancel"
     echo ""
     read -p "  Select: " fmt_choice
     case $fmt_choice in
         0) echo -e "  ${YELLOW}Cancelled${NC}"; echo ""; return ;;
-        1|2|3) ;;
+        1|2|3|4) ;;
         *) echo -e "  ${RED}Invalid option${NC}"; echo ""; return ;;
     esac
 
     mkdir -p "$export_dir"
 
     echo ""
-    echo -e "  ${CYAN}Fetching latest story...${NC}"
+    echo -e "  ${CYAN}Fetching $n_choice story/stories...${NC}"
     echo ""
 
-    python3 - "$db_path" "$export_dir" "$fmt_choice" <<'PYEOF'
-import sys, json, os
+    python3 - "$db_path" "$export_dir" "$fmt_choice" "$n_choice" <<'PYEOF'
+import sys, json, os, re
 from datetime import datetime, timezone
 
-db_path, export_dir, fmt = sys.argv[1], sys.argv[2], sys.argv[3]
+db_path, export_dir, fmt, n_arg = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+n_stories = max(1, int(n_arg))
 
 try:
     import sqlite3
     con = sqlite3.connect(db_path)
     cur = con.cursor()
     cur.execute("""
-        SELECT id, story_set_id, batch_ts, lang, channel, status,
-               deep_story, supporting_stories, generated_at
-        FROM hierarchical_stories
-        ORDER BY generated_at DESC LIMIT 1
-    """)
-    row = cur.fetchone()
+        SELECT h.id, h.story_set_id, h.batch_ts, h.lang, h.channel, h.status,
+               h.deep_story, h.supporting_stories, h.generated_at,
+               ss.profile_id
+        FROM hierarchical_stories h
+        LEFT JOIN story_sets ss ON ss.id = h.story_set_id
+        ORDER BY h.generated_at DESC LIMIT ?
+    """, (n_stories,))
+    rows = cur.fetchall()
     con.close()
 except Exception as e:
     print(f"  ERROR reading database: {e}", file=sys.stderr)
     sys.exit(1)
 
-if not row:
+if not rows:
     print("  No stories found in database.")
     sys.exit(0)
 
-sid, set_id, batch_ts, lang, channel, status, raw_ds, raw_ss, gen_at = row
-ds = json.loads(raw_ds) if raw_ds else {}
-ss = json.loads(raw_ss) if raw_ss else []
-ts = datetime.fromtimestamp(gen_at / 1000, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-date_slug = datetime.fromtimestamp(gen_at / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
-base = os.path.join(export_dir, f"story_{sid}_{date_slug}")
+def strip_md(text):
+    """Remove common markdown artifacts so output is plain prose."""
+    text = re.sub(r'\*{1,3}(.+?)\*{1,3}', r'\1', text)   # bold / italic
+    text = re.sub(r'`(.+?)`', r'\1', text)                 # inline code
+    text = re.sub(r'https?://\S+', '', text)               # URLs
+    text = re.sub(r'\[([^\]]+)\]\([^)]*\)', r'\1', text)  # [text](url)
+    text = re.sub(r'^#+\s*', '', text, flags=re.MULTILINE) # headings
+    text = text.strip()
+    return text
 
-title   = ds.get("title", "Untitled")
-hook    = ds.get("hook", "")
-bullets = ds.get("bullets", [])
-twist   = ds.get("twist", "")
-sources = ds.get("sources", [])
-cluster = ds.get("cluster_size", len(sources))
+exported = 0
+for row in rows:
+    sid, set_id, batch_ts, lang, channel, status, raw_ds, raw_ss, gen_at, profile_id = row
+    ds = json.loads(raw_ds) if raw_ds else {}
+    ss = json.loads(raw_ss) if raw_ss else []
 
-# ── Markdown ────────────────────────────────────────────────────────────────
-def write_md():
-    lines = []
-    lines.append(f"# {title}\n")
-    lines.append(f"> **Generated:** {ts} | **Language:** {lang} | **Channel:** {channel} | **Story ID:** {sid} | **Sources:** {cluster}\n")
-    lines.append("---\n")
-    lines.append("## Hook\n")
-    lines.append(f"{hook}\n")
-    lines.append("---\n")
-    lines.append("## Key Points\n")
-    for b in bullets:
-        lines.append(f"- {b}\n")
-    lines.append("\n---\n")
-    lines.append("## Twist\n")
-    lines.append(f"{twist}\n")
-    lines.append("---\n")
-    lines.append("## Sources\n")
-    for i, src in enumerate(sources, 1):
-        role = src.get("role", "")
-        hot  = src.get("hotness", "")
-        note = f"*(hotness: {hot})*" if hot and not role else f"*({role})*" if role else ""
-        lines.append(f"{i}. [{src.get('title','Source')}]({src.get('url','')}) {note}\n")
-    if ss:
+    dt_utc   = datetime.fromtimestamp(gen_at / 1000, tz=timezone.utc)
+    ts       = dt_utc.strftime("%Y-%m-%d %H:%M UTC")
+    date_slug = dt_utc.strftime("%Y-%m-%d")
+    time_slug = dt_utc.strftime("%H%M")
+
+    # Extract category from profile_id (e.g. "run5_entertainment" → "entertainment")
+    if profile_id:
+        category = re.sub(r'^run\d+_', '', profile_id)
+    else:
+        category = "unknown"
+
+    base = os.path.join(export_dir, f"story_{date_slug}_{time_slug}utc_{category}_{sid}")
+
+    title   = ds.get("title", "Untitled")
+    hook    = ds.get("hook", "")
+    bullets = ds.get("bullets", [])
+    twist   = ds.get("twist", "")
+    sources = ds.get("sources", [])
+    cluster = ds.get("cluster_size", len(sources))
+
+    # ── Markdown ────────────────────────────────────────────────────────────────
+    def write_md():
+        lines = []
+        lines.append(f"# {title}\n")
+        lines.append(f"> **Generated:** {ts} | **Language:** {lang} | **Channel:** {channel} | **Category:** {category} | **Story ID:** {sid} | **Sources:** {cluster}\n")
+        lines.append("---\n")
+        lines.append("## Hook\n")
+        lines.append(f"{hook}\n")
+        lines.append("---\n")
+        lines.append("## Key Points\n")
+        for b in bullets:
+            lines.append(f"- {b}\n")
         lines.append("\n---\n")
-        lines.append("## Supporting Stories\n")
-        for i, s in enumerate(ss, 1):
-            lines.append(f"\n### {i}. {s.get('title','')}\n")
-            lines.append(f"**Summary:** {s.get('summary','')}\n\n")
-            lines.append(f"**Why It Matters:** {s.get('why_it_matters','')}\n\n")
-            for src in s.get("sources", []):
-                lines.append(f"**Source:** [{src.get('title','Source')}]({src.get('url','')})\n")
+        lines.append("## Twist\n")
+        lines.append(f"{twist}\n")
+        lines.append("---\n")
+        lines.append("## Sources\n")
+        for i, src in enumerate(sources, 1):
+            role = src.get("role", "")
+            hot  = src.get("hotness", "")
+            note = f"*(hotness: {hot})*" if hot and not role else f"*({role})*" if role else ""
+            lines.append(f"{i}. [{src.get('title','Source')}]({src.get('url','')}) {note}\n")
+        if ss:
             lines.append("\n---\n")
-    lines.append(f"\n*Exported from Story Engine — Story Set #{set_id} | Cluster size: {cluster}*\n")
-    path = base + ".md"
-    with open(path, "w", encoding="utf-8") as f:
-        f.writelines(lines)
-    print(f"  ✓  Markdown : {path}")
+            lines.append("## Supporting Stories\n")
+            for i, s in enumerate(ss, 1):
+                lines.append(f"\n### {i}. {s.get('title','')}\n")
+                lines.append(f"**Summary:** {s.get('summary','')}\n\n")
+                lines.append(f"**Why It Matters:** {s.get('why_it_matters','')}\n\n")
+                for src in s.get("sources", []):
+                    lines.append(f"**Source:** [{src.get('title','Source')}]({src.get('url','')})\n")
+                lines.append("\n---\n")
+        lines.append(f"\n*Exported from Story Engine — Story Set #{set_id} | Category: {category} | Cluster size: {cluster}*\n")
+        path = base + ".md"
+        with open(path, "w", encoding="utf-8") as f:
+            f.writelines(lines)
+        print(f"  ✓  Markdown : {path}")
 
-# ── HTML ─────────────────────────────────────────────────────────────────────
-def write_html():
-    def src_badge(src):
-        role = src.get("role", "")
-        hot  = src.get("hotness", "")
-        if hot and not role:
-            return f'<span class="hotness">🔥 {hot}</span>'
-        if role:
-            return f'<span class="role">{role}</span>'
-        return ""
+    # ── HTML ─────────────────────────────────────────────────────────────────────
+    def write_html():
+        def src_badge(src):
+            role = src.get("role", "")
+            hot  = src.get("hotness", "")
+            if hot and not role:
+                return f'<span class="hotness">🔥 {hot}</span>'
+            if role:
+                return f'<span class="role">{role}</span>'
+            return ""
 
-    def esc(s):
-        return str(s).replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace('"',"&quot;")
+        def esc(s):
+            return str(s).replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace('"',"&quot;")
 
-    bullets_html = "\n".join(f"<li>{esc(b)}</li>" for b in bullets)
-    sources_html = ""
-    for src in sources:
-        sources_html += f"""
+        bullets_html = "\n".join(f"<li>{esc(b)}</li>" for b in bullets)
+        sources_html = ""
+        for src in sources:
+            sources_html += f"""
     <div class="source-item">
       {src_badge(src)}
       <a href="{esc(src.get('url',''))}" target="_blank">{esc(src.get('title','Source'))}</a>
     </div>"""
-    ss_html = ""
-    for s in ss:
-        src_links = "".join(
-            f'<a href="{esc(src.get("url",""))}" target="_blank">{esc(src.get("title","Source"))}</a><br>'
-            for src in s.get("sources", [])
-        )
-        ss_html += f"""
+        ss_html = ""
+        for s in ss:
+            src_links = "".join(
+                f'<a href="{esc(src.get("url",""))}" target="_blank">{esc(src.get("title","Source"))}</a><br>'
+                for src in s.get("sources", [])
+            )
+            ss_html += f"""
     <div class="support-card">
       <h3>{esc(s.get('title',''))}</h3>
       <div class="label">Summary</div>
@@ -489,7 +523,7 @@ def write_html():
       {src_links}
     </div>"""
 
-    html = f"""<!DOCTYPE html>
+        html = f"""<!DOCTYPE html>
 <html lang="{lang}">
 <head>
   <meta charset="UTF-8"/>
@@ -526,7 +560,7 @@ def write_html():
 <body><div class="wrapper">
   <div class="meta">
     <span>📅 {ts}</span><span>🌐 {lang}</span><span>📡 Channel {channel}</span>
-    <span>🆔 Story #{sid}</span><span>🔗 {cluster} sources</span><span>📦 Set #{set_id}</span>
+    <span>🏷 {category}</span><span>🆔 Story #{sid}</span><span>🔗 {cluster} sources</span><span>📦 Set #{set_id}</span>
   </div>
   <h1>{esc(title)}</h1>
   <div class="hook">{esc(hook)}</div>
@@ -537,18 +571,60 @@ def write_html():
   <h2>Sources</h2>
   <div class="sources">{sources_html}</div>
   {'<h2>Supporting Stories</h2><div class="supporting">' + ss_html + '</div>' if ss else ''}
-  <footer>Exported from Story Engine — Story Set #{set_id} · Cluster size: {cluster} · Generated {ts}</footer>
+  <footer>Exported from Story Engine — Story Set #{set_id} · Category: {category} · Cluster size: {cluster} · Generated {ts}</footer>
 </div></body></html>"""
 
-    path = base + ".html"
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(html)
-    print(f"  ✓  HTML     : {path}")
+        path = base + ".html"
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(html)
+        print(f"  ✓  HTML     : {path}")
 
-if fmt in ("1", "3"):
-    write_md()
-if fmt in ("2", "3"):
-    write_html()
+    # ── Plain text (narration script) ────────────────────────────────────────────
+    def write_txt():
+        paragraphs = []
+
+        # Deep story
+        if title:
+            paragraphs.append(f"## {strip_md(title)}")
+
+        if hook:
+            paragraphs.append(strip_md(hook))
+
+        for b in bullets:
+            clean = strip_md(str(b))
+            if clean:
+                paragraphs.append(clean)
+
+        if twist:
+            paragraphs.append(strip_md(twist))
+
+        # Supporting stories
+        for s in ss:
+            s_title = strip_md(s.get("title", ""))
+            summary = strip_md(s.get("summary", ""))
+            why     = strip_md(s.get("why_it_matters", ""))
+            if s_title:
+                paragraphs.append(f"## {s_title}")
+            if summary:
+                paragraphs.append(summary)
+            if why:
+                paragraphs.append(why)
+
+        path = base + ".txt"
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("\n-\n".join(paragraphs))
+            f.write("\n")
+        print(f"  ✓  Plain txt : {path}")
+
+    if fmt in ("1", "3"):
+        write_md()
+    if fmt in ("2", "3"):
+        write_html()
+    if fmt == "4":
+        write_txt()
+    exported += 1
+
+print(f"\n  {exported} story/stories exported to: {export_dir}")
 PYEOF
 
     echo ""
@@ -694,7 +770,7 @@ EOF
     echo -e "${BOLD}Generation:${NC}"
     echo "  5)  Generate Stories (zh-Hans)"
     echo "  6)  Reset Last Batch  (delete & free articles for re-run)"
-    echo "  8)  Export Last Story (.md / .html)"
+    echo "  8)  Export Stories    (.md / .html)"
     echo ""
     echo -e "${BOLD}Configuration:${NC}"
     echo "  7)  Configure .env   (DB host / user / password)"
