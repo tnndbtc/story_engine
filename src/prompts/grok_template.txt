@@ -1,0 +1,84 @@
+Use the provided image as the base. Create a video of a professional female Chinese news anchor delivering the script in Mandarin Chinese.
+
+SPEECH:
+
+The anchor speaks fluent Mandarin Chinese with a calm, clear, authoritative news broadcast tone.
+
+Spoken content (audio only — DO NOT display as subtitles or on-screen text):
+
+"{place_holder}"
+
+STRICT RULE:
+- Do NOT show subtitles
+- Do NOT display any Chinese characters on screen
+- Speech must exist only as audio and lip movement
+
+ABSOLUTE CAMERA LOCK (HIGHEST PRIORITY — MUST BE OBEYED):
+
+The camera is physically fixed in place and cannot move under any condition.
+
+- No zoom in or zoom out (digital or optical)
+- No dolly movement (no forward or backward motion)
+- No push-in effect of any kind
+- No pan (left/right)
+- No tilt (up/down)
+- No rotation
+- No reframing
+- No perspective shift
+- No camera drift
+- No lens breathing
+- No focal length change
+
+The distance between the camera and the subject must remain EXACTLY constant for the entire duration.
+
+The framing must be IDENTICAL from the first frame to the last frame.
+
+Simulate a fixed surveillance camera or a locked broadcast studio camera mounted on a tripod. The camera has zero operator input and zero cinematic behavior.
+
+If any camera movement is introduced, it is incorrect and must not be generated.
+
+NEGATIVE CONSTRAINTS (STRICTLY AVOID):
+
+Avoid all cinematic or film-style behavior.
+Do not use:
+- slow zoom
+- cinematic push-in
+- dolly effect
+- dynamic framing
+- camera motion of any kind
+
+FRAMING REQUIREMENT:
+
+Frame the subject with extra headroom and space around the body.
+The subject should not fill the frame tightly.
+Maintain a slightly wider composition so the framing remains stable.
+
+SUBJECT RULES:
+
+- Female Chinese news anchor
+- Neutral, professional appearance
+- The anchor remains in the exact same position in the frame
+- Only natural lip movement for speaking
+- Minimal facial movement
+- Occasional blinking only
+- No body movement, no posture shift
+
+BACKGROUND RULES:
+
+- Background must remain completely static
+- No parallax
+- No lighting changes that imply camera motion
+
+STYLE:
+
+- Professional news broadcast
+- Static studio shot
+- No cinematic effects
+
+DURATION:
+
+8–10 seconds
+
+GOAL:
+
+A completely static, locked-off shot where every frame aligns perfectly, allowing seamless stitching with other clips without any visible zoom or movement.
