@@ -440,7 +440,7 @@ for row in rows:
     # Merge consecutive paragraphs only when combined length stays within CLIP_MAX.
     # Split anything that exceeds CLIP_MAX.
     CLIP_TARGET = 65   # aim point when a forced split is needed
-    CLIP_MAX    = 85   # hard ceiling — do not grow clips beyond this
+    CLIP_MAX    = 75   # hard ceiling — do not grow clips beyond this
 
     def normalize_clips(raw_items):
         """Two-pass normalization for a list of content paragraphs:
@@ -473,29 +473,20 @@ for row in rows:
             if len(p) <= CLIP_MAX:
                 result.append(p)
                 continue
-            # Split at sentence-ending punctuation first
+            # Split at sentence-end AND comma/clause punctuation for alignment
+            atoms = [a for a in re.split(r'(?<=[。！？，；、.!?,;])', p) if a]
+            if len(atoms) <= 1:
+                result.append(p)
+                continue
             segments, current = [], ""
-            for part in re.split(r'(?<=[。！？])', p):
-                if not part:
-                    continue
-                if len(current) + len(part) <= CLIP_TARGET:
-                    current += part
+            for atom in atoms:
+                if not current:
+                    current = atom
+                elif len(current) + len(atom) <= CLIP_TARGET:
+                    current += atom
                 else:
-                    if current:
-                        segments.append(current)
-                    if len(part) > CLIP_TARGET:
-                        # Fall back to clause punctuation
-                        sub_cur = ""
-                        for sp in re.split(r'(?<=[，；、])', part):
-                            if len(sub_cur) + len(sp) <= CLIP_TARGET:
-                                sub_cur += sp
-                            else:
-                                if sub_cur:
-                                    segments.append(sub_cur)
-                                sub_cur = sp
-                        current = sub_cur
-                    else:
-                        current = part
+                    segments.append(current)
+                    current = atom
             if current:
                 segments.append(current)
             result.extend(segments if segments else [p])
