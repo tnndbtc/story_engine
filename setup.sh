@@ -575,16 +575,62 @@ PYEOF
 }
 
 _generate_grok_prompts() {
-    if [ ! -f "$LAST_EXPORT_FILE" ] || [ ! -s "$LAST_EXPORT_FILE" ]; then
-        echo -e "  ${RED}No exported .txt found. Run option 8 → a first.${NC}"
-        echo ""; return
+    echo ""
+    echo -e "  ${BOLD}Generating Grok prompts${NC}"
+    echo ""
+    read -p "  Filename to search in exports/ (or Enter to use last export): " input_path
+
+    local list_file
+    local tmp_list=""
+
+    if [ -z "$input_path" ]; then
+        # ── use last export ────────────────────────────────────
+        if [ ! -f "$LAST_EXPORT_FILE" ] || [ ! -s "$LAST_EXPORT_FILE" ]; then
+            echo -e "  ${RED}No last export found. Run option 8 → a first, or enter a filename.${NC}"
+            echo ""; return
+        fi
+        list_file="$LAST_EXPORT_FILE"
+        echo -e "  ${CYAN}Using last export list.${NC}"
+    else
+        # ── resolve from input ─────────────────────────────────
+        local txt_path
+        if [[ "$input_path" = /* ]]; then
+            txt_path="$input_path"
+        elif [[ "$input_path" = */* ]]; then
+            txt_path="$SCRIPT_DIR/$input_path"
+        else
+            local matches
+            matches=$(find "$SCRIPT_DIR/exports" -type f -name "$input_path" 2>/dev/null)
+            local count
+            count=$(echo "$matches" | grep -c . 2>/dev/null || echo 0)
+            if [ "$count" -eq 0 ]; then
+                echo -e "  ${RED}File not found in exports/: $input_path${NC}"
+                echo ""; return
+            elif [ "$count" -gt 1 ]; then
+                echo -e "  ${YELLOW}Multiple matches — please be more specific:${NC}"
+                while IFS= read -r m; do
+                    echo "    ${m#$SCRIPT_DIR/}"
+                done <<< "$matches"
+                echo ""; return
+            else
+                txt_path="$matches"
+                echo -e "  ${CYAN}Found: ${txt_path#$SCRIPT_DIR/}${NC}"
+            fi
+        fi
+
+        if [ ! -f "$txt_path" ]; then
+            echo -e "  ${RED}File not found: $txt_path${NC}"
+            echo ""; return
+        fi
+
+        tmp_list=$(mktemp)
+        echo "$txt_path" > "$tmp_list"
+        list_file="$tmp_list"
     fi
 
     echo ""
-    echo -e "  ${BOLD}Generating Grok prompts from reviewed .txt...${NC}"
-    echo ""
 
-    python3 - "$SCRIPT_DIR" "$LAST_EXPORT_FILE" <<'PYEOF'
+    python3 - "$SCRIPT_DIR" "$list_file" <<'PYEOF'
 import sys, os, re
 
 script_dir       = sys.argv[1]
@@ -641,6 +687,7 @@ for txt_path in txt_paths:
 print(f"\n  {total_prompts} total Grok prompt files generated.")
 PYEOF
 
+    [ -n "$tmp_list" ] && rm -f "$tmp_list"
     echo ""
 }
 
@@ -764,6 +811,121 @@ show_urls() {
     echo ""
 }
 
+analyze_story_clips() {
+    echo ""
+    echo -e "  ${BOLD}Analyze Story Clips — Speech Rate Test${NC}"
+    echo ""
+    read -p "  Story file path or filename: " input_path
+
+    local txt_path
+
+    if [[ "$input_path" = /* ]]; then
+        # Absolute path — use as-is
+        txt_path="$input_path"
+    elif [[ "$input_path" = */* ]]; then
+        # Relative path with directory component — resolve against SCRIPT_DIR
+        txt_path="$SCRIPT_DIR/$input_path"
+    else
+        # Filename only — search under exports/
+        local matches
+        matches=$(find "$SCRIPT_DIR/exports" -type f -name "$input_path" 2>/dev/null)
+        local count
+        count=$(echo "$matches" | grep -c . 2>/dev/null || echo 0)
+
+        if [ "$count" -eq 0 ]; then
+            echo -e "  ${RED}File not found in exports/: $input_path${NC}"
+            echo ""; return
+        elif [ "$count" -gt 1 ]; then
+            echo -e "  ${YELLOW}Multiple matches found — please use a more specific path:${NC}"
+            while IFS= read -r m; do
+                echo "    ${m#$SCRIPT_DIR/}"
+            done <<< "$matches"
+            echo ""; return
+        else
+            txt_path="$matches"
+            local rel="${txt_path#$SCRIPT_DIR/}"
+            echo -e "  ${CYAN}Found: $rel${NC}"
+        fi
+    fi
+
+    if [ ! -f "$txt_path" ]; then
+        echo -e "  ${RED}File not found: $txt_path${NC}"
+        echo ""; return
+    fi
+
+    python3 - "$txt_path" <<'PYEOF'
+import sys
+
+txt_path = sys.argv[1]
+
+clips = []
+with open(txt_path, encoding="utf-8") as f:
+    for line in f:
+        line = line.rstrip('\n').rstrip()
+        # Skip separators, headers, hashtag source lines, and blanks
+        if not line:
+            continue
+        if line == '-':
+            continue
+        if line.startswith('## ') or line.startswith('### '):
+            continue
+        clips.append(line)
+
+if not clips:
+    print("  ⚠  No clips found in file.")
+    sys.exit(1)
+
+clips_6s  = [(i+1, c) for i, c in enumerate(clips) if len(c) <= 40]
+clips_10s = [(i+1, c) for i, c in enumerate(clips) if len(c) >  40]
+
+RESET  = "\033[0m"
+BOLD   = "\033[1m"
+CYAN   = "\033[0;36m"
+YELLOW = "\033[1;33m"
+GREEN  = "\033[0;32m"
+DIM    = "\033[2m"
+
+print(f"\n  {BOLD}File:{RESET} {txt_path}")
+print(f"  Total clips parsed: {len(clips)}  "
+      f"({len(clips_10s)} × 10s,  {len(clips_6s)} × 6s)\n")
+
+def show_group(label, group, color):
+    print(f"  {color}{BOLD}{label}{RESET}")
+    for idx, text in group:
+        print(f"  {DIM}Clip #{idx}  |  {len(text)} chars{RESET}")
+        print(f"  {text}")
+        print()
+
+sep = f"  {CYAN}{'─'*57}{RESET}"
+
+def show_section(title, clips):
+    print(sep)
+    print(f"  {BOLD}{title}{RESET}")
+    print(sep)
+    if not clips:
+        print(f"  {DIM}(none){RESET}\n")
+        return
+    ranked = sorted(clips, key=lambda x: len(x[1]), reverse=True)
+    top    = ranked[:3]
+    bottom = ranked[-3:][::-1]  # ascending (fewest chars first)
+    # avoid duplicates when fewer than 6 clips total
+    bottom = [c for c in bottom if c not in top]
+    show_group("Top 3  (most chars → longest speech)", top, YELLOW)
+    if bottom:
+        show_group("Bottom 3  (fewest chars → shortest speech)", bottom, GREEN)
+
+# ── 10s clips ──────────────────────────────────────────────
+show_section("10s clips  (> 40 chars)", clips_10s)
+
+# ── 6s clips ───────────────────────────────────────────────
+show_section("6s clips   (≤ 40 chars)", clips_6s)
+
+print(sep)
+PYEOF
+
+    echo ""
+}
+
 show_menu() {
     echo -e "${BOLD}${CYAN}"
     cat << "EOF"
@@ -785,6 +947,7 @@ EOF
     echo "  5)  Generate Stories (zh-Hans)"
     echo "  6)  Reset Last Batch  (delete & free articles for re-run)"
     echo "  8)  Export Stories    (a: .txt with reflow  |  b: Grok prompts)"
+    echo "  9)  Analyze Story Clips  (min/max chars per 6s/10s — speech rate test)"
     echo ""
     echo -e "${BOLD}Configuration:${NC}"
     echo "  7)  Configure .env   (DB host / user / password)"
@@ -808,6 +971,7 @@ while true; do
         6) reset_last_batch ;;
         7) configure_env ;;
         8) export_last_story ;;
+        9) analyze_story_clips ;;
         0)
             echo ""
             echo -e "  ${CYAN}Exiting...${NC}"
