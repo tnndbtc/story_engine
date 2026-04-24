@@ -7,6 +7,7 @@ LOG_DIR="$SCRIPT_DIR/logs"
 PID_FILE="$SCRIPT_DIR/.api_server.pid"
 LOG_FILE="$LOG_DIR/api_server.log"
 PORT=8003
+LAST_EXPORT_FILE="$SCRIPT_DIR/.last_export_txt"
 
 # Colors
 RED='\033[0;31m'
@@ -343,7 +344,30 @@ export_last_story() {
     echo ""
     echo -e "  ${BOLD}Export Stories${NC}"
     echo ""
+    echo "  a)  Step 1 — Export story to .txt  (from DB, with clip reflow)"
+    echo "  b)  Step 2 — Generate Grok prompts from reviewed .txt"
+    echo "  0)  Cancel"
+    echo ""
 
+    if [ -f "$LAST_EXPORT_FILE" ] && [ -s "$LAST_EXPORT_FILE" ]; then
+        echo -e "  ${CYAN}Last export:${NC}"
+        while IFS= read -r fp; do
+            [ -n "$fp" ] && echo -e "    $fp"
+        done < "$LAST_EXPORT_FILE"
+        echo ""
+    fi
+
+    read -p "  Select step [a/b/0]: " export_choice
+
+    case $export_choice in
+        a) _export_story_txt ;;
+        b) _generate_grok_prompts ;;
+        0) echo -e "  ${YELLOW}Cancelled${NC}"; echo ""; return ;;
+        *) echo -e "  ${RED}Invalid option: $export_choice${NC}"; echo ""; return ;;
+    esac
+}
+
+_export_story_txt() {
     local db_path="${STORY_ENGINE_DB:-$SCRIPT_DIR/db.sqlite3}"
     local export_dir="$SCRIPT_DIR/exports"
 
@@ -352,28 +376,31 @@ export_last_story() {
         echo ""; return
     fi
 
-    # Ask how many stories
     read -p "  How many recent stories to export? [1]: " n_choice
     n_choice="${n_choice:-1}"
     if ! [[ "$n_choice" =~ ^[1-9][0-9]*$ ]]; then
         echo -e "  ${RED}Invalid number: $n_choice${NC}"; echo ""; return
     fi
 
-    local fmt_choice="4"
-
     mkdir -p "$export_dir"
 
     echo ""
-    echo -e "  ${CYAN}Fetching $n_choice story/stories...${NC}"
+    echo -e "  ${CYAN}Fetching $n_choice story/stories from database...${NC}"
     echo ""
 
-    python3 - "$db_path" "$export_dir" "$fmt_choice" "$n_choice" "$SCRIPT_DIR" <<'PYEOF'
+    # Write raw .txt files — one paragraph per item, no clip splitting yet.
+    # reflow_clips.py (step 2 below) joins + re-splits to target clip lengths.
+    # Raw paths are recorded in a temp file so bash can drive the reflow loop.
+    local paths_tmp
+    paths_tmp=$(mktemp)
+
+    _EXPORT_PATHS_FILE="$paths_tmp" python3 - "$db_path" "$export_dir" "$n_choice" <<'PYEOF'
 import sys, json, os, re
 from datetime import datetime, timezone
 
-db_path, export_dir, fmt, n_arg = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
-script_dir = sys.argv[5] if len(sys.argv) > 5 else ""
-n_stories = max(1, int(n_arg))
+db_path, export_dir, n_arg = sys.argv[1], sys.argv[2], sys.argv[3]
+n_stories  = max(1, int(n_arg))
+paths_file = os.environ.get('_EXPORT_PATHS_FILE', '')
 
 try:
     import sqlite3
@@ -398,166 +425,220 @@ if not rows:
     sys.exit(0)
 
 def strip_md(text):
-    """Remove common markdown artifacts so output is plain prose."""
-    text = re.sub(r'\*{1,3}(.+?)\*{1,3}', r'\1', text)   # bold / italic
-    text = re.sub(r'`(.+?)`', r'\1', text)                 # inline code
-    text = re.sub(r'https?://\S+', '', text)               # URLs
-    text = re.sub(r'\[([^\]]+)\]\([^)]*\)', r'\1', text)  # [text](url)
-    text = re.sub(r'^#+\s*', '', text, flags=re.MULTILINE) # headings
-    text = text.strip()
-    return text
+    if not text:
+        return ""
+    text = re.sub(r'\*{1,3}(.+?)\*{1,3}', r'\1', text)
+    text = re.sub(r'`(.+?)`', r'\1', text)
+    text = re.sub(r'https?://\S+', '', text)
+    text = re.sub(r'\[([^\]]+)\]\([^)]*\)', r'\1', text)
+    text = re.sub(r'^#+\s*', '', text, flags=re.MULTILINE)
+    return text.strip()
 
 exported = 0
 for row in rows:
     sid, set_id, batch_ts, lang, channel, status, raw_ds, raw_ss, gen_at, profile_id = row
-    ds = json.loads(raw_ds) if raw_ds else {}
-    ss = json.loads(raw_ss) if raw_ss else []
+    ds      = json.loads(raw_ds) if raw_ds else {}
+    ss_list = json.loads(raw_ss) if raw_ss else []
 
-    dt_utc   = datetime.fromtimestamp(gen_at / 1000, tz=timezone.utc)
-    ts       = dt_utc.strftime("%Y-%m-%d %H:%M UTC")
+    dt_utc    = datetime.fromtimestamp(gen_at / 1000, tz=timezone.utc)
     date_slug = dt_utc.strftime("%Y-%m-%d")
     time_slug = dt_utc.strftime("%H%M")
 
-    # Extract category from profile_id (e.g. "run5_entertainment" → "entertainment")
     if profile_id:
         category = re.sub(r'^run\d+_', '', profile_id)
     else:
         category = "unknown"
 
-    base = os.path.join(export_dir, f"story_{date_slug}_{time_slug}utc_{category}_{sid}")
+    category_dir = os.path.join(export_dir, category)
+    os.makedirs(category_dir, exist_ok=True)
+    base = os.path.join(category_dir, f"{category}_story_{date_slug}_{time_slug}utc_{sid}")
 
     title   = ds.get("title", "Untitled")
     hook    = ds.get("hook", "")
     bullets = ds.get("bullets", [])
     twist   = ds.get("twist", "")
-    sources = ds.get("sources", [])
-    cluster = ds.get("cluster_size", len(sources))
 
-    # ── Plain text (narration script) + Grok video prompts ──────────────────────
-    # Target characters per subtitle line / Grok clip.
-    # Clip length targets (Chinese characters).
-    # Short clips (30-40 chars) are fine — use Grok's 6s option for those.
-    # Merge consecutive paragraphs only when combined length stays within CLIP_MAX.
-    # Split anything that exceeds CLIP_MAX.
-    CLIP_TARGET = 65   # aim point when a forced split is needed
-    CLIP_MAX    = 75   # hard ceiling — do not grow clips beyond this
+    # One raw paragraph per item — reflow_clips.py handles clip-length splitting.
+    items = [f"## {strip_md(title)}"]
+    for raw in [hook] + [str(b) for b in bullets] + [twist]:
+        clean = strip_md(raw)
+        if clean:
+            items.append(clean)
 
-    def normalize_clips(raw_items):
-        """Two-pass normalization for a list of content paragraphs:
-        Pass 1 — merge: combine consecutive paragraphs when the combined
-                 length stays within CLIP_MAX.  Short clips are left as-is
-                 (use Grok 6s option for those).
-        Pass 2 — split: any paragraph over CLIP_MAX is split at natural
-                 Chinese punctuation near CLIP_TARGET.
-        """
-        # ── Pass 1: merge ────────────────────────────────────────────
-        merged = []
-        buf = ""
-        for item in raw_items:
-            item = item.strip()
-            if not item:
-                continue
-            if not buf:
-                buf = item
-            elif len(buf) + len(item) <= CLIP_MAX:
-                buf += item          # fits within ceiling — absorb
-            else:
-                merged.append(buf)   # would exceed ceiling — flush
-                buf = item
-        if buf:
-            merged.append(buf)
-
-        # ── Pass 2: split ────────────────────────────────────────────
-        result = []
-        for p in merged:
-            if len(p) <= CLIP_MAX:
-                result.append(p)
-                continue
-            # Split at sentence-end AND comma/clause punctuation for alignment
-            atoms = [a for a in re.split(r'(?<=[。！？，；、.!?,;])', p) if a]
-            if len(atoms) <= 1:
-                result.append(p)
-                continue
-            segments, current = [], ""
-            for atom in atoms:
-                if not current:
-                    current = atom
-                elif len(current) + len(atom) <= CLIP_TARGET:
-                    current += atom
-                else:
-                    segments.append(current)
-                    current = atom
-            if current:
-                segments.append(current)
-            result.extend(segments if segments else [p])
-        return result
-
-    def write_txt():
-        paragraphs = []   # All items for the .txt file (## titles + clips)
-        clip_lines = []   # Non-title clips only — one grok prompt each
-
-        def add_section(items):
-            """Normalize a list of raw content items and append to outputs."""
-            for clip in normalize_clips(items):
-                paragraphs.append(clip)
-                clip_lines.append(clip)
-
-        # ── Deep story ───────────────────────────────────────────────
-        if title:
-            paragraphs.append(f"## {strip_md(title)}")
-        section = []
-        if hook:
-            section.append(strip_md(hook))
-        for b in bullets:
-            clean = strip_md(str(b))
+    for s in ss_list:
+        s_title = strip_md(s.get("title", ""))
+        summary = strip_md(s.get("summary", ""))
+        why     = strip_md(s.get("why_it_matters", ""))
+        if s_title:
+            items.append(f"## {s_title}")
+        for raw_item in [summary, why]:
+            clean = strip_md(raw_item)
             if clean:
-                section.append(clean)
-        if twist:
-            section.append(strip_md(twist))
-        add_section(section)
+                items.append(clean)
 
-        # ── Supporting stories ───────────────────────────────────────
-        for s in ss:
-            s_title = strip_md(s.get("title", ""))
-            summary = strip_md(s.get("summary", ""))
-            why     = strip_md(s.get("why_it_matters", ""))
-            if s_title:
-                paragraphs.append(f"## {s_title}")
-            section = []
-            if summary:
-                section.append(summary)
-            if why:
-                section.append(why)
-            add_section(section)
+    # Extract outlet names from sources and append as hashtags.
+    # Strategy: prefer "Headline - OutletName" suffix in title; fall back to URL domain.
+    def outlet_from_title(src_title):
+        parts = src_title.rsplit(" - ", 1)
+        return parts[-1].strip() if len(parts) == 2 else ""
 
-        # ── Write .txt ───────────────────────────────────────────────
-        path = base + ".txt"
-        with open(path, "w", encoding="utf-8") as f:
-            f.write("\n-\n".join(paragraphs))
-            f.write("\n")
-        print(f"  ✓  Plain txt : {path}")
+    def outlet_from_url(url):
+        # e.g. "https://n.news.naver.com/..." → "naver"
+        try:
+            host = url.split("//", 1)[1].split("/")[0]   # strip scheme + path
+            # drop www/m/n/news subdomains, keep meaningful part
+            parts = host.split(".")
+            # find the second-level domain (before TLD)
+            tlds = {"com","net","org","co","io","tv","uk","au","ca","kr","jp","cn"}
+            # walk right-to-left: skip TLD tokens, take first non-TLD as the name
+            meaningful = [p for p in parts if p.lower() not in tlds
+                          and p.lower() not in ("www","m","n","news","rss")]
+            return meaningful[-1] if meaningful else ""
+        except Exception:
+            return ""
 
-        # ── Write Grok prompt files — one per clip ───────────────────
-        grok_template_path = os.path.join(script_dir, "src", "prompts", "grok_template.txt") if script_dir else ""
-        if grok_template_path and os.path.exists(grok_template_path):
-            with open(grok_template_path, "r", encoding="utf-8") as f:
-                grok_template = f.read()
-            story_name = os.path.basename(base)
-            for i, clip in enumerate(clip_lines, 1):
-                duration = "6s" if len(clip) <= 35 else "10s"
-                prompt_text = grok_template.replace("{place_holder}", clip)
-                grok_path = os.path.join(export_dir, f"{story_name}_grok_{i}_{duration}.txt")
-                with open(grok_path, "w", encoding="utf-8") as f:
-                    f.write(prompt_text)
-            total = len(clip_lines)
-            print(f"  ✓  Grok prompts: {total} files  ({story_name}_grok_1_10s.txt … _grok_{total}_10s.txt)")
-        else:
-            print(f"  ⚠  Grok template not found — skipped ({grok_template_path})")
+    def to_slug(name):
+        name = re.sub(r'\.(com|net|org|co|io|tv|uk|au|ca|kr|jp|cn)$', '', name, flags=re.IGNORECASE)
+        name_clean = re.sub(r'[^\w\s]', '', name).strip()
+        return re.sub(r'\s+', '', name_clean)   # "BBC News" → "BBCNews"
 
-    write_txt()
+    sources_raw = ds.get("sources", [])
+    seen = set()
+    outlets = []
+    for src in sources_raw:
+        name = outlet_from_title(src.get("title", ""))
+        if not name:                              # Korean/non-standard titles: use domain
+            name = outlet_from_url(src.get("url", ""))
+        slug = to_slug(name)
+        if slug and slug.lower() not in seen:
+            seen.add(slug.lower())
+            outlets.append(f"#{slug}")
+    if outlets:
+        items.append("### " + "  ".join(outlets))
+
+    raw_path = base + "_raw.txt"
+    with open(raw_path, "w", encoding="utf-8") as f:
+        f.write("\n-\n".join(items) + "\n-\n")
+
+    if paths_file:
+        with open(paths_file, "a") as pf:
+            pf.write(raw_path + "\n")
+
+    print(f"  ✓  Raw txt  : {raw_path}")
     exported += 1
 
-print(f"\n  {exported} story/stories exported to: {export_dir}")
+print(f"\n  {exported} story/stories written — running clip reflow...")
+PYEOF
+
+    local py_exit=$?
+    if [ $py_exit -ne 0 ] || [ ! -s "$paths_tmp" ]; then
+        echo -e "  ${RED}Export failed — no stories written.${NC}"
+        rm -f "$paths_tmp"
+        echo ""; return
+    fi
+
+    # Reflow each _raw.txt → final .txt using reflow_clips.py
+    local reflow_script="$SCRIPT_DIR/src/scripts/reflow_clips.py"
+    if [ ! -f "$reflow_script" ]; then
+        echo -e "  ${RED}ERROR: reflow_clips.py not found at $reflow_script${NC}"
+        rm -f "$paths_tmp"
+        echo ""; return
+    fi
+
+    : > "$LAST_EXPORT_FILE"
+    local all_ok=1
+    while IFS= read -r raw_path; do
+        [ -z "$raw_path" ] && continue
+        local final_path="${raw_path%_raw.txt}.txt"
+        echo ""
+        python3 "$reflow_script" "$raw_path" "$final_path"
+        if [ $? -eq 0 ]; then
+            echo "$final_path" >> "$LAST_EXPORT_FILE"
+            rm -f "$raw_path"
+        else
+            echo -e "  ${RED}Reflow failed for: $raw_path${NC}"
+            all_ok=0
+        fi
+    done < "$paths_tmp"
+    rm -f "$paths_tmp"
+
+    echo ""
+    if [ "$all_ok" -eq 1 ]; then
+        echo -e "  ${GREEN}Export complete.${NC}"
+        echo -e "  Review the .txt files below, then run option 8 → b to generate Grok prompts."
+        echo ""
+        while IFS= read -r fp; do
+            [ -n "$fp" ] && echo -e "    ${CYAN}→  $fp${NC}"
+        done < "$LAST_EXPORT_FILE"
+    fi
+    echo ""
+}
+
+_generate_grok_prompts() {
+    if [ ! -f "$LAST_EXPORT_FILE" ] || [ ! -s "$LAST_EXPORT_FILE" ]; then
+        echo -e "  ${RED}No exported .txt found. Run option 8 → a first.${NC}"
+        echo ""; return
+    fi
+
+    echo ""
+    echo -e "  ${BOLD}Generating Grok prompts from reviewed .txt...${NC}"
+    echo ""
+
+    python3 - "$SCRIPT_DIR" "$LAST_EXPORT_FILE" <<'PYEOF'
+import sys, os, re
+
+script_dir       = sys.argv[1]
+last_export_file = sys.argv[2]
+
+with open(last_export_file, encoding="utf-8") as f:
+    txt_paths = [line.strip() for line in f if line.strip()]
+
+if not txt_paths:
+    print("  No paths found in last export file.")
+    sys.exit(1)
+
+grok_template_path = os.path.join(script_dir, "src", "prompts", "grok_template.txt")
+if not os.path.exists(grok_template_path):
+    print(f"  ⚠  Grok template not found: {grok_template_path}")
+    sys.exit(1)
+
+with open(grok_template_path, encoding="utf-8") as f:
+    grok_template = f.read()
+
+total_prompts = 0
+for txt_path in txt_paths:
+    if not os.path.exists(txt_path):
+        print(f"  ⚠  File not found: {txt_path}")
+        continue
+
+    # Parse clips: every non-header, non-separator, non-empty line is one clip.
+    clips = []
+    with open(txt_path, encoding="utf-8") as f:
+        for line in f:
+            line = line.rstrip('\n').rstrip()
+            if line and line != '-' and not line.startswith('## '):
+                clips.append(line)
+
+    if not clips:
+        print(f"  ⚠  No clips found in: {txt_path}")
+        continue
+
+    story_name   = os.path.splitext(os.path.basename(txt_path))[0]
+    category_dir = os.path.dirname(txt_path)
+
+    for i, clip in enumerate(clips, 1):
+        duration   = "6s" if len(clip) <= 35 else "10s"
+        prompt_txt = grok_template.replace("{place_holder}", clip)
+        grok_path  = os.path.join(category_dir, f"{story_name}_grok_{i}_{duration}.txt")
+        with open(grok_path, "w", encoding="utf-8") as f:
+            f.write(prompt_txt)
+
+    n = len(clips)
+    total_prompts += n
+    print(f"  ✓  {n} Grok prompts → {category_dir}/")
+    print(f"     {story_name}_grok_1_*.txt … _grok_{n}_*.txt")
+
+print(f"\n  {total_prompts} total Grok prompt files generated.")
 PYEOF
 
     echo ""
@@ -703,7 +784,7 @@ EOF
     echo -e "${BOLD}Generation:${NC}"
     echo "  5)  Generate Stories (zh-Hans)"
     echo "  6)  Reset Last Batch  (delete & free articles for re-run)"
-    echo "  8)  Export Stories    (.txt + Grok prompts)"
+    echo "  8)  Export Stories    (a: .txt with reflow  |  b: Grok prompts)"
     echo ""
     echo -e "${BOLD}Configuration:${NC}"
     echo "  7)  Configure .env   (DB host / user / password)"

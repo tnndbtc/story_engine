@@ -8,6 +8,10 @@ Spoken content (audio only — DO NOT display as subtitles or on-screen text):
 
 "{place_holder}"
 
+SPEECH PACING (STRICT):
+- Speaking speed must match standard Mandarin news pacing (~5.5 chars/sec)
+- Adjust pacing slightly so the sentence fills the full video duration smoothly
+
 STRICT RULE:
 - Do NOT show subtitles
 - Do NOT display any Chinese characters on screen

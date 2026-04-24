@@ -19,6 +19,9 @@ exports/
 
 snapshots/
 
+# for option 8 of setup.sh
+.last_export_txt
+
 # PID files
 .api_server.pid
 

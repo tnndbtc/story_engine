@@ -56,7 +56,8 @@ RECENCY_LAMBDA = 0.1            # exp(-RECENCY_LAMBDA * hours) → ~10-hour half
 
 # Step 3 — Supporting stories
 MAX_SUPPORTING          = 4     # upper bound on supporting stories
-MIN_SUPPORTING          = 2     # below this → invoke under-supply fallback
+MIN_SUPPORTING          = 0     # minimum desired; 0 = allow zero supporting stories
+MIN_ALIGNMENT_SCORE     = 0.18  # narrative alignment gate — drop stories below this
 ENTITY_OVERLAP_HARD_CAP = 0.6   # hard skip if entity overlap with deep_story exceeds this
 
 # Step 3 — Entity overlap interval scoring (Q3)
@@ -674,14 +675,15 @@ def story_orchestrate(
         )
         stage2_candidates = stage1_candidates
 
-    # Stage 2 — re-rank by narrative alignment score (Q7)
-    support_candidates = sorted(
-        stage2_candidates,
-        key=lambda x: (-_support_alignment_score(x[0], deep_cluster), -x[1]),
-    )
-    logger.debug(
-        "story_orchestrate: Stage 2 — %d candidates re-ranked by alignment score",
-        len(support_candidates),
+    # Stage 2 — re-rank by narrative alignment + alignment quality gate (Q7)
+    stage2_with_align = [
+        (c, s, _support_alignment_score(c, deep_cluster)) for c, s in stage2_candidates
+    ]
+    stage2_with_align.sort(key=lambda x: (-x[2], -x[1]))
+    support_candidates = [(c, s) for c, s, align in stage2_with_align if align >= MIN_ALIGNMENT_SCORE]
+    logger.info(
+        "story_orchestrate: Stage 2 alignment gate — %d/%d candidates pass threshold=%.2f",
+        len(support_candidates), len(stage2_candidates), MIN_ALIGNMENT_SCORE,
     )
 
     # Selection loop — applies event_type diversity cap + topic_diversity_bonus
@@ -720,21 +722,16 @@ def story_orchestrate(
             len(supporting), cluster.event_id, cat, topic_bonus, final_sup_score,
         )
 
-    # Minimum-1 last-resort fallback
-    if not supporting and remaining:
-        fallback_cluster = sorted(remaining, key=lambda x: -x[1])[0][0]
-        supporting.append(fallback_cluster)
-        support_scores.append(0.0)
-        logger.warning(
-            "story_orchestrate: Step 3 thin_pool — zero candidates survived filter; "
-            "using highest-scoring remaining cluster %s as emergency fallback",
-            fallback_cluster.event_id,
+    if supporting:
+        logger.info(
+            "story_orchestrate: Step 3 — %d supporting story/stories selected",
+            len(supporting),
         )
-    elif len(supporting) < MIN_SUPPORTING:
-        logger.warning(
-            "story_orchestrate: Step 3 thin_pool — only %d supporting cluster(s) "
-            "available (minimum desired: %d)",
-            len(supporting), MIN_SUPPORTING,
+    else:
+        logger.info(
+            "story_orchestrate: Step 3 — no supporting stories passed alignment "
+            "threshold %.2f — proceeding with deep story only",
+            MIN_ALIGNMENT_SCORE,
         )
 
     # Record ranking_metadata for selected supporting stories
