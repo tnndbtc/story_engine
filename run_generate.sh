@@ -31,6 +31,13 @@ if [ -d "/home/tnnd/.virtualenvs/crawl" ]; then
     source /home/tnnd/.virtualenvs/crawl/bin/activate
 fi
 
+# Load .env (exports STORY_ENGINE_DB, AZURE_SPEECH_KEY, AZURE_SPEECH_REGION, etc.)
+if [ -f "$SCRIPT_DIR/.env" ]; then
+    set -a
+    source "$SCRIPT_DIR/.env"
+    set +a
+fi
+
 # Create logs directory
 mkdir -p "$SCRIPT_DIR/logs"
 
@@ -164,3 +171,107 @@ conn.close()
 "
 echo "  $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
 echo "========================================="
+
+# ── Post-generation: Export + Pipeline ───────────────────────────────────────
+PIPE_DIR="$(dirname "$SCRIPT_DIR")/pipe"
+EXPORT_SCRIPT="$SCRIPT_DIR/export_latest_story.sh"
+RESOURCES_DIR="$PIPE_DIR/projects/resources/news"
+BASE_CONFIG="$PIPE_DIR/code/http/simple_narration.config.json"
+
+echo ""
+echo "==========================================="
+echo "  Post-generation: Export + Pipeline"
+echo "  $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+echo "==========================================="
+
+# Guard: verify latest story_set is from this run (< 2h old) and has
+# at least 1 ready hierarchical story. Outputs "1:<set_id>" or "0:0".
+DB_PATH="${STORY_ENGINE_DB:-$SCRIPT_DIR/db.sqlite3}"
+GUARD_RESULT=$(python3 - "$DB_PATH" <<'PYEOF'
+import sqlite3, sys, time
+db = sys.argv[1]
+conn = sqlite3.connect(db)
+ss = conn.execute(
+    'SELECT id, batch_ts FROM story_sets ORDER BY id DESC LIMIT 1'
+).fetchone()
+if not ss:
+    print("0:0"); sys.exit()
+age_ms = time.time() * 1000 - int(ss[1])
+if age_ms > 7_200_000:
+    print("0:0"); sys.exit()
+hier = conn.execute(
+    'SELECT COUNT(*) FROM hierarchical_stories '
+    'WHERE story_set_id=? AND status="ready"', (ss[0],)
+).fetchone()[0]
+print(f"1:{ss[0]}" if hier > 0 else "0:0")
+conn.close()
+PYEOF
+)
+GEN_OK="${GUARD_RESULT%%:*}"
+STORY_SET_ID="${GUARD_RESULT##*:}"
+
+if [ "$GEN_OK" != "1" ]; then
+    echo "  WARNING: generation produced 0 ready stories — skipping pipeline"
+else
+    echo ""
+    echo "--- Step A: Export latest story to .txt ---"
+    if bash "$EXPORT_SCRIPT"; then
+        STORY_TXT="$(head -1 "$SCRIPT_DIR/.last_export_txt" 2>/dev/null)"
+        if [ -n "$STORY_TXT" ] && [ -f "$STORY_TXT" ]; then
+            echo "  Exported: $STORY_TXT"
+
+            # Derive category from the export path directory name
+            # exports/<category>/<name>.txt → category
+            CATEGORY="$(basename "$(dirname "$STORY_TXT")")"
+
+            # Select matching background image (.png); fall back to news_general.png
+            BG_CANDIDATE="$RESOURCES_DIR/news_${CATEGORY}.png"
+            if [ -f "$BG_CANDIDATE" ]; then
+                BG_PATH="$BG_CANDIDATE"
+            else
+                BG_PATH="$RESOURCES_DIR/news_general.png"
+                echo "  No news_${CATEGORY}.png — using news_general.png"
+            fi
+            echo "  Background: $BG_PATH"
+
+            # Patch config: copy base to /tmp, set background + active voice.
+            # Voice alternates by story_set_id parity:
+            #   odd  → Xiaoxiao DragonHD (female)
+            #   even → Yunyang Customerservice (male)
+            TMP_CONFIG="/tmp/simple_narration_${CATEGORY}.config.json"
+            cp "$BASE_CONFIG" "$TMP_CONFIG"
+            python3 -c "
+import json
+cfg = json.load(open('$TMP_CONFIG'))
+cfg['background'] = '$BG_PATH'
+voices = cfg['narrator']['zh-Hans']
+use_female = ($STORY_SET_ID % 2 == 1)
+for name, v in voices.items():
+    if name == 'Xiaoxiao DragonHD':       v['enabled'] = use_female
+    elif name == 'Yunyang Customerservice': v['enabled'] = not use_female
+    else:                                   v['enabled'] = False
+json.dump(cfg, open('$TMP_CONFIG', 'w'), indent=2, ensure_ascii=False)
+"
+            echo "  Config:     $TMP_CONFIG"
+            if [ $(( STORY_SET_ID % 2 )) -eq 1 ]; then
+                echo "  Voice:      Xiaoxiao DragonHD (female)"
+            else
+                echo "  Voice:      Yunyang Customerservice (male)"
+            fi
+
+            echo ""
+            echo "--- Step B: Run narration pipeline ---"
+            source /home/tnnd/.virtualenvs/pipe/bin/activate
+            cd "$PIPE_DIR"
+            ./simple_run.sh \
+                --story  "$STORY_TXT" \
+                --config "$TMP_CONFIG" \
+              >> "$SCRIPT_DIR/logs/pipeline.log" 2>&1 \
+              || echo "  WARNING: pipeline error — see logs/pipeline.log"
+        else
+            echo "  WARNING: export OK but .last_export_txt empty or missing"
+        fi
+    else
+        echo "  WARNING: export failed — skipping pipeline"
+    fi
+fi

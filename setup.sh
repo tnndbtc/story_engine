@@ -344,30 +344,35 @@ export_last_story() {
     echo ""
     echo -e "  ${BOLD}Export Stories${NC}"
     echo ""
-    echo "  a)  Step 1 — Export story to .txt  (from DB, with clip reflow)"
-    echo "  b)  Step 2 — Generate Grok prompts from reviewed .txt"
+    echo "  a)  Step 1a — Export story to .txt  (no length normalization)"
+    echo "  b)  Step 1b — Export story to .txt  (with length normalization)"
+    echo "  c)  Step 2  — Generate Grok prompts from reviewed .txt"
     echo "  0)  Cancel"
     echo ""
 
     if [ -f "$LAST_EXPORT_FILE" ] && [ -s "$LAST_EXPORT_FILE" ]; then
-        echo -e "  ${CYAN}Last export:${NC}"
+        echo -e "  ${CYAN}Last export (Step 1b):${NC}"
         while IFS= read -r fp; do
             [ -n "$fp" ] && echo -e "    $fp"
         done < "$LAST_EXPORT_FILE"
         echo ""
     fi
 
-    read -p "  Select step [a/b/0]: " export_choice
+    read -p "  Select step [a/b/c/0]: " export_choice
 
     case $export_choice in
-        a) _export_story_txt ;;
-        b) _generate_grok_prompts ;;
+        a) _export_story_txt no_reflow ;;
+        b) _export_story_txt ;;
+        c) _generate_grok_prompts ;;
         0) echo -e "  ${YELLOW}Cancelled${NC}"; echo ""; return ;;
         *) echo -e "  ${RED}Invalid option: $export_choice${NC}"; echo ""; return ;;
     esac
 }
 
 _export_story_txt() {
+    local no_reflow=0
+    [ "${1:-}" = "no_reflow" ] && no_reflow=1
+
     local db_path="${STORY_ENGINE_DB:-$SCRIPT_DIR/db.sqlite3}"
     local export_dir="$SCRIPT_DIR/exports"
 
@@ -527,7 +532,7 @@ for row in rows:
     print(f"  ✓  Raw txt  : {raw_path}")
     exported += 1
 
-print(f"\n  {exported} story/stories written — running clip reflow...")
+print(f"\n  {exported} story/stories written.")
 PYEOF
 
     local py_exit=$?
@@ -537,39 +542,62 @@ PYEOF
         echo ""; return
     fi
 
-    # Reflow each _raw.txt → final .txt using reflow_clips.py
-    local reflow_script="$SCRIPT_DIR/src/scripts/reflow_clips.py"
-    if [ ! -f "$reflow_script" ]; then
-        echo -e "  ${RED}ERROR: reflow_clips.py not found at $reflow_script${NC}"
-        rm -f "$paths_tmp"
-        echo ""; return
-    fi
-
-    : > "$LAST_EXPORT_FILE"
     local all_ok=1
-    while IFS= read -r raw_path; do
-        [ -z "$raw_path" ] && continue
-        local final_path="${raw_path%_raw.txt}.txt"
-        echo ""
-        python3 "$reflow_script" "$raw_path" "$final_path"
-        if [ $? -eq 0 ]; then
-            echo "$final_path" >> "$LAST_EXPORT_FILE"
-            rm -f "$raw_path"
-        else
-            echo -e "  ${RED}Reflow failed for: $raw_path${NC}"
-            all_ok=0
-        fi
-    done < "$paths_tmp"
-    rm -f "$paths_tmp"
 
-    echo ""
-    if [ "$all_ok" -eq 1 ]; then
-        echo -e "  ${GREEN}Export complete.${NC}"
-        echo -e "  Review the .txt files below, then run option 8 → b to generate Grok prompts."
+    if [ "$no_reflow" -eq 1 ]; then
+        # Step 1a — no normalization: rename _raw.txt → _no_norm.txt directly
         echo ""
-        while IFS= read -r fp; do
-            [ -n "$fp" ] && echo -e "    ${CYAN}→  $fp${NC}"
-        done < "$LAST_EXPORT_FILE"
+        while IFS= read -r raw_path; do
+            [ -z "$raw_path" ] && continue
+            local final_path="${raw_path%_raw.txt}_no_norm.txt"
+            mv "$raw_path" "$final_path"
+            if [ $? -eq 0 ]; then
+                echo -e "  ${GREEN}✓${NC}  $final_path"
+            else
+                echo -e "  ${RED}Rename failed for: $raw_path${NC}"
+                all_ok=0
+            fi
+        done < "$paths_tmp"
+        rm -f "$paths_tmp"
+
+        echo ""
+        if [ "$all_ok" -eq 1 ]; then
+            echo -e "  ${GREEN}Export complete (no normalization).${NC}"
+        fi
+    else
+        # Step 1b — with normalization: reflow clips to target lengths
+        local reflow_script="$SCRIPT_DIR/src/scripts/reflow_clips.py"
+        if [ ! -f "$reflow_script" ]; then
+            echo -e "  ${RED}ERROR: reflow_clips.py not found at $reflow_script${NC}"
+            rm -f "$paths_tmp"
+            echo ""; return
+        fi
+
+        : > "$LAST_EXPORT_FILE"
+        while IFS= read -r raw_path; do
+            [ -z "$raw_path" ] && continue
+            local final_path="${raw_path%_raw.txt}_with_norm.txt"
+            echo ""
+            python3 "$reflow_script" "$raw_path" "$final_path"
+            if [ $? -eq 0 ]; then
+                echo "$final_path" >> "$LAST_EXPORT_FILE"
+                rm -f "$raw_path"
+            else
+                echo -e "  ${RED}Reflow failed for: $raw_path${NC}"
+                all_ok=0
+            fi
+        done < "$paths_tmp"
+        rm -f "$paths_tmp"
+
+        echo ""
+        if [ "$all_ok" -eq 1 ]; then
+            echo -e "  ${GREEN}Export complete.${NC}"
+            echo -e "  Review the .txt files below, then run option 8 → c to generate Grok prompts."
+            echo ""
+            while IFS= read -r fp; do
+                [ -n "$fp" ] && echo -e "    ${CYAN}→  $fp${NC}"
+            done < "$LAST_EXPORT_FILE"
+        fi
     fi
     echo ""
 }
@@ -586,7 +614,7 @@ _generate_grok_prompts() {
     if [ -z "$input_path" ]; then
         # ── use last export ────────────────────────────────────
         if [ ! -f "$LAST_EXPORT_FILE" ] || [ ! -s "$LAST_EXPORT_FILE" ]; then
-            echo -e "  ${RED}No last export found. Run option 8 → a first, or enter a filename.${NC}"
+            echo -e "  ${RED}No last export found. Run option 8 → b first, or enter a filename.${NC}"
             echo ""; return
         fi
         list_file="$LAST_EXPORT_FILE"
@@ -662,7 +690,7 @@ for txt_path in txt_paths:
     with open(txt_path, encoding="utf-8") as f:
         for line in f:
             line = line.rstrip('\n').rstrip()
-            if line and line != '-' and not line.startswith('## '):
+            if line and line != '-' and not line.startswith('## ') and not line.startswith('###'):
                 clips.append(line)
 
     if not clips:
@@ -946,7 +974,7 @@ EOF
     echo -e "${BOLD}Generation:${NC}"
     echo "  5)  Generate Stories (zh-Hans)"
     echo "  6)  Reset Last Batch  (delete & free articles for re-run)"
-    echo "  8)  Export Stories    (a: .txt with reflow  |  b: Grok prompts)"
+    echo "  8)  Export Stories    (a: no norm  |  b: normalized  |  c: Grok prompts)"
     echo "  9)  Analyze Story Clips  (min/max chars per 6s/10s — speech rate test)"
     echo ""
     echo -e "${BOLD}Configuration:${NC}"
