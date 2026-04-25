@@ -5,10 +5,10 @@ reflow_clips.py — Reformat exported story .txt clips for Grok video generation
 Strategy:
   1. Parse the file into sections (each ## heading starts a new section).
   2. Concatenate all clips within a section into one continuous text.
-  3. Re-split the text at natural punctuation (，。、！？,.) to produce clips
-     that are close to the video duration targets:
-       10s clip → 55–65 chars
-        6s clip → 33–39 chars
+  3. Split at period or comma only (，。,.), then greedily merge fragments
+     into clips up to MAX_CHARS (60).  A fragment that would push the current
+     clip over 60 starts a new clip instead.  Any clip already over 60 chars
+     is left as-is for manual revision.
 
 Usage:
   python reflow_clips.py input.txt [output.txt]
@@ -16,17 +16,13 @@ Usage:
   If output.txt is omitted, writes to input_fmt.txt.
 """
 
-import re
 import sys
 import os
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 
-PUNCT       = '，。、！？,.：:'   # split AFTER any of these chars
-TARGET_10S  = (55, 65)           # ideal char range for a 10s clip
-TARGET_6S   = (33, 39)           # ideal char range for a 6s clip
-HARD_MAX    = 75                 # never produce a clip longer than this
-MIN_VIABLE  = 20                 # minimum chars to be worth its own clip
+PUNCT     = '，。'    # split AFTER Chinese period/comma only; ASCII . and , are not sentence breaks
+MAX_CHARS = 60        # target max chars per clip; leave longer ones for manual revision
 
 
 # ── Parsing ────────────────────────────────────────────────────────────────────
@@ -77,77 +73,50 @@ def parse_sections(path):
     return sections, sources_line
 
 
-# ── Scoring & Splitting ────────────────────────────────────────────────────────
-
-def score(n):
-    """
-    Rate a clip length.  Returns (priority, fine_distance) — lower is better.
-
-    Priority bands:
-      0 — perfect 10s  (55–65)
-      1 — perfect 6s   (33–39)
-      2 — acceptable   (40–54 gray zone, or 66–75 slightly over)
-      3 — short        (20–32)
-      9 — bad          (< 20 or > HARD_MAX)
-    """
-    if TARGET_10S[0] <= n <= TARGET_10S[1]:
-        return (0, abs(n - 60))
-    if TARGET_6S[0] <= n <= TARGET_6S[1]:
-        return (1, abs(n - 36))
-    if 40 <= n < TARGET_10S[0]:                      # gray zone below 10s
-        return (2, TARGET_10S[0] - n)
-    if TARGET_10S[1] < n <= HARD_MAX:                # slightly over 10s
-        return (2, n - TARGET_10S[1])
-    if MIN_VIABLE <= n < TARGET_6S[0]:               # short but viable
-        return (3, TARGET_6S[0] - n)
-    return (9, 999)
-
+# ── Splitting ─────────────────────────────────────────────────────────────────
 
 def reflow(text):
     """
-    Re-split `text` into a list of clips targeting the video duration ranges.
-    Split points are positions immediately AFTER a punctuation character.
+    Split `text` into clips at every period or comma (，。,.), then greedily
+    merge consecutive fragments into one clip as long as the combined length
+    stays ≤ MAX_CHARS.  When adding the next fragment would exceed MAX_CHARS,
+    flush the current clip and start a new one.  A single fragment that is
+    already > MAX_CHARS is emitted as-is for manual revision.
     """
-    # Build sorted list of all valid split positions (index of first char AFTER punct)
+    # Build split positions: index of first char AFTER each punct
     split_pts = [i + 1 for i, ch in enumerate(text) if ch in PUNCT]
 
+    # Slice text at each split point
+    raw_pieces = []
+    prev = 0
+    for p in split_pts:
+        piece = text[prev:p].strip()
+        if piece:
+            raw_pieces.append(piece)
+        prev = p
+    tail = text[prev:].strip()
+    if tail:
+        raw_pieces.append(tail)
+
+    if not raw_pieces:
+        return [text.strip()] if text.strip() else []
+
+    # Greedy merge: keep adding fragments while combined length ≤ MAX_CHARS.
+    # No space after Chinese punctuation (，。); keep a space otherwise.
     clips = []
-    start = 0
-
-    while start < len(text):
-        # Skip any leading whitespace that accumulated from join separators.
-        # This ensures chunk-size scoring matches the actual stripped clip length.
-        while start < len(text) and text[start] == ' ':
-            start += 1
-        if start >= len(text):
-            break
-
-        remaining = len(text) - start
-
-        # If what's left fits in one clip (even if slightly over target), emit it.
-        if remaining <= HARD_MAX:
-            chunk = text[start:].strip()
-            if chunk:
-                clips.append(chunk)
-            break
-
-        # Candidate split positions relative to `start`, within a generous window.
-        candidates = [
-            p - start
-            for p in split_pts
-            if start + MIN_VIABLE <= p <= start + HARD_MAX
-        ]
-
-        if candidates:
-            # Pick the split length with the best score.
-            best_len = min(candidates, key=score)
-            clips.append(text[start : start + best_len].strip())
-            start += best_len
+    buf = ''
+    for piece in raw_pieces:
+        if not buf:
+            buf = piece
         else:
-            # No punctuation in window — force-split at the target midpoint.
-            force = TARGET_10S[0]   # 55 chars
-            clips.append(text[start : start + force].strip())
-            start += force
+            sep = '' if buf[-1] in PUNCT else ' '
+            if len(buf) + len(sep) + len(piece) <= MAX_CHARS:
+                buf = buf + sep + piece
+            else:
+                clips.append(buf)
+                buf = piece
+    if buf:
+        clips.append(buf)
 
     return [c for c in clips if c.strip()]
 
@@ -181,8 +150,9 @@ def reformat(input_path, output_path):
 # ── CLI / report ───────────────────────────────────────────────────────────────
 
 def report(path):
-    """Print each line with its length tag."""
-    counts = {'✓10s': 0, '✓6s': 0, 'gray': 0, 'short': 0, 'LONG': 0}
+    """Print each clip with its character count; flag anything over MAX_CHARS."""
+    total = 0
+    long_count = 0
     with open(path, encoding='utf-8') as f:
         for raw in f:
             line = raw.rstrip('\n').rstrip()
@@ -190,23 +160,14 @@ def report(path):
                 print(line)
                 continue
             n = len(line)
-            if TARGET_10S[0] <= n <= TARGET_10S[1]:
-                tag = '✓10s'; counts['✓10s'] += 1
-            elif TARGET_6S[0] <= n <= TARGET_6S[1]:
-                tag = '✓6s '; counts['✓6s'] += 1
-            elif n > TARGET_10S[1]:
-                tag = f'LONG({n})'; counts['LONG'] += 1
-            elif n < TARGET_6S[0]:
-                tag = f'short({n})'; counts['short'] += 1
-            else:
-                tag = f'gray({n})'; counts['gray'] += 1
-            print(f"  [{tag:>10}]  {line}")
+            total += 1
+            flag = '  ← LONG' if n > MAX_CHARS else ''
+            if flag:
+                long_count += 1
+            print(f"  [{n:>3}]  {line}{flag}")
 
-    total = sum(counts.values())
-    good  = counts['✓10s'] + counts['✓6s']
-    print(f"\n  Clips: {total}  |  ✓10s:{counts['✓10s']}  ✓6s:{counts['✓6s']}"
-          f"  gray:{counts['gray']}  short:{counts['short']}  LONG:{counts['LONG']}"
-          f"  |  {good}/{total} on-target ({100*good//total if total else 0}%)")
+    note = f"  ({long_count} over {MAX_CHARS} chars — revise manually)" if long_count else "  (all within limit)"
+    print(f"\n  Clips: {total}{note}")
 
 
 def main():
