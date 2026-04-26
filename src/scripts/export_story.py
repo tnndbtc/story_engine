@@ -46,6 +46,8 @@ def strip_md(text: str) -> str:
     text = re.sub(r'https?://\S+',          '',   text)        # bare URLs
     text = re.sub(r'\[([^\]]+)\]\([^)]*\)', r'\1', text)      # [text](url)
     text = re.sub(r'^#+\s*', '', text, flags=re.MULTILINE)     # headings
+    # Replace ASCII comma with Chinese full-width comma when adjacent to CJK text
+    text = re.sub(r'(?<=[一-鿿　-〿＀-￯]),|,(?=[一-鿿　-〿＀-￯])', '，', text)
     return text.strip()
 
 
