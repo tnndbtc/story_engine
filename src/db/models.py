@@ -532,37 +532,44 @@ def get_stories_by_set(set_id: int) -> list[dict]:
         # Deep story → one Story entry (format='deep_story')
         ds = _json.loads(hr['deep_story']) if hr.get('deep_story') else {}
         if ds:
+            # New format stores narrative in 'body'; legacy format uses hook+bullets+twist.
+            # 'body' takes priority — if present, hook = body and bullets/twist are empty.
+            hook_text = ds.get('body') or ds.get('hook', '')
+            bullets   = [] if ds.get('body') else ds.get('bullets', [])
+            twist     = '' if ds.get('body') else ds.get('twist', '')
             result.append({
-                'id':           hr['id'] * 10000,        # synthetic id — no collision with flat stories
-                'title':        ds.get('title', ''),
-                'format':       'deep_story',
-                'channel':      channel,
-                'lang':         lang,
-                'status':       'ready',
-                'generated_at': ts,
-                'hook':         ds.get('hook', ''),
-                'bullets':      ds.get('bullets', []),
-                'twist':        ds.get('twist', ''),
-                'sources':      _norm_sources(ds.get('sources', [])),
-                'comments_used': [],
+                'id':             hr['id'] * 10000,        # synthetic id — no collision with flat stories
+                'title':          ds.get('title', ''),
+                'format':         'deep_story',
+                'channel':        channel,
+                'lang':           lang,
+                'status':         'ready',
+                'generated_at':   ts,
+                'hook':           hook_text,
+                'bullets':        bullets,
+                'twist':          twist,
+                'sources':        _norm_sources(ds.get('sources', [])),
+                'comments_used':  [],
+                'token_estimate': ds.get('token_estimate'),
             })
 
         # Supporting stories → one Story entry each (format='supporting')
         supporting = _json.loads(hr['supporting_stories']) if hr.get('supporting_stories') else []
         for idx, ss in enumerate(supporting):
             result.append({
-                'id':           hr['id'] * 10000 + idx + 1,
-                'title':        ss.get('title', ''),
-                'format':       'supporting',
-                'channel':      channel,
-                'lang':         lang,
-                'status':       'ready',
-                'generated_at': ts,
-                'hook':         ss.get('summary', ''),
-                'bullets':      [],
-                'twist':        ss.get('why_it_matters', ''),
-                'sources':      _norm_sources(ss.get('sources', [])),
-                'comments_used': [],
+                'id':             hr['id'] * 10000 + idx + 1,
+                'title':          ss.get('title', ''),
+                'format':         'supporting',
+                'channel':        channel,
+                'lang':           lang,
+                'status':         'ready',
+                'generated_at':   ts,
+                'hook':           ss.get('summary', ''),
+                'bullets':        [],
+                'twist':          ss.get('why_it_matters', ''),
+                'sources':        _norm_sources(ss.get('sources', [])),
+                'comments_used':  [],
+                'token_estimate': None,
             })
 
     return result

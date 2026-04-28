@@ -669,12 +669,13 @@ configure_env() {
     local default_port="5432"
     local default_user="dbuser"
     local default_name="crawler_db"
+    local default_re_port="8010"
 
     if [ -f "$env_file" ]; then
         local existing_url
         existing_url=$(grep "^CRAWLER_DB_URL=" "$env_file" 2>/dev/null | cut -d'=' -f2-)
         if [ -n "$existing_url" ]; then
-            echo -e "  Current URL: ${CYAN}$(echo "$existing_url" | sed 's|:[^:@]*@|:***@|')${NC}"
+            echo -e "  Current DB URL: ${CYAN}$(echo "$existing_url" | sed 's|:[^:@]*@|:***@|')${NC}"
             echo ""
             # Parse user, host, port, name from existing URL
             # Format: postgres://user:pass@host:port/name
@@ -690,6 +691,17 @@ configure_env() {
             [ -n "$parsed_host" ] && default_host="$parsed_host"
             [ -n "$parsed_port" ] && default_port="$parsed_port"
             [ -n "$parsed_name" ] && default_name="$parsed_name"
+        fi
+
+        local existing_re_url
+        existing_re_url=$(grep "^RESEARCH_ENGINE_URL=" "$env_file" 2>/dev/null | cut -d'=' -f2-)
+        if [ -n "$existing_re_url" ]; then
+            echo -e "  Current Research Engine URL: ${CYAN}${existing_re_url}${NC}"
+            echo ""
+            # Parse port from http://localhost:PORT/enrich
+            local parsed_re_port
+            parsed_re_port=$(echo "$existing_re_url" | sed 's|.*:\([0-9]*\)/.*|\1|')
+            [ -n "$parsed_re_port" ] && default_re_port="$parsed_re_port"
         fi
     fi
 
@@ -711,6 +723,11 @@ configure_env() {
     read -s -p "  DB Password: " db_pass
     echo ""
 
+    echo ""
+    read -p "  Research Engine Port [$default_re_port]: " re_port
+    re_port="${re_port:-$default_re_port}"
+    local re_url="http://localhost:${re_port}/enrich"
+
     local db_url="postgres://${db_user}:${db_pass}@${db_host}:${db_port}/${db_name}"
     # Crawler root: parent dir of story_engine, then /crawler
     local crawler_root
@@ -728,6 +745,9 @@ CRAWLER_DB_URL=${db_url}
 
 # Crawler root directory (for config files like auto_keywords.json)
 CRAWLER_ROOT=${crawler_root}
+
+# Research engine enrichment service
+RESEARCH_ENGINE_URL=${re_url}
 EOF
 
     # Reload exported env vars in the current session
@@ -738,23 +758,36 @@ EOF
     echo -e "  ${GREEN}Configuration saved.${NC}"
     echo ""
 
-    # Quick connection test
-    echo -e "  ${CYAN}Testing connection...${NC}"
+    # Test 1 — crawler DB connection
+    echo -e "  ${CYAN}Testing crawler DB connection...${NC}"
     python3 - <<PYEOF
 import sys
 try:
     import psycopg2
     conn = psycopg2.connect("${db_url}")
     conn.close()
-    print("  Connection: OK ✓")
+    print("  Crawler DB:       OK ✓")
 except Exception as e:
-    print(f"  Connection FAILED: {e}", file=sys.stderr)
+    print(f"  Crawler DB:       FAILED — {e}", file=sys.stderr)
     sys.exit(1)
 PYEOF
     local rc=$?
     if [ $rc -ne 0 ]; then
         echo -e "  ${YELLOW}Tip: check host, port, user, password and that PostgreSQL is running.${NC}"
     fi
+
+    # Test 2 — research engine reachability
+    echo -e "  ${CYAN}Testing research engine (port ${re_port})...${NC}"
+    local re_health_url="http://localhost:${re_port}/health"
+    local re_status
+    re_status=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 "$re_health_url" 2>/dev/null)
+    if [ "$re_status" = "200" ]; then
+        echo -e "  Research Engine:  ${GREEN}OK ✓  (${re_url})${NC}"
+    else
+        echo -e "  Research Engine:  ${YELLOW}not reachable (start it separately)${NC}"
+        echo -e "  ${YELLOW}URL saved as ${re_url} — will connect automatically when running.${NC}"
+    fi
+
     echo ""
 }
 
@@ -916,7 +949,7 @@ EOF
     echo "  9)  Analyze Story Clips  (min/max chars per 6s/10s — speech rate test)"
     echo ""
     echo -e "${BOLD}Configuration:${NC}"
-    echo "  7)  Configure .env   (DB host / user / password)"
+    echo "  7)  Configure .env   (DB host / user / password / research engine port)"
     echo ""
     echo "  0)  Exit"
     echo ""

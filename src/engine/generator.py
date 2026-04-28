@@ -330,6 +330,55 @@ def _lang_instruction(lang: str) -> str:
     return "Write the script in English."
 
 
+def _build_research_block(kp: dict) -> str:
+    """
+    Format a knowledge_pack from research_engine into a prompt context block.
+
+    Injected BEFORE cluster sources — research_engine provides externally
+    verified facts and entity background, making it the highest-authority layer.
+    Claude should treat VERIFIED claims as ground truth, PARTIALLY_VERIFIED as
+    probable, and uncertainty_notes as constraints on what NOT to assert.
+    """
+    lines = ["## Verified Research Context"]
+
+    # Verified and partially verified facts only — skip UNVERIFIED / CONTRADICTED
+    fact_blocks = kp.get("fact_blocks", [])
+    verified = [
+        f for f in fact_blocks
+        if f.get("status") in ("VERIFIED", "PARTIALLY_VERIFIED")
+    ]
+    if verified:
+        lines.append("\nVerified Facts:")
+        for fb in verified:
+            marker = "✓" if fb["status"] == "VERIFIED" else "~"
+            sources = ", ".join(
+                s.get("title", "") for s in fb.get("sources", [])[:2]
+            )
+            lines.append(f"  {marker} {fb['claim']}")
+            if sources:
+                lines.append(f"    Source: {sources}")
+
+    # Entity background (from Wikipedia + Planner B context expansion)
+    context_blocks = kp.get("context_blocks", [])
+    if context_blocks:
+        lines.append("\nBackground Context:")
+        for cb in context_blocks:
+            lines.append(f"  [{cb['entity']}] {cb['background']}")
+
+    # Uncertainty notes — hard constraints on what Claude must NOT assert as fact
+    notes = kp.get("uncertainty_notes", [])
+    if notes:
+        lines.append("\nUncertainty Notes — do NOT assert these as verified fact:")
+        for note in notes:
+            lines.append(f"  ⚠ {note}")
+
+    confidence = kp.get("confidence_overall")
+    if confidence is not None:
+        lines.append(f"\nResearch confidence: {confidence:.0%}")
+
+    return "\n".join(lines)
+
+
 def _build_cluster_context_block(item: dict) -> str:
     """
     Build a structured corroborating sources prompt block from cluster mates.
@@ -1178,6 +1227,71 @@ def generate_by_format(
         raise
 
 
+# ── Deep story: agent constants ───────────────────────────────────────────────
+
+_DEEP_SYSTEM_PROMPT = (
+    "You are an investigative journalist and YouTube storyteller. "
+    "FIRST research the story using iterative Bash searches, THEN write the final narrative. "
+    "Output ONLY a valid JSON object — no prose, no markdown before or after. "
+    "Your entire response must start with { and end with }."
+)
+
+_DEEP_TIMEOUT = 600  # 10 minutes — iterative Bash tool calls take time
+
+
+def _call_claude_agent_deep(prompt: str) -> tuple[str, int]:
+    """
+    Call claude -p with Bash tool enabled for deep story research + writing.
+
+    Claude will:
+      1. Reason about the story mechanism
+      2. Use Bash to curl Serper repeatedly with targeted queries
+      3. Write a 900–1100 Chinese character spoken narrative
+      4. Output JSON: {title, body, sources}
+
+    Returns:
+        (raw_output: str, token_estimate: int)
+        token_estimate = (len(prompt) + len(output)) // 4 — a char/4 proxy
+        since claude -p subprocess does not expose token counts in stdout.
+
+    Raises RuntimeError on timeout, missing CLI, or non-zero exit.
+    """
+    try:
+        result = subprocess.run(
+            [
+                'claude', '-p',
+                '--model',               'claude-sonnet-4-5',
+                '--tools',               'Bash',
+                '--output-format',       'text',
+                '--no-session-persistence',
+                '--system-prompt',       _DEEP_SYSTEM_PROMPT,
+                '--disable-slash-commands',
+            ],
+            input=prompt,
+            capture_output=True,
+            text=True,
+            timeout=_DEEP_TIMEOUT,
+            env={**os.environ},          # passes SERPER_API_KEY + all env vars
+        )
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"deep story agent timed out after {_DEEP_TIMEOUT}s")
+    except FileNotFoundError:
+        raise RuntimeError("claude CLI not found in PATH")
+
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"claude -p failed (exit {result.returncode}): {result.stderr[:400]}"
+        )
+
+    raw = result.stdout.strip()
+    token_estimate = (len(prompt) + len(raw)) // 4
+    logger.info(
+        "_call_claude_agent_deep: output=%d chars, token_estimate=%d",
+        len(raw), token_estimate,
+    )
+    return raw, token_estimate
+
+
 # ── Deep story generation ──────────────────────────────────────────────────────
 
 def _cluster_to_item_dict(cluster) -> dict:
@@ -1256,146 +1370,130 @@ def _cluster_to_item_dict(cluster) -> dict:
 
 def generate_deep_story(
     cluster,
-    lang:     str = 'en',
-    channel:  int = 1,
-    batch_id: int | None = None,
-    batch_ts: int | None = None,
+    lang:           str = 'en',
+    channel:        int = 1,
+    batch_id:       int | None = None,
+    batch_ts:       int | None = None,
+    knowledge_pack: dict | None = None,  # kept for signature compat — ignored; agent self-searches
 ) -> dict:
     """
-    Generate a deep story (full hook + bullets + twist) from an EventCluster.
+    Generate a deep story from an EventCluster using a single claude -p --tools Bash call.
 
-    Uses the existing deep_dive.txt prompt via _generate_script().
-    Returns the parsed script dict: {title, hook, bullets, twist}.
-    Does NOT save to DB — caller (generate_story_batch) handles persistence.
+    The agent:
+      1. Receives the topic + crawler seed URLs
+      2. Iteratively searches Serper via Bash tool (6+ queries)
+      3. Writes a 900–1100 Chinese character spoken narrative
+      4. Returns JSON: {title, body, sources}
+
+    sources in the returned dict merges:
+      - all crawler cluster members (representative + fact/context/reaction)
+      - all URLs Claude found during research (deduplicated)
+
+    Returns a script dict compatible with generate_story_batch() / save_hierarchical_story().
+    Does NOT save to DB — caller handles persistence.
+
+    token_estimate is included in the returned dict for logging + UI display.
     """
-    # ---------------------------------------------------------------------------
-    # Category tuning blocks — injected into {category_tuning} placeholder.
-    # Maps story_category (or consolidated group) → tuning instructions.
-    # Falls back to empty string for unlisted categories (no tuning applied).
-    # ---------------------------------------------------------------------------
-    _CATEGORY_TUNING: dict[str, str] = {
-        # ai + technology + science → consolidated as ai_tech
-        'ai': """\
-Category: AI / Technology
-- Focus: hidden failure, trust vs capability gap, "looks like it works, but doesn't"
-- Emotional tone: unsettling, loss of control, delayed realization
-- Stakes: automation failure, invisible errors, over-reliance on systems
-- Scenario style: user trusts system → system silently fails → delayed consequence
-- Conflict: human trust vs machine reality
-- Language bias: emphasize "you think it worked, but it didn't"; avoid hype or futuristic exaggeration""",
-
-        'technology': """\
-Category: AI / Technology
-- Focus: hidden failure, trust vs capability gap, "looks like it works, but doesn't"
-- Emotional tone: unsettling, loss of control, delayed realization
-- Stakes: automation failure, invisible errors, over-reliance on systems
-- Scenario style: user trusts system → system silently fails → delayed consequence
-- Conflict: human trust vs machine reality
-- Language bias: emphasize "you think it worked, but it didn't"; avoid hype or futuristic exaggeration""",
-
-        'science': """\
-Category: AI / Technology
-- Focus: hidden failure, trust vs capability gap, "looks like it works, but doesn't"
-- Emotional tone: unsettling, loss of control, delayed realization
-- Stakes: automation failure, invisible errors, over-reliance on systems
-- Scenario style: user trusts system → system silently fails → delayed consequence
-- Conflict: human trust vs machine reality
-- Language bias: emphasize "you think it worked, but it didn't"; avoid hype or futuristic exaggeration""",
-
-        'business': """\
-Category: Business / Finance
-- Focus: money flow, winners vs losers, power imbalance
-- Emotional tone: unfairness, quiet tension, slow-burn risk
-- Stakes: financial loss, job security, market shifts
-- Scenario style: decision → hidden cost → delayed consequence
-- Conflict: company vs user, growth vs sustainability, profit vs responsibility
-- Language bias: emphasize "someone is paying for this"; highlight who benefits vs who loses""",
-
-        'politics': """\
-Category: Politics
-- Focus: power, control, real-world consequences on ordinary people
-- Emotional tone: urgency, tension, concern (not extreme outrage)
-- Stakes: policy impact, rights or restrictions, societal effect
-- Scenario style: decision → downstream effect → public impact
-- Conflict: authority vs individual, policy vs reality
-- Language bias: emphasize "this affects people, not just systems"; avoid partisan framing; avoid emotional extremes unless grounded in the sources""",
-
-        'entertainment': """\
-Category: Entertainment / Sports
-- Focus: people, reputation, unexpected behavior
-- Emotional tone: curiosity, surprise, tension (not fear)
-- Stakes: image, influence, public perception
-- Scenario style: public moment → hidden context → unexpected shift
-- Conflict: persona vs reality, expectation vs behavior
-- Language bias: emphasize "what people thought vs what actually happened"; keep tone engaging, not heavy""",
-
-        'sports': """\
-Category: Entertainment / Sports
-- Focus: people, reputation, unexpected behavior
-- Emotional tone: curiosity, surprise, tension (not fear)
-- Stakes: image, influence, public perception
-- Scenario style: public moment → hidden context → unexpected shift
-- Conflict: persona vs reality, expectation vs behavior
-- Language bias: emphasize "what people thought vs what actually happened"; keep tone engaging, not heavy""",
-
-        'society': """\
-Category: Society / World
-- Focus: human scale over institutional scale; what happens to ordinary people
-- Emotional tone: curiosity, mild unease, "this is bigger than it looks"
-- Stakes: daily life, community, cross-border ripple effects
-- Scenario style: small local signal → broader systemic implication most people missed
-- Conflict: expectation vs reality, local vs global
-- Language bias: emphasize "most people haven't noticed this yet"; show how a distant event quietly reaches the viewer""",
-
-        'world': """\
-Category: Society / World
-- Focus: human scale over institutional scale; what happens to ordinary people
-- Emotional tone: curiosity, mild unease, "this is bigger than it looks"
-- Stakes: daily life, community, cross-border ripple effects
-- Scenario style: small local signal → broader systemic implication most people missed
-- Conflict: expectation vs reality, local vs global
-- Language bias: emphasize "most people haven't noticed this yet"; show how a distant event quietly reaches the viewer""",
-    }
-
     item = _cluster_to_item_dict(cluster)
+
+    # Build seed URLs: representative + all cluster members (deduped, capped at 10)
+    rep = cluster.representative
+    all_members = (
+        [rep]
+        + cluster.fact_sources
+        + cluster.context_sources
+        + cluster.reaction_sources
+    )
+    seen_urls: set[str] = set()
+    seed_urls: list[str] = []
+    for m in all_members:
+        url = getattr(m, 'url', '') or ''
+        if url and url not in seen_urls:
+            seen_urls.add(url)
+            seed_urls.append(url)
+        if len(seed_urls) >= 10:
+            break
+
+    seed_block = '\n'.join(f'  - {u}' for u in seed_urls) if seed_urls else '  (none provided)'
+    serper_key = os.environ.get('SERPER_API_KEY', '')
+
+    topic_title = (
+        rep.canonical_title or rep.title_original
+        or item.get('canonical_title') or item.get('title_original')
+        or 'unknown topic'
+    )
+
     template = (PROMPTS_DIR / 'deep_dive.txt').read_text()
-
-    cluster_block = _build_cluster_context_block(item)
-    context_block = cluster_block
-
-    # new-development annotation
-    if item.get('is_new_development') and item.get('prior_story_title'):
-        update_notice = (
-            f"\n\n[UPDATE STORY] This article is a NEW DEVELOPMENT following: "
-            f"\"{item['prior_story_title']}\". Frame as an update."
-        )
-        context_block = update_notice + ("\n\n" + cluster_block if cluster_block else "")
-
-    raw_category = (item.get('story_category') or item.get('category') or '').lower()
-    category_tuning = _CATEGORY_TUNING.get(raw_category, '')
-
     prompt = template.format(
-        topic=item.get('story_category') or item.get('category') or 'world news',
-        stories_block=(
-            f"Title: {item.get('title', '')}\n"
-            f"Platform: {item.get('platform', '')}\n"
-            f"URL: {item.get('url', '')}\n"
-            f"Description: {item.get('description_original') or 'No description available'}"
-        ) + ("\n\n" + context_block if context_block else ""),
-        lang_instruction=_lang_instruction(lang),
-        category_tuning=category_tuning,
+        topic=topic_title,
+        seed_urls=seed_block,
+        serper_key=serper_key,
     )
 
     logger.info(
-        "generate_deep_story: generating for cluster %s (%d members)",
-        cluster.event_id, cluster.member_count,
+        "generate_deep_story: launching claude -p --tools Bash for cluster %s "
+        "(%d members, %d seed URLs)",
+        cluster.event_id, cluster.member_count, len(seed_urls),
     )
-    script = _generate_script(prompt)
-    script['event_id']       = cluster.event_id
-    script['cluster_size']   = cluster.member_count
-    script['source_diversity'] = getattr(cluster, 'source_diversity', 0.0)
-    script['sources']        = _build_source_list(item)
-    return script
+
+    raw, token_estimate = _call_claude_agent_deep(prompt)
+
+    # Parse the JSON output from the agent
+    try:
+        parsed = _parse_json_response(raw)
+    except ValueError:
+        logger.warning(
+            "generate_deep_story: JSON parse failed on first attempt — retrying"
+        )
+        # Append stricter instruction and run a plain (no-Bash) retry
+        retry_prompt = (
+            "The following text must be parsed as JSON but failed. "
+            "Extract the title, body, and sources and return ONLY valid JSON "
+            "starting with { and ending with }.\n\n" + raw[:2000]
+        )
+        retry_raw = _call_claude(retry_prompt)
+        parsed = _parse_json_response(retry_raw)
+
+    # Build combined source list: crawler sources + newly searched sources
+    crawler_sources = _build_source_list(item)
+    existing_urls: set[str] = {s['url'] for s in crawler_sources}
+    searched_sources: list[dict] = []
+    for src in parsed.get('sources', []):
+        url = (src.get('url') or '').strip()
+        if url and url not in existing_urls:
+            existing_urls.add(url)
+            searched_sources.append({
+                'url':      url,
+                'title':    src.get('title', ''),
+                'platform': 'web',
+                'hotness':  0.0,
+                'role':     'searched',
+            })
+
+    all_sources = crawler_sources + searched_sources
+
+    body = parsed.get('body', '')
+    char_count = len(body)
+    logger.info(
+        "generate_deep_story: done — cluster=%s body=%d chars "
+        "token_estimate=%d sources=%d (crawler=%d searched=%d)",
+        cluster.event_id, char_count, token_estimate,
+        len(all_sources), len(crawler_sources), len(searched_sources),
+    )
+
+    return {
+        'title':            parsed.get('title', topic_title),
+        'body':             body,
+        # Legacy fields — empty; get_stories_by_set() reads 'body' first
+        'hook':             '',
+        'bullets':          [],
+        'twist':            '',
+        'event_id':         cluster.event_id,
+        'cluster_size':     cluster.member_count,
+        'source_diversity': getattr(cluster, 'source_diversity', 0.0),
+        'sources':          all_sources,
+        'token_estimate':   token_estimate,
+    }
 
 
 def generate_supporting_stories(
@@ -1564,10 +1662,11 @@ def generate_supporting_stories(
 
 def generate_story_batch(
     orchestration_result: dict,
-    lang:     str = 'en',
-    channel:  int = 1,
-    batch_id: int | None = None,
-    batch_ts: int | None = None,
+    lang:           str = 'en',
+    channel:        int = 1,
+    batch_id:       int | None = None,
+    batch_ts:       int | None = None,
+    knowledge_pack: dict | None = None,
 ) -> dict:
     """
     Generate a full hierarchical story batch from story_orchestrate() output.
@@ -1607,6 +1706,16 @@ def generate_story_batch(
             batch_id=batch_id,
             batch_ts=batch_ts,
         )
+
+        token_estimate = deep_story.get('token_estimate')
+        if token_estimate:
+            logger.info(
+                "generate_story_batch: deep story token_estimate=%d "
+                "(body=%d chars, sources=%d)",
+                token_estimate,
+                len(deep_story.get('body', '')),
+                len(deep_story.get('sources', [])),
+            )
 
         supporting_stories = generate_supporting_stories(
             clusters=support_clusters,

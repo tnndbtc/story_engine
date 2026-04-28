@@ -349,6 +349,8 @@ def main():
                 if orchestration_result is None:
                     logger.warning("--deep-story: story_orchestrate() returned None — skipping")
                 else:
+                    # Deep story generation: claude -p --tools Bash does search + write
+                    # in one pass — no separate research_engine call needed.
                     generate_story_batch(
                         orchestration_result = orchestration_result,
                         lang     = args.lang,

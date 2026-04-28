@@ -34,6 +34,16 @@ router = APIRouter(prefix="/api")
 
 def _dict_to_story(d: dict) -> Story:
     """Convert a database row dict to a Story schema object."""
+    # Normalise sources — deep story searched sources may lack platform/hotness
+    raw_sources = d.get('sources', [])
+    norm_sources = []
+    for s in raw_sources:
+        norm_sources.append(SourceItem(
+            url=s.get('url', ''),
+            platform=s.get('platform', 'web'),
+            hotness=float(s.get('hotness', 0.0)),
+            title=s.get('title', ''),
+        ))
     return Story(
         id=d['id'],
         title=d['title'],
@@ -42,13 +52,14 @@ def _dict_to_story(d: dict) -> Story:
         lang=d['lang'],
         status=d['status'],
         generated_at=d.get('generated_at'),
-        sources_count=len(d.get('sources', [])),
+        sources_count=len(norm_sources),
+        token_estimate=d.get('token_estimate'),
         script=Script(
             hook=d.get('hook') or '',
             bullets=d.get('bullets') or [],
             twist=d.get('twist') or '',
         ),
-        sources=[SourceItem(**s) for s in d.get('sources', [])],
+        sources=norm_sources,
         comments_used=[CommentItem(**c) for c in d.get('comments_used', [])],
     )
 
@@ -64,6 +75,7 @@ def _dict_to_card(d: dict) -> StoryCard:
         status=d['status'],
         generated_at=d.get('generated_at'),
         sources_count=len(d.get('sources', [])),
+        token_estimate=d.get('token_estimate'),
     )
 
 

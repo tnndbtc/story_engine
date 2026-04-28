@@ -75,6 +75,7 @@ class StoryCard(BaseModel):
     status: StatusType
     generated_at: Optional[datetime]
     sources_count: int
+    token_estimate: Optional[int] = None   # chars/4 proxy; only set for deep_story format
 
 
 # ---------------------------------------------------------------------------
@@ -91,6 +92,7 @@ class Story(BaseModel):
     status: StatusType
     generated_at: Optional[datetime]
     sources_count: int
+    token_estimate: Optional[int] = None   # chars/4 proxy; only set for deep_story format
     script: Script
     sources: list[SourceItem]
     comments_used: list[CommentItem]

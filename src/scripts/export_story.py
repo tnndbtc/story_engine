@@ -136,15 +136,23 @@ def export_stories(db_path: str, export_dir: str,
 
         # ── Build item list ───────────────────────────────────────────────────
         title   = ds.get("title",   "Untitled")
-        hook    = ds.get("hook",    "")
-        bullets = ds.get("bullets", [])
-        twist   = ds.get("twist",   "")
+        body    = ds.get("body",    "")   # new single-narrative format
+        hook    = ds.get("hook",    "")   # legacy format
+        bullets = ds.get("bullets", [])   # legacy format
+        twist   = ds.get("twist",   "")   # legacy format
 
         items = [f"## {strip_md(title)}"]
-        for raw in [hook] + [str(b) for b in bullets] + [twist]:
-            clean = strip_md(raw)
+        if body:
+            # New format: single continuous narrative
+            clean = strip_md(body)
             if clean:
                 items.append(clean)
+        else:
+            # Legacy format: hook + bullets + twist
+            for raw in [hook] + [str(b) for b in bullets] + [twist]:
+                clean = strip_md(raw)
+                if clean:
+                    items.append(clean)
 
         for s in ss_list:
             s_title = strip_md(s.get("title", ""))
