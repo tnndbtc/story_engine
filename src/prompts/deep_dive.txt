@@ -73,9 +73,15 @@ OBJECTIVE:
 - Make the viewer understand and care
 
 LENGTH: 900–1100 Chinese characters (STRICT)
-  - Count carefully before finalizing
-  - If too long → compress ruthlessly
-  - If too short → clarify the mechanism, do NOT add new ideas
+  - Count the characters in your draft before finalizing
+  - If too long → compress ruthlessly; cut sentences that restate what was already said
+  - If under 900 → go DEEPER into what you already found:
+      • Show what a specific affected person actually experiences
+      • Develop the mechanism one level further — what happens step by step
+      • Add the concrete consequence — what changes for real people after this
+      • Describe the scale — how many people, how much money, how wide the impact
+      Do NOT introduce new topics. Do NOT invent details not in your searches.
+  - Do NOT output until character count is 900–1100
 
 STORY STRUCTURE (internal — do NOT label these in your output):
   Opening:     a concrete event, number, or moment that creates tension
@@ -107,10 +113,12 @@ FORBIDDEN:
   - Do NOT use "你以为…但其实…" pattern more than once
 
 QUALITY CHECK (mandatory before finalizing body):
+  - Count the characters in body. Is it 900–1100? If not → fix first, then continue
   - Can the entire story be summarized in ONE sentence? If not → rewrite
   - Is there exactly ONE main idea? If not → cut
   - Does any sentence feel optional? → remove it
   - Does the ending create a strong, memorable takeaway?
+  - Did you invent any fact not found in your searches? → remove it
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 OUTPUT FORMAT

@@ -243,7 +243,29 @@ def _parse_json_response(text: str) -> dict:
     except json.JSONDecodeError:
         pass
 
-    # Try to find JSON object in the response (between first { and last })
+    # Use raw_decode to find ALL complete JSON objects in the response.
+    # The agent sometimes outputs prose + draft JSON + explanation + final JSON;
+    # raw_decode correctly handles each object's boundaries, and we prefer the
+    # LAST object (the agent's final/corrected version).
+    _decoder = json.JSONDecoder()
+    _found_objects: list[dict] = []
+    _i = 0
+    while _i < len(cleaned):
+        if cleaned[_i] == '{':
+            try:
+                _obj, _end = _decoder.raw_decode(cleaned, _i)
+                if isinstance(_obj, dict):
+                    _found_objects.append(_obj)
+                _i = _end
+            except json.JSONDecodeError:
+                _i += 1
+        else:
+            _i += 1
+    if _found_objects:
+        # Return the last object — that is the agent's final output
+        return _found_objects[-1]
+
+    # Fallback: find JSON object in the response (between first { and last })
     start = cleaned.find('{')
     end = cleaned.rfind('}')
     if start != -1 and end != -1 and end > start:
@@ -1449,7 +1471,7 @@ def generate_deep_story(
         retry_prompt = (
             "The following text must be parsed as JSON but failed. "
             "Extract the title, body, and sources and return ONLY valid JSON "
-            "starting with { and ending with }.\n\n" + raw[:2000]
+            "starting with { and ending with }.\n\n" + raw
         )
         retry_raw = _call_claude(retry_prompt)
         parsed = _parse_json_response(retry_raw)
