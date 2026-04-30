@@ -58,6 +58,7 @@ fi
 
 EXTRA_ARGS=""
 PROFILE_ARGS=""
+LANG_ARG="zh"
 DEEP_STORY_MODE=0
 
 while [ $# -gt 0 ]; do
@@ -69,6 +70,15 @@ while [ $# -gt 0 ]; do
         --deep-story)
             DEEP_STORY_MODE=1
             shift
+            ;;
+        --lang)
+            if [ -n "$2" ]; then
+                LANG_ARG="$2"
+                shift 2
+            else
+                echo "Error: --lang requires a value (en or zh)"
+                exit 1
+            fi
             ;;
         --profile)
             if [ -n "$2" ]; then
@@ -100,7 +110,7 @@ if [ "$DEEP_STORY_MODE" -eq 0 ]; then
             for ((i=${BASH_REMATCH[1]}; i<=${BASH_REMATCH[2]}; i++)); do
                 if [ "$i" -ge 1 ] && [ "$i" -le 9 ] && [ -n "${LEGACY_MAP[$i]}" ]; then
                     FORMATS="$FORMATS ${LEGACY_MAP[$i]}"
-                elif [ "$i" -ge 10 ] && [ "$i" -le 46 ]; then
+                elif [ "$i" -ge 10 ] && [ "$i" -le 200 ]; then
                     FORMATS="$FORMATS format_${i}"
                 fi
             done
@@ -111,7 +121,7 @@ if [ "$DEEP_STORY_MODE" -eq 0 ]; then
             i=$part
             if [ "$i" -ge 1 ] && [ "$i" -le 9 ] && [ -n "${LEGACY_MAP[$i]}" ]; then
                 FORMATS="$FORMATS ${LEGACY_MAP[$i]}"
-            elif [ "$i" -ge 10 ] && [ "$i" -le 46 ]; then
+            elif [ "$i" -ge 10 ] && [ "$i" -le 200 ]; then
                 FORMATS="$FORMATS format_${i}"
             fi
         fi
@@ -131,18 +141,19 @@ if [ "$DEEP_STORY_MODE" -eq 1 ]; then
 else
     echo "  Formats: $FORMAT_INPUT"
 fi
+echo "  Lang:    $LANG_ARG"
 if [ -n "$PROFILE_ARGS" ]; then
     echo "  Profile: ${PROFILE_ARGS#--config-profile }"
 fi
 echo "========================================="
 
-# Generate Chinese stories (Channel 2)
+# Generate stories (language determined by --lang flag, default: zh / Channel 2)
 echo ""
-echo "--- Generating Chinese stories ---"
+echo "--- Generating stories (lang=$LANG_ARG) ---"
 if [ "$DEEP_STORY_MODE" -eq 1 ]; then
-    python "$SCRIPT_DIR/src/engine/run.py" --deep-story-only --lang zh --channel 2 $EXTRA_ARGS $PROFILE_ARGS
+    python "$SCRIPT_DIR/src/engine/run.py" --deep-story-only --lang "$LANG_ARG" --channel 2 $EXTRA_ARGS $PROFILE_ARGS
 else
-    python "$SCRIPT_DIR/src/engine/run.py" --format $FORMATS --lang zh --channel 2 $EXTRA_ARGS $PROFILE_ARGS
+    python "$SCRIPT_DIR/src/engine/run.py" --format $FORMATS --lang "$LANG_ARG" --channel 2 $EXTRA_ARGS $PROFILE_ARGS
 fi
 
 # Show summary

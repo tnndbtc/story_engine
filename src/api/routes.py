@@ -127,14 +127,16 @@ def list_stories(
 def list_story_sets(
     limit: int = Query(default=20, le=100),
     profile: str | None = Query(default=None, description="Filter by overlay profile id, e.g. 'run2_ai'"),
+    lang: str | None = Query(default=None, description="Filter by language: 'en' or 'zh'"),
 ):
     """
     List story sets with story counts.
 
     If `profile` is provided, only return sets whose profile_id matches
     (used by trend_ui channel tabs). Default (no profile) returns all sets.
+    If `lang` is provided ('en' or 'zh'), only return sets in that language.
     """
-    sets = get_story_sets(limit=limit, profile_id=profile)
+    sets = get_story_sets(limit=limit, profile_id=profile, lang=lang)
     return [StorySetSummary(**s) for s in sets]
 
 

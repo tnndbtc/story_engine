@@ -145,13 +145,16 @@ def stage2_allocate(
     # Uncapped platforms: total_item_count (unlimited — must appear in platform_caps to be restricted)
     platform_budgets: dict[str, int] = {}
 
-    # Populate caps for all known platforms
+    # Populate caps for all known platforms.
+    # Minimum of 1 ensures small batches (e.g. 5-item English runs) can still
+    # draw from any allowed platform — floor(5 × 0.10) = 0 would otherwise
+    # block hackernews/reddit/twitter entirely.
     for platform, cap_fraction in config.platform_caps.items():
-        platform_budgets[platform] = math.floor(total_item_count * cap_fraction)
+        platform_budgets[platform] = max(math.floor(total_item_count * cap_fraction), 1)
 
     # Any platform in supply but NOT in platform_caps → capped at default share
     # No platform is fully uncapped — default share is config.default_uncapped_platform_max_share
-    _uncapped_budget = math.floor(total_item_count * config.default_uncapped_platform_max_share)
+    _uncapped_budget = max(math.floor(total_item_count * config.default_uncapped_platform_max_share), 1)
     for candidate in candidates:
         p = candidate.platform
         if p not in platform_budgets:
@@ -257,10 +260,10 @@ def stage2_allocate(
         if ff.feasible
     )
 
-    # Recompute budgets with updated total
+    # Recompute budgets with updated total (minimum 1 preserved here too)
     for platform, cap_fraction in config.platform_caps.items():
-        platform_budgets[platform] = math.floor(total_item_count * cap_fraction)
-    _uncapped_budget_final = math.floor(total_item_count * config.default_uncapped_platform_max_share)
+        platform_budgets[platform] = max(math.floor(total_item_count * cap_fraction), 1)
+    _uncapped_budget_final = max(math.floor(total_item_count * config.default_uncapped_platform_max_share), 1)
     for candidate in candidates:
         p = candidate.platform
         if p not in config.platform_caps:

@@ -197,6 +197,93 @@ def _parse_freshness(collected_at: str | None) -> datetime:
         return datetime.fromtimestamp(0, tz=timezone.utc)
 
 
+def _title_hook_multiplier(title: str | None) -> float:
+    """
+    Reward titles that are structurally hook-friendly.
+    Returns a multiplier in [1.0, 1.20] — never suppresses, only boosts.
+
+    Signals detected (additive, capped at 1.20):
+      +0.04  contains a digit (specific detail = credibility + curiosity)
+      +0.05  question format (ends with '?' or starts with question word)
+      +0.04  second-person address ("you/your", "你/你的")
+      +0.04  surprise/gap words ("竟然", "exposed", "turns out", etc.)
+      +0.03  strong action/consequence verbs ("banned", "crashed", "被捕", etc.)
+    """
+    if not title:
+        return 1.0
+    base = 1.0
+    t = title.lower()
+
+    if re.search(r'\d', t):
+        base += 0.04
+
+    if t.strip().endswith('?') or re.match(
+        r'^(why|how|what|who|when|is|are|was|were|can|could|did|does|do|will|would'
+        r'|为什么|怎么|什么|谁|哪|如何|是不是|难道)\b', t
+    ):
+        base += 0.05
+
+    if re.search(r'\b(you|your|you\'re|you\'ll|你|你的|你会|你知道)\b', t):
+        base += 0.04
+
+    _SURPRISE_EN = {
+        'secret', 'never', 'finally', 'actually', 'turns out', 'nobody',
+        'shocking', 'exposed', 'revealed', 'hidden', 'real reason',
+        "didn't know", "didn't expect", 'nobody told',
+    }
+    _SURPRISE_CN = {'没想到', '竟然', '居然', '原来', '秘密', '揭秘', '没人告诉'}
+    if any(w in t for w in _SURPRISE_EN | _SURPRISE_CN):
+        base += 0.04
+
+    _ACTION_EN = {
+        'banned', 'fired', 'arrested', 'collapsed', 'leaked', 'destroyed',
+        'died', 'broke', 'crashed', 'won', 'lost', 'beat', 'forced',
+    }
+    _ACTION_CN = {'被捕', '倒闭', '崩溃', '泄露', '死亡', '胜利', '击败'}
+    if any(w in t for w in _ACTION_EN | _ACTION_CN):
+        base += 0.03
+
+    return min(base, 1.20)
+
+
+def _engagement_intensity_multiplier(signals: dict | None) -> float:
+    """
+    Reward stories where the audience responded actively.
+    High comments relative to reach = discussable = hook-potential.
+    Returns a multiplier in [1.0, 1.15] — never suppresses, only boosts.
+
+    Comment/reach ratio thresholds:
+      bilibili/youtube/nicovideo: comments / views
+      hackernews/reddit:          comments / score (upvotes)
+      news_rss/v2ex:              absolute comment count only (no reach signal)
+    """
+    if not signals:
+        return 1.0
+
+    comments = float(signals.get('comments', 0) or 0)
+    views    = float(signals.get('views',    0) or 0)
+    score    = float(signals.get('score',    0) or 0)
+
+    if views > 0:
+        ratio = comments / views
+    elif score > 0:
+        ratio = comments / score
+    else:
+        ratio = 0.0
+
+    comment_bonus = 0.0
+    if comments >= 100:  comment_bonus = 0.03
+    if comments >= 500:  comment_bonus = 0.07
+    if comments >= 2000: comment_bonus = 0.10
+
+    ratio_bonus = 0.0
+    if ratio >= 0.005: ratio_bonus = 0.03
+    if ratio >= 0.02:  ratio_bonus = 0.07
+    if ratio >= 0.05:  ratio_bonus = 0.10
+
+    return min(1.0 + max(comment_bonus, ratio_bonus), 1.15)
+
+
 def stage1_normalize(
     db_path: str,
     config: BatchConfig,
@@ -337,10 +424,9 @@ def stage1_normalize(
         # c. hotness
         hotness = float(row.get('hotness') or 0.0)
 
-        # d. effective_hotness = hotness × topic_boost × platform_weight (3 factors)
-        boost           = config.topic_boosts.get(category, 1.0)
-        platform_weight = config.surface_weight_overrides.get(platform, 1.0)
-        effective_hotness = hotness * boost * platform_weight
+        # c2. title_original — pre-extracted here so _title_hook_multiplier
+        #     can use it in step d (before the NormalizedCandidate constructor).
+        title_original = row.get('title_original') or ''
 
         # e. is_used — binary URL dedup
         url = row.get('url') or ''
@@ -372,6 +458,15 @@ def stage1_normalize(
         else:
             engagement_signals = {}
 
+        # d. effective_hotness — computed AFTER engagement_signals + title_original
+        #    are available. Factors: hotness × topic_boost × platform_weight
+        #    × title_hook_multiplier × engagement_intensity_multiplier
+        boost             = config.topic_boosts.get(category, 1.0)
+        platform_weight   = config.surface_weight_overrides.get(platform, 1.0)
+        title_multiplier  = _title_hook_multiplier(title_original)
+        engage_multiplier = _engagement_intensity_multiplier(engagement_signals)
+        effective_hotness = hotness * boost * platform_weight * title_multiplier * engage_multiplier
+
         candidate = NormalizedCandidate(
             candidate_id         = url,   # URL is the stable unique key
             url                  = url,
@@ -383,7 +478,7 @@ def stage1_normalize(
             freshness            = freshness,
             eligible_format_ids  = frozenset(),  # filled in Step 4
             crawler_item_id      = int(row.get('id') or 0),
-            title_original       = row.get('title_original') or '',
+            title_original       = title_original,
             canonical_title      = row.get('canonical_title') or None,
             description_original = row.get('description_original') or None,
             region_key           = region_key,

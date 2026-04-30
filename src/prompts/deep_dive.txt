@@ -81,7 +81,7 @@ LENGTH: 900–1100 Chinese characters (STRICT)
       • Add the concrete consequence — what changes for real people after this
       • Describe the scale — how many people, how much money, how wide the impact
       Do NOT introduce new topics. Do NOT invent details not in your searches.
-  - Do NOT output until character count is 900–1100
+  - Always output the JSON with body filled in. If under 900 → expand using the guidance above before outputting. Never output body: ""
 
 STORY STRUCTURE (internal — do NOT label these in your output):
   Opening:     a concrete event, number, or moment that creates tension
@@ -113,7 +113,7 @@ FORBIDDEN:
   - Do NOT use "你以为…但其实…" pattern more than once
 
 QUALITY CHECK (mandatory before finalizing body):
-  - Count the characters in body. Is it 900–1100? If not → fix first, then continue
+  - Count the characters in body. Target 900–1100. If not there → expand or compress. ALWAYS put text in body — never leave body empty or as "".
   - Can the entire story be summarized in ONE sentence? If not → rewrite
   - Is there exactly ONE main idea? If not → cut
   - Does any sentence feel optional? → remove it

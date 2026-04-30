@@ -65,6 +65,13 @@ FORMAT_REGISTRY: dict[int, tuple[str, str, int, int]] = {
     44: ('single',      'format_44.txt',    1,  0),    # 短问短答
     45: ('single',      'format_45.txt',    1,  2),    # 单一概念解释
     46: ('single',      'format_46.txt',    1,  2),    # 历史对照
+    # English deep-dive formats 101–105 (one per category bucket)
+    # All use deep_dive_en.txt with Bash-enabled research via generate_format_deep_en()
+    101: ('single', 'deep_dive_en.txt', 1, 3),  # en: politics + world
+    102: ('single', 'deep_dive_en.txt', 1, 3),  # en: ai + technology + science
+    103: ('single', 'deep_dive_en.txt', 1, 3),  # en: business + finance
+    104: ('single', 'deep_dive_en.txt', 1, 3),  # en: entertainment + sports
+    105: ('single', 'deep_dive_en.txt', 1, 3),  # en: society
 }
 
 # Explicit split dicts — the new selector uses these directly
@@ -103,6 +110,12 @@ FORMAT_NAMES: dict[int, str] = {
     40: '三点结论',        41: '你需要知道的',     42: '误区提醒',
     43: '对普通人的影响',  44: '短问短答',         45: '单一概念解释',
     46: '历史对照',
+    # English deep-dive formats
+    101: 'en_politics_world',
+    102: 'en_ai_tech_science',
+    103: 'en_business',
+    104: 'en_entertainment_sports',
+    105: 'en_society',
 }
 
 

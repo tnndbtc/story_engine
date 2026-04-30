@@ -71,21 +71,21 @@
     },
 
     "category_mix": {
-      "politics":      0.25,
-      "society":       0.20,
+      "politics":      0.12,
+      "society":       0.12,
       "entertainment": 0.12,
-      "technology":    0.10,
-      "business":      0.10,
-      "sports":        0.08,
-      "ai":            0.07,
-      "science":       0.05,
-      "world":         0.03
+      "technology":    0.11,
+      "business":      0.11,
+      "sports":        0.11,
+      "ai":            0.11,
+      "science":       0.10,
+      "world":         0.10
     },
 
     "category_policy": {
       "unknown_category_target": 0.0,
       "unknown_category_dominance_threshold": 0.10,
-      "dominance_multiplier": 1.5,
+      "dominance_multiplier": 3.0,
       "enforcement_mode": "soft_target",
       "selection_behavior": "deprioritize_when_over_target"
     }
@@ -125,15 +125,15 @@
     "null_hotness_value": 0.0,
 
     "topic_boosts": {
-      "ai":            1.20,
-      "technology":    1.15,
-      "science":       1.10,
+      "ai":            1.15,
+      "society":       1.12,
+      "politics":      1.10,
+      "technology":    1.08,
+      "entertainment": 1.05,
       "business":      1.05,
-      "world":         1.00,
-      "politics":      1.00,
-      "society":       1.00,
-      "sports":        0.95,
-      "entertainment": 0.90
+      "science":       1.03,
+      "sports":        1.00,
+      "world":         1.00
     },
 
     "platform_weight_overrides": {
@@ -218,7 +218,12 @@
         "secondary": "general_mix_if_primary_insufficient",
         "secondary_is_relaxation": false
       }
-    }
+    },
+    "101": { "excluded_categories": ["ai","technology","science","business","entertainment","sports","society"] },
+    "102": { "excluded_categories": ["politics","world","business","entertainment","sports","society"] },
+    "103": { "excluded_categories": ["politics","world","ai","technology","science","entertainment","sports","society"] },
+    "104": { "excluded_categories": ["politics","world","ai","technology","science","business","society"] },
+    "105": { "excluded_categories": ["politics","world","ai","technology","science","business","entertainment","sports"] }
   },
 
   "format_defaults": {

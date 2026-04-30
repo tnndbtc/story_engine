@@ -37,6 +37,7 @@ from engine.generator import (
     generate_deep_dive,
     generate_niche,
     generate_by_format,
+    generate_format_deep_en,
     generate_story_batch,
 )
 from engine.selector.story_orchestrate import story_orchestrate
@@ -313,6 +314,15 @@ def main():
             try:
                 if format_id <= 9:
                     story_id = _dispatch_legacy(
+                        format_id, item_dicts,
+                        lang=args.lang, channel=args.channel,
+                        batch_id=set_id, batch_ts=batch_ts,
+                    )
+                elif format_id >= 100:
+                    # English deep-dive formats (101–105): Bash-enabled research via
+                    # generate_format_deep_en(); uses deep_dive_en.txt with {topic},
+                    # {seed_urls}, {serper_key} — not compatible with generate_by_format().
+                    story_id = generate_format_deep_en(
                         format_id, item_dicts,
                         lang=args.lang, channel=args.channel,
                         batch_id=set_id, batch_ts=batch_ts,

@@ -166,24 +166,39 @@ def _save_story_and_remember(
     return story_id
 
 
-def _call_claude(prompt: str) -> str:
+def _call_claude(prompt: str, lang: str = 'zh') -> str:
     """
     Call Claude CLI and return the raw response text.
 
     Uses `claude -p` (pipe mode) which reads from stdin.
     No API key needed — uses the local Claude Code installation.
+
+    Args:
+        lang: 'zh' (default) or 'en'. Controls whether the Chinese quotation
+              mark rule is appended. English output uses plain ASCII quotes.
     """
-    # Append conciseness, formatting, and JSON enforcement reminders
-    prompt = prompt.rstrip() + (
+    # Append conciseness and JSON enforcement reminders
+    suffix = (
         "\n\nIMPORTANT: Keep your TOTAL JSON response under 500 words. Be concise. Every bullet should be 1-2 sentences max."
-        "\n\nCRITICAL JSON RULE: Inside JSON string values, NEVER use ASCII double quotes (\"). "
-        "Use Chinese quotation marks \u300c\u300d or \u201c\u201d instead. "
-        "ASCII double quotes inside strings will break the JSON parser."
-        "\n\nYOU MUST RETURN VALID JSON ONLY. Do not ask questions. Do not explain. "
-        "Do not add any text outside the JSON object. Your response must start with { "
-        "and end with }. If you cannot generate the story, return: "
-        "{\"hook\": \"\", \"bullets\": [], \"twist\": \"\"}"
     )
+    if lang == 'zh':
+        suffix += (
+            "\n\nCRITICAL JSON RULE: Inside JSON string values, NEVER use ASCII double quotes (\"). "
+            "Use Chinese quotation marks \u300c\u300d or \u201c\u201d instead. "
+            "ASCII double quotes inside strings will break the JSON parser."
+            "\n\nYOU MUST RETURN VALID JSON ONLY. Do not ask questions. Do not explain. "
+            "Do not add any text outside the JSON object. Your response must start with { "
+            "and end with }. If you cannot generate the story, return: "
+            "{\"hook\": \"\", \"bullets\": [], \"twist\": \"\"}"
+        )
+    else:
+        suffix += (
+            "\n\nYOU MUST RETURN VALID JSON ONLY. Do not ask questions. Do not explain. "
+            "Do not add any text outside the JSON object. Your response must start with { "
+            "and end with }. If you cannot generate the story, return: "
+            "{\"title\": \"\", \"body\": \"\", \"sources\": []}"
+        )
+    prompt = prompt.rstrip() + suffix
 
     # 2026-04-14: strip Claude Code harness overhead on every subprocess.
     # See crawler topic_llm_classifier.py (commit 7163c925) for full
@@ -262,8 +277,14 @@ def _parse_json_response(text: str) -> dict:
         else:
             _i += 1
     if _found_objects:
-        # Return the last object — that is the agent's final output
-        return _found_objects[-1]
+        # Prefer objects that look like story output (have 'body' key).
+        # Reject bare source dicts {"url":..., "title":...} which raw_decode
+        # picks up when the outer story JSON has unescaped quotes.
+        story_objects = [o for o in _found_objects if 'body' in o]
+        if story_objects:
+            return story_objects[-1]
+        # No story object found — fall through to the fallback regex path
+        # rather than returning a useless source dict.
 
     # Fallback: find JSON object in the response (between first { and last })
     start = cleaned.find('{')
@@ -1463,9 +1484,17 @@ def generate_deep_story(
     # Parse the JSON output from the agent
     try:
         parsed = _parse_json_response(raw)
-    except ValueError:
+        # Treat empty body as a parse failure — the agent wrote content (raw is
+        # non-empty) but parsing returned no body, usually because unescaped
+        # quotes in the JSON caused raw_decode to return a source dict instead
+        # of the story object.  The retry gives a plain Claude call a chance to
+        # extract the body from the raw text.
+        if not parsed.get('body', '').strip():
+            raise ValueError("parsed JSON has empty body")
+    except ValueError as _parse_err:
         logger.warning(
-            "generate_deep_story: JSON parse failed on first attempt — retrying"
+            "generate_deep_story: JSON parse failed on first attempt (%s) — retrying",
+            _parse_err,
         )
         # Append stricter instruction and run a plain (no-Bash) retry
         retry_prompt = (
@@ -1502,6 +1531,14 @@ def generate_deep_story(
         cluster.event_id, char_count, token_estimate,
         len(all_sources), len(crawler_sources), len(searched_sources),
     )
+    if char_count == 0:
+        logger.warning(
+            "generate_deep_story: body is EMPTY — raw Claude output follows (%d chars):",
+            len(raw),
+        )
+        logger.warning("=== EMPTY BODY RAW OUTPUT START ===")
+        logger.warning("%s", raw)
+        logger.warning("=== EMPTY BODY RAW OUTPUT END ===")
 
     return {
         'title':            parsed.get('title', topic_title),
@@ -1516,6 +1553,148 @@ def generate_deep_story(
         'sources':          all_sources,
         'token_estimate':   token_estimate,
     }
+
+
+def generate_format_deep_en(
+    format_id: int,
+    items: list[dict],
+    lang: str = 'en',
+    channel: int = 1,
+    batch_id: int | None = None,
+    batch_ts: int | None = None,
+) -> int:
+    """
+    Generate an English deep-dive story for formats 101–105.
+
+    Uses _call_claude_agent_deep() (Bash tool enabled) with deep_dive_en.txt.
+    Template variables match generate_deep_story(): {topic}, {seed_urls}, {serper_key}.
+    Output JSON: {title, body, sources}.
+
+    Saves body to the 'hook' column in the stories table — the existing
+    compatibility pattern: get_stories_by_set() reads
+    `ds.get('body') or ds.get('hook', '')` (models.py), so the full narrative
+    is displayed correctly in trend_ui without any DB schema change.
+
+    Returns the story_id.
+    """
+    from engine.format_registry import FORMAT_NAMES
+
+    if not items:
+        raise ValueError(f"generate_format_deep_en: no items provided for format {format_id}")
+
+    format_name = FORMAT_NAMES.get(format_id, f'format_{format_id}')
+    format_key = f'format_{format_id}'
+
+    # Build topic and seed URLs from items
+    primary = items[0]
+    topic_title = (
+        primary.get('canonical_title')
+        or primary.get('title_original')
+        or primary.get('title', 'unknown topic')
+    )
+
+    seen_urls: set[str] = set()
+    seed_urls: list[str] = []
+    for item in items:
+        url = item.get('url', '')
+        if url and url not in seen_urls:
+            seen_urls.add(url)
+            seed_urls.append(url)
+        if len(seed_urls) >= 10:
+            break
+
+    seed_block = '\n'.join(f'  - {u}' for u in seed_urls) if seed_urls else '  (none provided)'
+    serper_key = os.environ.get('SERPER_API_KEY', '')
+
+    template_path = PROMPTS_DIR / 'deep_dive_en.txt'
+    if not template_path.exists():
+        raise FileNotFoundError(f"Prompt template not found: {template_path}")
+
+    template = template_path.read_text()
+    prompt = template.format(
+        topic=topic_title,
+        seed_urls=seed_block,
+        serper_key=serper_key,
+    )
+
+    logger.info(
+        "generate_format_deep_en: launching claude -p --tools Bash "
+        "for format %d (%s), topic=%r, seed_urls=%d",
+        format_id, format_name, topic_title[:60], len(seed_urls),
+    )
+
+    raw, token_estimate = _call_claude_agent_deep(prompt)
+
+    # Parse the JSON output — retry once on failure
+    try:
+        parsed = _parse_json_response(raw)
+        if not parsed.get('body', '').strip():
+            raise ValueError("parsed JSON has empty body")
+    except ValueError as _parse_err:
+        logger.warning(
+            "generate_format_deep_en: JSON parse failed (%s) — retrying",
+            _parse_err,
+        )
+        retry_prompt = (
+            "The following text must be parsed as JSON but failed. "
+            "Extract the title, body, and sources and return ONLY valid JSON "
+            "starting with { and ending with }.\n\n" + raw
+        )
+        retry_raw = _call_claude(retry_prompt, lang='en')
+        parsed = _parse_json_response(retry_raw)
+
+    body = parsed.get('body', '')
+    title = parsed.get('title', topic_title)
+
+    # Build source list: crawler items + any additional sources Claude found
+    sources = [_format_source(item) for item in items]
+    existing_urls: set[str] = {s['url'] for s in sources}
+    for src in parsed.get('sources', []):
+        url = (src.get('url') or '').strip()
+        if url and url not in existing_urls:
+            existing_urls.add(url)
+            sources.append({
+                'url':      url,
+                'title':    src.get('title', ''),
+                'platform': 'web',
+                'hotness':  0.0,
+            })
+
+    char_count = len(body)
+    logger.info(
+        "generate_format_deep_en: done — format=%d body=%d chars token_estimate=%d sources=%d",
+        format_id, char_count, token_estimate, len(sources),
+    )
+    if char_count == 0:
+        logger.warning("generate_format_deep_en: body is EMPTY for format %d", format_id)
+
+    try:
+        story_id = _save_story_and_remember(
+            title=title,
+            format=format_key,
+            channel=channel,
+            lang=lang,
+            hook=body,       # body stored in hook column — display compat pattern
+            bullets=[],
+            twist='',
+            sources=sources,
+            batch_id=batch_id,
+            batch_ts=batch_ts,
+            embedding_center=items[0].get('embedding_center') if len(items) == 1 else None,
+            topic_clusters=_build_topic_clusters(items),
+        )
+        logger.info(
+            "generate_format_deep_en: saved story #%d — %s", story_id, title[:60]
+        )
+        return story_id
+
+    except Exception as e:
+        logger.error("generate_format_deep_en: save failed — %s", e)
+        save_failed_story(
+            title=title or format_name, format=format_key, lang=lang,
+            error=str(e), batch_id=batch_id, batch_ts=batch_ts,
+        )
+        raise
 
 
 def generate_supporting_stories(

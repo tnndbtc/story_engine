@@ -428,7 +428,11 @@ def get_platform_counts_for_set(story_set_id: int) -> dict[str, int]:
     return {row['platform']: row['cnt'] for row in rows}
 
 
-def get_story_sets(limit: int = 20, profile_id: str | None = None) -> list[dict]:
+def get_story_sets(
+    limit: int = 20,
+    profile_id: str | None = None,
+    lang: str | None = None,
+) -> list[dict]:
     """
     Get story sets with story counts (ready only).
 
@@ -437,37 +441,38 @@ def get_story_sets(limit: int = 20, profile_id: str | None = None) -> list[dict]
         profile_id: Optional filter — if provided, only return sets whose
                     profile_id matches exactly. Used by trend_ui channel tabs.
                     Pass None (default) to get all sets regardless of profile.
+        lang:       Optional filter — 'en' or 'zh'. Filters by story_sets.lang.
+                    Pass None (default) to return sets of any language.
     """
     conn = get_connection()
+
+    # Build WHERE clause dynamically based on filters
+    conditions = []
+    params: list = []
     if profile_id is not None:
-        rows = conn.execute(
-            """SELECT ss.*,
-                  COUNT(CASE WHEN s.status = 'ready' THEN 1 END) as story_count,
-                  COUNT(DISTINCT CASE WHEN hs.status = 'ready' THEN hs.id END) as hier_count
-               FROM story_sets ss
-               LEFT JOIN stories s ON s.batch_id = ss.id
-               LEFT JOIN hierarchical_stories hs ON hs.story_set_id = ss.id
-               WHERE ss.profile_id = ?
-               GROUP BY ss.id
-               HAVING story_count > 0 OR hier_count > 0
-               ORDER BY ss.id DESC
-               LIMIT ?""",
-            (profile_id, limit)
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            """SELECT ss.*,
-                  COUNT(CASE WHEN s.status = 'ready' THEN 1 END) as story_count,
-                  COUNT(DISTINCT CASE WHEN hs.status = 'ready' THEN hs.id END) as hier_count
-               FROM story_sets ss
-               LEFT JOIN stories s ON s.batch_id = ss.id
-               LEFT JOIN hierarchical_stories hs ON hs.story_set_id = ss.id
-               GROUP BY ss.id
-               HAVING story_count > 0 OR hier_count > 0
-               ORDER BY ss.id DESC
-               LIMIT ?""",
-            (limit,)
-        ).fetchall()
+        conditions.append('ss.profile_id = ?')
+        params.append(profile_id)
+    if lang is not None:
+        conditions.append('ss.lang = ?')
+        params.append(lang)
+
+    where_clause = ('WHERE ' + ' AND '.join(conditions)) if conditions else ''
+    params.append(limit)
+
+    rows = conn.execute(
+        f"""SELECT ss.*,
+              COUNT(CASE WHEN s.status = 'ready' THEN 1 END) as story_count,
+              COUNT(DISTINCT CASE WHEN hs.status = 'ready' THEN hs.id END) as hier_count
+           FROM story_sets ss
+           LEFT JOIN stories s ON s.batch_id = ss.id
+           LEFT JOIN hierarchical_stories hs ON hs.story_set_id = ss.id
+           {where_clause}
+           GROUP BY ss.id
+           HAVING story_count > 0 OR hier_count > 0
+           ORDER BY ss.id DESC
+           LIMIT ?""",
+        params
+    ).fetchall()
     conn.close()
     result = []
     for r in rows:
