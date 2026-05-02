@@ -245,29 +245,51 @@ else
             fi
             echo "  Background: $BG_PATH"
 
-            # Patch config: copy base to /tmp, set background + active voice.
+            # Patch config: copy base to /tmp, set locale + background + active voice.
             # Voice alternates by story_set_id parity:
-            #   odd  → Xiaoxiao DragonHD (female)
-            #   even → Yunyang Customerservice (male)
+            #   zh odd  → Xiaoxiao DragonHD (female) / zh even → Yunyang Customerservice (male)
+            #   en odd  → Aria Narration (female)    / en even → Guy Newscast (male)
+            # The opposite-language narrator block is removed so the validator
+            # does not require an enabled voice for the unused locale.
             TMP_CONFIG="/tmp/simple_narration_${CATEGORY}.config.json"
             cp "$BASE_CONFIG" "$TMP_CONFIG"
             python3 -c "
 import json
 cfg = json.load(open('$TMP_CONFIG'))
 cfg['background'] = '$BG_PATH'
-voices = cfg['narrator']['zh-Hans']
 use_female = ($STORY_SET_ID % 2 == 1)
-for name, v in voices.items():
-    if name == 'Xiaoxiao DragonHD':       v['enabled'] = use_female
-    elif name == 'Yunyang Customerservice': v['enabled'] = not use_female
-    else:                                   v['enabled'] = False
+lang = '$LANG_ARG'
+if lang == 'en':
+    cfg['locale'] = 'en-US'
+    voices = cfg['narrator'].get('en-US', {})
+    for name, v in voices.items():
+        if name == 'Aria Narration':  v['enabled'] = use_female
+        elif name == 'Guy Newscast':  v['enabled'] = not use_female
+        else:                          v['enabled'] = False
+    cfg['narrator'].pop('zh-Hans', None)
+else:
+    cfg['locale'] = 'zh-Hans'
+    voices = cfg['narrator'].get('zh-Hans', {})
+    for name, v in voices.items():
+        if name == 'Xiaoxiao DragonHD':         v['enabled'] = use_female
+        elif name == 'Yunyang Customerservice':  v['enabled'] = not use_female
+        else:                                     v['enabled'] = False
+    cfg['narrator'].pop('en-US', None)
 json.dump(cfg, open('$TMP_CONFIG', 'w'), indent=2, ensure_ascii=False)
 "
             echo "  Config:     $TMP_CONFIG"
-            if [ $(( STORY_SET_ID % 2 )) -eq 1 ]; then
-                echo "  Voice:      Xiaoxiao DragonHD (female)"
+            if [ "$LANG_ARG" = "en" ]; then
+                if [ $(( STORY_SET_ID % 2 )) -eq 1 ]; then
+                    echo "  Voice:      Aria Narration (female)"
+                else
+                    echo "  Voice:      Guy Newscast (male)"
+                fi
             else
-                echo "  Voice:      Yunyang Customerservice (male)"
+                if [ $(( STORY_SET_ID % 2 )) -eq 1 ]; then
+                    echo "  Voice:      Xiaoxiao DragonHD (female)"
+                else
+                    echo "  Voice:      Yunyang Customerservice (male)"
+                fi
             fi
 
             echo ""

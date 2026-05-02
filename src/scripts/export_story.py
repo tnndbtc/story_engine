@@ -51,6 +51,90 @@ def strip_md(text: str) -> str:
     return text.strip()
 
 
+_ZH_SPLIT_PUNCT = '，。？！；：'
+_ZH_TARGET_CHARS = 50     # target chars per Chinese TTS clip
+_ZH_MIN_FLUSH    = 20     # don't flush a buffer shorter than this (avoids tiny leading fragments)
+_EN_TARGET_WORDS = 30     # target words per English TTS clip
+
+
+def _split_zh(text: str, target: int = _ZH_TARGET_CHARS) -> list[str]:
+    """
+    Split Chinese text at punctuation boundaries into clips of ~target chars.
+    Greedy merge: keep accumulating fragments until the next would push the
+    buffer past target AND the buffer is already long enough to stand alone
+    (>= _ZH_MIN_FLUSH chars).  This avoids emitting tiny date/time fragments
+    like '4月29日，' as standalone clips.  Single fragments already longer
+    than target are emitted as-is rather than breaking mid-phrase.
+    """
+    split_pts = [i + 1 for i, ch in enumerate(text) if ch in _ZH_SPLIT_PUNCT]
+    prev, pieces = 0, []
+    for p in split_pts:
+        piece = text[prev:p].strip()
+        if piece:
+            pieces.append(piece)
+        prev = p
+    tail = text[prev:].strip()
+    if tail:
+        pieces.append(tail)
+    if not pieces:
+        return [text.strip()] if text.strip() else []
+
+    clips, buf = [], ''
+    for piece in pieces:
+        if not buf:
+            buf = piece
+        elif len(buf) + len(piece) <= target:
+            buf += piece          # Chinese: no space between pieces
+        elif len(buf) < _ZH_MIN_FLUSH:
+            buf += piece          # buffer too short to stand alone — absorb anyway
+        else:
+            clips.append(buf)
+            buf = piece
+    if buf:
+        clips.append(buf)
+    return [c for c in clips if c.strip()]
+
+
+def _split_en(text: str, target_words: int = _EN_TARGET_WORDS) -> list[str]:
+    """
+    Split English text at sentence boundaries into clips of ~target_words words.
+    Greedily merges sentences; flushes when the next sentence would push the
+    clip over the target.  A single sentence longer than target is emitted
+    as-is to preserve natural speech rhythm for TTS.
+    """
+    sentences = re.split(r'(?<=[.!?])\s+', text.strip())
+    sentences = [s.strip() for s in sentences if s.strip()]
+    if not sentences:
+        return [text.strip()] if text.strip() else []
+
+    clips, buf_words = [], []
+    for sentence in sentences:
+        words = sentence.split()
+        if not words:
+            continue
+        if not buf_words:
+            buf_words = words
+        elif len(buf_words) + len(words) <= target_words:
+            buf_words.extend(words)
+        else:
+            clips.append(' '.join(buf_words))
+            buf_words = words
+    if buf_words:
+        clips.append(' '.join(buf_words))
+    return [c for c in clips if c.strip()]
+
+
+def _split_clips(text: str, lang: str) -> list[str]:
+    """
+    Split a paragraph into short TTS clips.
+    Chinese (lang='zh'): ~50 chars per clip, split at Chinese punctuation.
+    English (any other lang): ~30 words per clip, split at sentence boundaries.
+    """
+    if not text or not text.strip():
+        return []
+    return _split_zh(text) if lang == 'zh' else _split_en(text)
+
+
 def outlet_from_title(src_title: str) -> str:
     """Extract outlet name from 'Headline - OutletName' pattern."""
     parts = src_title.rsplit(" - ", 1)
@@ -143,10 +227,18 @@ def export_stories(db_path: str, export_dir: str,
 
         items = [f"## {strip_md(title)}"]
         if body:
-            # New format: single continuous narrative
-            clean = strip_md(body)
-            if clean:
-                items.append(clean)
+            # Split body into paragraphs first (\n\n-separated), then each paragraph
+            # into short TTS clips (~50 chars for Chinese, ~30 words for English).
+            # This lets one bad clip be re-generated without re-doing the whole story.
+            paragraphs = [p.strip() for p in body.split('\n\n') if p.strip()]
+            if not paragraphs:
+                paragraphs = [p.strip() for p in body.split('\n') if p.strip()]
+            if not paragraphs:
+                paragraphs = [body.strip()] if body.strip() else []
+            for para in paragraphs:
+                clean = strip_md(para)
+                for clip in _split_clips(clean, lang):
+                    items.append(clip)
         else:
             # Legacy format: hook + bullets + twist
             for raw in [hook] + [str(b) for b in bullets] + [twist]:

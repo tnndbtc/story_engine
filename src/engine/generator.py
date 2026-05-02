@@ -1425,7 +1425,7 @@ def generate_deep_story(
     The agent:
       1. Receives the topic + crawler seed URLs
       2. Iteratively searches Serper via Bash tool (6+ queries)
-      3. Writes a 900–1100 Chinese character spoken narrative
+      3. Writes a spoken narrative in the target language (en: 700–900 words; zh: 900–1100 chars)
       4. Returns JSON: {title, body, sources}
 
     sources in the returned dict merges:
@@ -1466,7 +1466,8 @@ def generate_deep_story(
         or 'unknown topic'
     )
 
-    template = (PROMPTS_DIR / 'deep_dive.txt').read_text()
+    template_name = 'deep_dive_en.txt' if lang == 'en' else 'deep_dive.txt'
+    template = (PROMPTS_DIR / template_name).read_text()
     prompt = template.format(
         topic=topic_title,
         seed_urls=seed_block,

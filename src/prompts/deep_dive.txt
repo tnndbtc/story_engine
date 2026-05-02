@@ -129,7 +129,7 @@ Start with {{ and end with }}. No text before or after.
 
 {{
   "title": "吸引人的标题，最多25字",
-  "body": "完整叙事，900-1100汉字，纯文字，连续段落，无标签，无分节符",
+  "body": "完整叙事，900-1100汉字，纯文字。分成4-6个自然段落，段落之间用\\n\\n分隔。无标签，无分节符，无列表。",
   "sources": [
     {{"url": "https://example.com/article", "title": "文章标题"}},
     {{"url": "https://...", "title": "..."}}

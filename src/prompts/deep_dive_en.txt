@@ -159,7 +159,7 @@ Start with {{ and end with }}. No text before or after.
 
 {{
   "title": "Engaging title, max 12 words, creates curiosity gap",
-  "body": "Full narrative, 700-900 words, plain prose, continuous paragraphs, no labels, no section markers",
+  "body": "Full narrative, 700-900 words, plain prose. Split into 4-6 natural paragraphs separated by \\n\\n. No labels, no section markers, no bullet points.",
   "sources": [
     {{"url": "https://example.com/article", "title": "Article title"}},
     {{"url": "https://...", "title": "..."}}
