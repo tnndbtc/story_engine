@@ -1,0 +1,63 @@
+{
+  "profile_id": "run3_world",
+  "extends": "story_mix.json",
+  "_notes": [
+    "07:00 run — Politics channel, English output.",
+    "",
+    "category_mix and topic_boosts identical to config/zh/story_mix_run3_world.json.",
+    "platform_weight_overrides differ: English news sources elevated,",
+    "Chinese-language platforms suppressed.",
+    "",
+    "Key differences from zh variant:",
+    "  - youtube raised 0.10 → 0.60 (English political news channels)",
+    "  - reddit added 1.20 (political discussion communities)",
+    "  - weibo/baidu dropped 0.40 → 0.10 (Chinese-language content)",
+    "  - bbc/guardian/reuters/aljazeera unchanged (already English sources)"
+  ],
+
+  "soft_targets": {
+    "category_mix": {
+      "politics":      1.00,
+      "society":       0.00,
+      "world":         0.00,
+      "entertainment": 0.00,
+      "business":      0.00,
+      "sports":        0.00,
+      "technology":    0.00,
+      "ai":            0.00,
+      "science":       0.00
+    }
+  },
+
+  "ranking": {
+    "topic_boosts": {
+      "politics":      3.00,
+      "world":         0.05,
+      "society":       0.05,
+      "business":      0.05,
+      "entertainment": 0.05,
+      "sports":        0.05,
+      "technology":    0.05,
+      "ai":            0.05,
+      "science":       0.05
+    },
+    "platform_weight_overrides": {
+      "bilibili":      0.10,
+      "youtube":       0.60,
+      "nicovideo":     0.10,
+      "news_rss":      1.50,
+      "bbc":           1.50,
+      "guardian":      1.50,
+      "reuters":       1.50,
+      "aljazeera":     1.50,
+      "reddit":        1.20,
+      "weibo":         0.10,
+      "baidu":         0.10,
+      "google_trends": 0.30,
+      "hackernews":    0.30,
+      "devto":         0.10,
+      "lobsters":      0.10,
+      "stackoverflow": 0.10
+    }
+  }
+}

@@ -1,0 +1,60 @@
+{
+  "profile_id": "run4_business",
+  "extends": "story_mix.json",
+  "_notes": [
+    "23:00 run — Business / Finance channel, English output.",
+    "",
+    "category_mix and topic_boosts identical to config/zh/story_mix_run4_business.json.",
+    "platform_weight_overrides differ: English financial sources elevated,",
+    "Chinese-language platforms suppressed.",
+    "",
+    "Key differences from zh variant:",
+    "  - youtube raised 0.10 → 0.60 (English financial/economics channels)",
+    "  - reddit added 1.20 (r/finance, r/economics, r/investing)",
+    "  - weibo/baidu dropped 0.30 → 0.10 (Chinese-language content)",
+    "  - news_rss raised 1.30 → 1.50 (English financial RSS feeds)"
+  ],
+
+  "soft_targets": {
+    "category_mix": {
+      "business":      1.00,
+      "politics":      0.00,
+      "society":       0.00,
+      "technology":    0.00,
+      "ai":            0.00,
+      "science":       0.00,
+      "entertainment": 0.00,
+      "sports":        0.00,
+      "world":         0.00
+    }
+  },
+
+  "ranking": {
+    "topic_boosts": {
+      "business":      3.00,
+      "technology":    0.05,
+      "ai":            0.05,
+      "science":       0.05,
+      "politics":      0.05,
+      "society":       0.05,
+      "world":         0.05,
+      "sports":        0.05,
+      "entertainment": 0.05
+    },
+    "platform_weight_overrides": {
+      "bilibili":      0.10,
+      "youtube":       0.60,
+      "nicovideo":     0.10,
+      "hackernews":    1.80,
+      "news_rss":      1.50,
+      "bbc":           1.20,
+      "guardian":      1.20,
+      "reuters":       1.50,
+      "reddit":        1.20,
+      "weibo":         0.10,
+      "baidu":         0.10,
+      "google_trends": 0.20,
+      "wikipedia":     0.50
+    }
+  }
+}

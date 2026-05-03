@@ -120,6 +120,33 @@ CREATE TABLE IF NOT EXISTS hierarchical_stories (
 CREATE INDEX IF NOT EXISTS idx_hierarchical_stories_batch_ts ON hierarchical_stories(batch_ts);
 CREATE INDEX IF NOT EXISTS idx_hierarchical_stories_status   ON hierarchical_stories(status);
 CREATE INDEX IF NOT EXISTS idx_hierarchical_stories_set_id   ON hierarchical_stories(story_set_id);
+
+CREATE TABLE IF NOT EXISTS youtube_publish_log (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    video_id            TEXT    NOT NULL UNIQUE,
+    story_set_id        INTEGER REFERENCES story_sets(id),
+    story_id            INTEGER REFERENCES stories(id),
+    channel_id          TEXT    NOT NULL,   -- YouTube channel ID (UCxxx)
+    upload_profile      TEXT    NOT NULL,   -- 'en' or 'zh' (key in youtube_profiles.json)
+    lang                TEXT    NOT NULL,   -- 'en' or 'zh' (matches stories.lang)
+    locale              TEXT    NOT NULL,   -- 'en-US' or 'zh-Hans' (render locale)
+    published_at        INTEGER,            -- UNIX epoch SECONDS; NULL until published
+    ctr_pct             REAL,               -- impressionClickThroughRate (%)
+    avg_view_duration   REAL,               -- averageViewDuration (seconds)
+    avg_view_pct        REAL,               -- averageViewPercentage (%)
+    views               INTEGER,            -- raw view count at time of analytics pull
+    analytics_pulled_at INTEGER,            -- UNIX epoch seconds of last pull; -1 = no data (gave up)
+    created_at          INTEGER NOT NULL    -- UNIX epoch MILLISECONDS (matches _now() convention)
+);
+
+CREATE INDEX IF NOT EXISTS idx_yt_log_video_id
+    ON youtube_publish_log(video_id);
+CREATE INDEX IF NOT EXISTS idx_yt_log_story_set
+    ON youtube_publish_log(story_set_id);
+CREATE INDEX IF NOT EXISTS idx_yt_log_published_at
+    ON youtube_publish_log(published_at);
+CREATE INDEX IF NOT EXISTS idx_yt_log_analytics
+    ON youtube_publish_log(analytics_pulled_at);
 """
 
 
@@ -282,6 +309,35 @@ def init_db():
             ON hierarchical_stories(status);
         CREATE INDEX IF NOT EXISTS idx_hierarchical_stories_set_id
             ON hierarchical_stories(story_set_id);
+    """)
+
+    # Migration: create youtube_publish_log table if not present (2026-05-03 analytics feedback)
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS youtube_publish_log (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            video_id            TEXT    NOT NULL UNIQUE,
+            story_set_id        INTEGER REFERENCES story_sets(id),
+            story_id            INTEGER REFERENCES stories(id),
+            channel_id          TEXT    NOT NULL,
+            upload_profile      TEXT    NOT NULL,
+            lang                TEXT    NOT NULL,
+            locale              TEXT    NOT NULL,
+            published_at        INTEGER,
+            ctr_pct             REAL,
+            avg_view_duration   REAL,
+            avg_view_pct        REAL,
+            views               INTEGER,
+            analytics_pulled_at INTEGER,
+            created_at          INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_yt_log_video_id
+            ON youtube_publish_log(video_id);
+        CREATE INDEX IF NOT EXISTS idx_yt_log_story_set
+            ON youtube_publish_log(story_set_id);
+        CREATE INDEX IF NOT EXISTS idx_yt_log_published_at
+            ON youtube_publish_log(published_at);
+        CREATE INDEX IF NOT EXISTS idx_yt_log_analytics
+            ON youtube_publish_log(analytics_pulled_at);
     """)
 
     # Migration: convert text timestamps to UNIX integers
@@ -933,6 +989,92 @@ def log_purity_decision(
         conn.close()
     except Exception:
         pass  # never block clustering
+
+
+# ---------------------------------------------------------------------------
+# YouTube Analytics functions
+# ---------------------------------------------------------------------------
+
+def register_youtube_publish(
+    video_id:       str,
+    story_set_id:   int | None,
+    story_id:       int | None,
+    channel_id:     str,
+    upload_profile: str,
+    lang:           str,
+    locale:         str,
+    published_at:   int | None = None,
+) -> int:
+    """
+    Record a published YouTube video and its link to a story/story_set.
+    Returns the new youtube_publish_log row id (or 0 on INSERT OR IGNORE no-op).
+
+    Called by publish_episode.py immediately after the video goes public or is
+    confirmed scheduled. Must be called in ALL exit paths of publish_episode.py
+    — including the "already scheduled" and "already public" early returns.
+
+    Non-blocking contract: publish_episode.py wraps this in try/except and must
+    never abort if this write fails (the video is already live).
+
+    INSERT OR IGNORE: first write wins. If publish_episode.py is retried after
+    analytics have already been fetched, the existing row (with ctr_pct etc.)
+    is preserved unchanged. INSERT OR REPLACE must NOT be used — it deletes the
+    old row on conflict, wiping all analytics columns back to NULL.
+
+    Timestamp units:
+      created_at   — UNIX epoch MILLISECONDS (matches _now() convention)
+      published_at — UNIX epoch SECONDS      (arithmetic used in fetch_analytics.py)
+    """
+    now_ms  = int(time.time() * 1000)          # milliseconds — matches _now()
+    pub_sec = published_at or int(time.time()) # seconds — for 72h cutoff arithmetic
+    conn = get_connection()
+    cursor = conn.execute(
+        """INSERT OR IGNORE INTO youtube_publish_log
+           (video_id, story_set_id, story_id, channel_id, upload_profile,
+            lang, locale, published_at, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (video_id, story_set_id, story_id, channel_id, upload_profile,
+         lang, locale, pub_sec, now_ms),
+    )
+    row_id = cursor.lastrowid or 0
+    conn.commit()
+    conn.close()
+    return row_id
+
+
+def get_youtube_analytics(story_set_id: int) -> list[dict]:
+    """
+    Return all youtube_publish_log rows for a given story_set_id.
+
+    Used by the /api/analytics/story-set/{story_set_id} endpoint.
+    Returns list of dicts with published_at as ISO string for API display.
+    analytics_pulled_at == -1 means data was never available (gave up after 14d).
+    analytics_pulled_at == None means still pending (video < 72h old or retry pending).
+    """
+    conn = get_connection()
+    rows = conn.execute(
+        """SELECT id, video_id, story_set_id, story_id, channel_id,
+                  upload_profile, lang, locale, published_at,
+                  ctr_pct, avg_view_duration, avg_view_pct, views,
+                  analytics_pulled_at, created_at
+           FROM youtube_publish_log
+           WHERE story_set_id = ?
+           ORDER BY published_at ASC""",
+        (story_set_id,),
+    ).fetchall()
+    conn.close()
+    result = []
+    for r in rows:
+        d = dict(r)
+        d['published_at']       = _ts_to_iso(d.get('published_at'))
+        d['analytics_pulled_at'] = (
+            None if d['analytics_pulled_at'] is None
+            else 'no_data' if d['analytics_pulled_at'] == -1
+            else _ts_to_iso(d['analytics_pulled_at'])
+        )
+        d['created_at'] = _ts_to_iso(d.get('created_at'))
+        result.append(d)
+    return result
 
 
 def _row_to_dict(row: sqlite3.Row) -> dict:

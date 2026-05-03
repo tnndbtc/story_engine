@@ -1,0 +1,64 @@
+{
+  "profile_id": "run5_entertainment",
+  "extends": "story_mix.json",
+  "_notes": [
+    "11:00 run — Entertainment / Sports channel, English output.",
+    "",
+    "category_mix and topic_boosts identical to config/zh/story_mix_run5_entertainment.json.",
+    "platform_weight_overrides differ: English entertainment platforms elevated,",
+    "Chinese-language video/social platforms suppressed.",
+    "",
+    "Key differences from zh variant:",
+    "  - youtube kept at 1.50 (English YouTube dominates entertainment/sports)",
+    "  - reddit raised 1.20 → 1.80 (r/movies, r/sports, r/nba, r/soccer)",
+    "  - bilibili dropped 1.50 → 0.20 (Chinese entertainment, not relevant for EN)",
+    "  - nicovideo dropped 1.20 → 0.10 (Japanese content)",
+    "  - weibo dropped 1.00 → 0.10 (Chinese social)",
+    "  - baidu dropped 0.50 → 0.10 (Chinese search)",
+    "  - news_rss raised 0.80 → 1.10 (English entertainment/sports news)"
+  ],
+
+  "soft_targets": {
+    "category_mix": {
+      "entertainment": 0.60,
+      "sports":        0.40,
+      "politics":      0.00,
+      "society":       0.00,
+      "world":         0.00,
+      "business":      0.00,
+      "technology":    0.00,
+      "ai":            0.00,
+      "science":       0.00
+    }
+  },
+
+  "ranking": {
+    "topic_boosts": {
+      "entertainment": 3.00,
+      "sports":        2.50,
+      "society":       0.10,
+      "world":         0.10,
+      "politics":      0.05,
+      "business":      0.05,
+      "technology":    0.05,
+      "ai":            0.05,
+      "science":       0.05
+    },
+    "platform_weight_overrides": {
+      "bilibili":       0.20,
+      "youtube":        1.50,
+      "nicovideo":      0.10,
+      "reddit":         1.80,
+      "weibo":          0.10,
+      "baidu":          0.10,
+      "news_rss":       1.10,
+      "google_trends":  0.50,
+      "hackernews":     0.05,
+      "devto":          0.05,
+      "lobsters":       0.05,
+      "stackoverflow":  0.05,
+      "paperswithcode": 0.05,
+      "arxiv_ai_rss":   0.05
+    }
+  }
+}

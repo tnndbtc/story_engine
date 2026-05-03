@@ -1,0 +1,62 @@
+{
+  "profile_id": "run2_ai",
+  "extends": "story_mix.json",
+  "_notes": [
+    "15:00 run — AI / Tech / Science channel, English output.",
+    "",
+    "category_mix and topic_boosts identical to config/zh/story_mix_run2_ai.json.",
+    "platform_weight_overrides differ: English-language sources elevated,",
+    "Chinese-language platforms further suppressed.",
+    "",
+    "Key differences from zh variant:",
+    "  - youtube raised 0.10 → 0.80 (English tech/science channels are signal)",
+    "  - reddit added 1.50 (strong EN tech discussion: r/MachineLearning, r/programming)",
+    "  - weibo/baidu dropped 0.30 → 0.10 (Chinese-language content)",
+    "  - news_rss raised 0.70 → 1.00 (English RSS feeds)"
+  ],
+
+  "soft_targets": {
+    "category_mix": {
+      "politics":      0.30,
+      "society":       0.30,
+      "technology":    0.14,
+      "business":      0.13,
+      "ai":            0.07,
+      "science":       0.06,
+      "entertainment": 0.00,
+      "sports":        0.00,
+      "world":         0.00
+    }
+  },
+
+  "ranking": {
+    "topic_boosts": {
+      "ai":            3.00,
+      "technology":    2.50,
+      "science":       2.00,
+      "business":      1.50,
+      "society":       0.60,
+      "politics":      0.50,
+      "world":         0.40,
+      "sports":        0.10,
+      "entertainment": 0.05
+    },
+    "platform_weight_overrides": {
+      "bilibili":       0.10,
+      "youtube":        0.80,
+      "nicovideo":      0.10,
+      "hackernews":     2.00,
+      "devto":          1.80,
+      "lobsters":       1.80,
+      "stackoverflow":  1.50,
+      "paperswithcode": 2.00,
+      "arxiv_ai_rss":   2.00,
+      "reddit":         1.50,
+      "weibo":          0.10,
+      "baidu":          0.10,
+      "google_trends":  0.20,
+      "wikipedia":      0.50,
+      "news_rss":       1.00
+    }
+  }
+}

@@ -100,7 +100,7 @@ def run_batch(
     from db.models import create_story_set
 
     # 1. Load config (with optional per-run overlay)
-    config = load_with_profile(config_path, config_profile)
+    config = load_with_profile(config_path, config_profile, lang=lang)
 
     # 2. Create story_sets row immediately — stage4_assign() will UPDATE it.
     #    batch_ts is int (UNIX ms) from create_story_set().

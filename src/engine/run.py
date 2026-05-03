@@ -42,8 +42,8 @@ from engine.generator import (
 )
 from engine.selector.story_orchestrate import story_orchestrate
 
-# Config path — story_mix.json lives at the project root (two levels above src/)
-CONFIG_PATH = str(Path(__file__).resolve().parent.parent.parent / 'story_mix.json')
+# Config path — story_mix.json lives in config/ (two levels above src/, then config/)
+CONFIG_PATH = str(Path(__file__).resolve().parent.parent.parent / 'config' / 'story_mix.json')
 
 LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'logs')
 os.makedirs(LOG_DIR, exist_ok=True)

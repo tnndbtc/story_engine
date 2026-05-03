@@ -42,7 +42,7 @@ FEASIBILITY_RATIO_CAP = 2.0
 _ROOT = Path(__file__).resolve().parent.parent
 _CONFIG_DIR = _ROOT / "config"
 _CORPUS_SHARE_PATH = _CONFIG_DIR / "corpus_share.json"
-_BASE_STORY_MIX = _ROOT / "story_mix.json"
+_BASE_STORY_MIX = _CONFIG_DIR / "story_mix.json"
 
 
 def _load_corpus_share() -> dict[str, float]:
@@ -76,15 +76,27 @@ def _load_base_category_mix() -> dict[str, float]:
     return mix
 
 
+def _find_overlay_path(profile_id: str) -> Path:
+    """
+    Find the overlay file for a given profile_id.
+    Search order: config/zh/, config/en/, config/ (flat, backward compat).
+    """
+    filename = f"story_mix_{profile_id}.json"
+    for subdir in ("zh", "en", ""):
+        candidate = (_CONFIG_DIR / subdir / filename) if subdir else (_CONFIG_DIR / filename)
+        if candidate.exists():
+            return candidate
+    print(f"ERROR: overlay not found for profile={profile_id!r}. "
+          f"Searched config/zh/, config/en/, config/", file=sys.stderr)
+    sys.exit(1)
+
+
 def _load_overlay_category_mix(profile_id: str) -> dict[str, float] | None:
     """
     Load the overlay profile's category_mix (or None if the overlay
     doesn't override category_mix, meaning base values apply).
     """
-    overlay_path = _CONFIG_DIR / f"story_mix_{profile_id}.json"
-    if not overlay_path.exists():
-        print(f"ERROR: overlay not found at {overlay_path}", file=sys.stderr)
-        sys.exit(1)
+    overlay_path = _find_overlay_path(profile_id)
     with open(overlay_path, encoding='utf-8') as f:
         data = json.load(f)
     return data.get("soft_targets", {}).get("category_mix")
@@ -165,10 +177,11 @@ def main() -> int:
     if len(sys.argv) > 1:
         profiles = sys.argv[1:]
     else:
-        profiles = sorted(
+        profiles = sorted(set(
             p.stem.replace("story_mix_", "")
-            for p in _CONFIG_DIR.glob("story_mix_*.json")
-        )
+            for p in _CONFIG_DIR.rglob("story_mix_*.json")
+            if p.name != "story_mix.json"  # exclude the base file
+        ))
 
     print("=" * 70)
     print("Feasibility gate (ratio cap = 2.0×)")

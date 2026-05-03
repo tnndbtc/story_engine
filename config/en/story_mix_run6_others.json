@@ -1,0 +1,64 @@
+{
+  "profile_id": "run6_others",
+  "extends": "story_mix.json",
+  "_notes": [
+    "19:00 run — Society / World channel, English output.",
+    "",
+    "category_mix and topic_boosts identical to config/zh/story_mix_run6_others.json.",
+    "platform_weight_overrides differ: English discussion/news platforms elevated,",
+    "Chinese-language platforms suppressed.",
+    "",
+    "Key differences from zh variant:",
+    "  - reddit raised 1.20 → 1.80 (English society discussion: r/worldnews, r/society)",
+    "  - youtube raised 0.30 → 0.70 (English documentary/news channels)",
+    "  - weibo dropped 1.00 → 0.10 (Chinese social)",
+    "  - baidu dropped 0.60 → 0.10 (Chinese search)",
+    "  - nicovideo dropped 0.20 → 0.10 (Japanese content)",
+    "  - news_rss raised 1.30 → 1.50 (English world/society news feeds)"
+  ],
+
+  "soft_targets": {
+    "category_mix": {
+      "society":       0.60,
+      "world":         0.40,
+      "politics":      0.00,
+      "entertainment": 0.00,
+      "sports":        0.00,
+      "business":      0.00,
+      "technology":    0.00,
+      "ai":            0.00,
+      "science":       0.00
+    }
+  },
+
+  "ranking": {
+    "topic_boosts": {
+      "society":       2.50,
+      "world":         2.00,
+      "politics":      0.10,
+      "entertainment": 0.10,
+      "sports":        0.10,
+      "business":      0.10,
+      "technology":    0.10,
+      "ai":            0.10,
+      "science":       0.10
+    },
+    "platform_weight_overrides": {
+      "news_rss":       1.50,
+      "reddit":         1.80,
+      "weibo":          0.10,
+      "baidu":          0.10,
+      "google_trends":  0.50,
+      "wikipedia":      0.80,
+      "bilibili":       0.20,
+      "youtube":        0.70,
+      "nicovideo":      0.10,
+      "hackernews":     0.20,
+      "devto":          0.10,
+      "lobsters":       0.10,
+      "stackoverflow":  0.10,
+      "paperswithcode": 0.05,
+      "arxiv_ai_rss":   0.05
+    }
+  }
+}

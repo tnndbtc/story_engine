@@ -37,8 +37,8 @@ from pathlib import Path
 # Paths
 # ---------------------------------------------------------------------------
 
-_REPO_ROOT = Path(__file__).resolve().parent
-STORY_MIX_PATH = os.environ.get('STORY_MIX_PATH', str(_REPO_ROOT / 'story_mix.json'))
+_REPO_ROOT = Path(__file__).resolve().parents[2]  # src/scripts/ → src/ → story_engine/
+STORY_MIX_PATH = os.environ.get('STORY_MIX_PATH', str(_REPO_ROOT / 'config' / 'story_mix.json'))
 CRAWLER_DB_PATH = os.environ.get('CRAWLER_DB', '/home/tnnd/data/code/crawler/db.sqlite3')
 
 # Weight bounds — same as selector.py effective_multiplier bounds

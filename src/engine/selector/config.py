@@ -396,13 +396,19 @@ _OVERLAY_ALLOWED_RANKING_KEYS = frozenset({
 })
 
 
-def load_with_profile(base_path: str, profile_id: str | None) -> BatchConfig:
+def load_with_profile(
+    base_path:  str,
+    profile_id: str | None,
+    lang:       str | None = None,
+) -> BatchConfig:
     """
     Load base config and optionally apply a per-run overlay profile.
 
     Args:
-        base_path:  Path to story_mix.json (the base file).
-        profile_id: Profile identifier (e.g. "run2_ai") or None for base-only.
+        base_path:  Path to config/story_mix.json (the base file).
+        profile_id: Profile identifier (e.g. "run2_ai", "run_en") or None.
+        lang:       Output language ('en' or 'zh'). Used to select the
+                    locale-specific overlay subfolder (config/zh/ or config/en/).
 
     Returns:
         A merged BatchConfig. If profile_id is None, equivalent to
@@ -418,22 +424,39 @@ def load_with_profile(base_path: str, profile_id: str | None) -> BatchConfig:
         If the overlay has `soft_targets.category_mix`, it fully replaces
         the base's category_mix dict — authors must list every category
         they want non-zero.
+
+    Overlay search order (first match wins):
+        1. config/{lang}/story_mix_{profile_id}.json  (locale subfolder)
+        2. config/story_mix_{profile_id}.json          (flat, backward compat)
     """
     if profile_id is None:
         return load_config(base_path)
 
-    base_dir = Path(base_path).parent
-    overlay_path = base_dir / 'config' / f'story_mix_{profile_id}.json'
-    if not overlay_path.exists():
-        # Also check the base directory for backward compat
-        overlay_path_fallback = base_dir / f'story_mix_{profile_id}.json'
-        if overlay_path_fallback.exists():
-            overlay_path = overlay_path_fallback
-        else:
-            raise FileNotFoundError(
-                f"Profile overlay not found: {overlay_path} "
-                f"(also tried {overlay_path_fallback})"
-            )
+    base_dir = Path(base_path).parent   # = config/
+    filename  = f'story_mix_{profile_id}.json'
+    searched  = []
+
+    overlay_path = None
+
+    # Priority 1: locale-specific subfolder (config/{lang}/story_mix_{profile_id}.json)
+    if lang:
+        lang_path = base_dir / lang / filename
+        searched.append(str(lang_path))
+        if lang_path.exists():
+            overlay_path = lang_path
+
+    # Priority 2: flat config/ directory (backward compat)
+    if overlay_path is None:
+        flat_path = base_dir / filename
+        searched.append(str(flat_path))
+        if flat_path.exists():
+            overlay_path = flat_path
+
+    if overlay_path is None:
+        raise FileNotFoundError(
+            f"Profile overlay not found for profile={profile_id!r}, lang={lang!r}. "
+            f"Searched: {', '.join(searched)}"
+        )
 
     with open(overlay_path, encoding='utf-8') as f:
         overlay = json.load(f)
