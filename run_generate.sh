@@ -246,51 +246,42 @@ else
             echo "  Background: $BG_PATH"
 
             # Patch config: copy base to /tmp, set locale + background + active voice.
-            # Voice alternates by story_set_id parity:
-            #   zh odd  → Xiaoxiao DragonHD (female) / zh even → Yunyang Customerservice (male)
-            #   en odd  → Aria Narration (female)    / en even → Guy Newscast (male)
+            # Voice alternates by story_set_id parity (odd=female, even=male).
+            # Selection is gender-based — voice names are read from the config, not
+            # hardcoded here, so swapping voices in simple_narration.config.json is enough.
             # The opposite-language narrator block is removed so the validator
             # does not require an enabled voice for the unused locale.
             TMP_CONFIG="/tmp/simple_narration_${CATEGORY}.config.json"
             cp "$BASE_CONFIG" "$TMP_CONFIG"
-            python3 -c "
+            SELECTED_VOICE="$(python3 -c "
 import json
 cfg = json.load(open('$TMP_CONFIG'))
 cfg['background'] = '$BG_PATH'
 use_female = ($STORY_SET_ID % 2 == 1)
+target_gender = 'female' if use_female else 'male'
 lang = '$LANG_ARG'
 if lang == 'en':
     cfg['locale'] = 'en-US'
-    voices = cfg['narrator'].get('en-US', {})
-    for name, v in voices.items():
-        if name == 'Aria Narration':  v['enabled'] = use_female
-        elif name == 'Guy Newscast':  v['enabled'] = not use_female
-        else:                          v['enabled'] = False
+    locale_key = 'en-US'
     cfg['narrator'].pop('zh-Hans', None)
 else:
     cfg['locale'] = 'zh-Hans'
-    voices = cfg['narrator'].get('zh-Hans', {})
-    for name, v in voices.items():
-        if name == 'Xiaoxiao DragonHD':         v['enabled'] = use_female
-        elif name == 'Yunyang Customerservice':  v['enabled'] = not use_female
-        else:                                     v['enabled'] = False
+    locale_key = 'zh-Hans'
     cfg['narrator'].pop('en-US', None)
+voices = cfg['narrator'].get(locale_key, {})
+selected = None
+for name, v in voices.items():
+    if v.get('gender', '') == target_gender and selected is None:
+        v['enabled'] = True
+        selected = name
+    else:
+        v['enabled'] = False
 json.dump(cfg, open('$TMP_CONFIG', 'w'), indent=2, ensure_ascii=False)
-"
+print(selected or 'unknown')
+")"
+            _gender="$([ $(( STORY_SET_ID % 2 )) -eq 1 ] && echo 'female' || echo 'male')"
             echo "  Config:     $TMP_CONFIG"
-            if [ "$LANG_ARG" = "en" ]; then
-                if [ $(( STORY_SET_ID % 2 )) -eq 1 ]; then
-                    echo "  Voice:      Aria Narration (female)"
-                else
-                    echo "  Voice:      Guy Newscast (male)"
-                fi
-            else
-                if [ $(( STORY_SET_ID % 2 )) -eq 1 ]; then
-                    echo "  Voice:      Xiaoxiao DragonHD (female)"
-                else
-                    echo "  Voice:      Yunyang Customerservice (male)"
-                fi
-            fi
+            echo "  Voice:      $SELECTED_VOICE ($_gender)"
 
             echo ""
             echo "--- Step B: Run narration pipeline ---"
