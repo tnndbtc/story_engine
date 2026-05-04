@@ -288,8 +288,9 @@ print(selected or 'unknown')
             source /home/tnnd/.virtualenvs/pipe/bin/activate
             cd "$PIPE_DIR"
             ./simple_run.sh \
-                --story  "$STORY_TXT" \
-                --config "$TMP_CONFIG" \
+                --story         "$STORY_TXT" \
+                --config        "$TMP_CONFIG" \
+                --story_set_id  "$STORY_SET_ID" \
               >> "$SCRIPT_DIR/logs/pipeline.log" 2>&1 \
               || echo "  WARNING: pipeline error — see logs/pipeline.log"
         else

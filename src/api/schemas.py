@@ -145,6 +145,23 @@ class StorySetSummary(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# YouTube Analytics (GET /api/analytics/story-set/{story_set_id})
+# ---------------------------------------------------------------------------
+
+class YoutubeAnalyticRow(BaseModel):
+    """One row from youtube_publish_log for a published video."""
+    video_id:            str
+    lang:                str                 # 'en' or 'zh'
+    locale:              str                 # 'en-US' or 'zh-Hans'
+    views:               Optional[int]       # None = not yet fetched
+    avg_view_duration:   Optional[float]     # seconds; None = not yet fetched
+    avg_view_pct:        Optional[float]     # %; None = not yet fetched
+    ctr_pct:             Optional[float]     # %; None = not monetized or pending
+    published_at:        Optional[str]       # ISO datetime string
+    analytics_pulled_at: Optional[str]       # ISO string | 'no_data' | None (pending)
+
+
+# ---------------------------------------------------------------------------
 # Engine status (GET /api/status)
 # ---------------------------------------------------------------------------
 

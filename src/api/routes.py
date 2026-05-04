@@ -22,11 +22,12 @@ from api.schemas import (
     SourceItem,
     CommentItem,
     EngineStatus,
+    YoutubeAnalyticRow,
     FormatType,
     ChannelType,
     LangType,
 )
-from db.models import get_story, get_stories_today, get_stories, get_story_sets, get_stories_by_set
+from db.models import get_story, get_stories_today, get_stories, get_story_sets, get_stories_by_set, get_youtube_analytics
 from db.crawler_reader import get_item_count, test_connection, CRAWLER_DB_URL
 
 router = APIRouter(prefix="/api")
@@ -154,6 +155,21 @@ def get_story_set_detail(set_id: int):
         total=len(stories),
         stories=[_dict_to_story(s) for s in stories],
     )
+
+
+@router.get("/analytics/story-set/{story_set_id}", response_model=list[YoutubeAnalyticRow])
+def get_story_set_analytics(story_set_id: int):
+    """
+    Return YouTube Analytics rows for all videos in a story set.
+
+    Each row corresponds to one published video (one per locale: en-US, zh-Hans).
+    analytics_pulled_at values:
+      null      → analytics not yet fetched (video < 72h old or pending retry)
+      'no_data' → no data available after 14 days (gave up)
+      ISO str   → analytics successfully fetched at this time
+    """
+    rows = get_youtube_analytics(story_set_id)
+    return [YoutubeAnalyticRow(**r) for r in rows]
 
 
 def _redact_url(url: str) -> str:
