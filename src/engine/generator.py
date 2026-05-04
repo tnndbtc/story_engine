@@ -1503,7 +1503,7 @@ def generate_deep_story(
             "Extract the title, body, and sources and return ONLY valid JSON "
             "starting with { and ending with }.\n\n" + raw
         )
-        retry_raw = _call_claude(retry_prompt, lang='en')
+        retry_raw = _call_claude(retry_prompt, lang=lang)
         parsed = _parse_json_response(retry_raw)
 
     # Build combined source list: crawler sources + newly searched sources
