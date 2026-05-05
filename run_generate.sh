@@ -245,43 +245,33 @@ else
             fi
             echo "  Background: $BG_PATH"
 
-            # Patch config: copy base to /tmp, set locale + background + active voice.
-            # Voice alternates by story_set_id parity (odd=female, even=male).
-            # Selection is gender-based — voice names are read from the config, not
-            # hardcoded here, so swapping voices in simple_narration.config.json is enough.
+            # Patch config: copy base to /tmp, set locale + background.
+            # Voice gender is rotated per-category by simple_run.sh using
+            # pipe/projects/voice_rotation_state.json (2 locales × 5 categories = 10 slots).
             # The opposite-language narrator block is removed so the validator
             # does not require an enabled voice for the unused locale.
             TMP_CONFIG="/tmp/simple_narration_${CATEGORY}.config.json"
             cp "$BASE_CONFIG" "$TMP_CONFIG"
-            SELECTED_VOICE="$(python3 -c "
+            if [ "$LANG_ARG" = "en" ]; then
+                LOCALE_VAL="en-US"
+            else
+                LOCALE_VAL="zh-Hans"
+            fi
+            python3 -c "
 import json
 cfg = json.load(open('$TMP_CONFIG'))
 cfg['background'] = '$BG_PATH'
-use_female = ($STORY_SET_ID % 2 == 1)
-target_gender = 'female' if use_female else 'male'
 lang = '$LANG_ARG'
 if lang == 'en':
     cfg['locale'] = 'en-US'
-    locale_key = 'en-US'
     cfg['narrator'].pop('zh-Hans', None)
 else:
     cfg['locale'] = 'zh-Hans'
-    locale_key = 'zh-Hans'
     cfg['narrator'].pop('en-US', None)
-voices = cfg['narrator'].get(locale_key, {})
-selected = None
-for name, v in voices.items():
-    if v.get('gender', '') == target_gender and selected is None:
-        v['enabled'] = True
-        selected = name
-    else:
-        v['enabled'] = False
 json.dump(cfg, open('$TMP_CONFIG', 'w'), indent=2, ensure_ascii=False)
-print(selected or 'unknown')
-")"
-            _gender="$([ $(( STORY_SET_ID % 2 )) -eq 1 ] && echo 'female' || echo 'male')"
+"
             echo "  Config:     $TMP_CONFIG"
-            echo "  Voice:      $SELECTED_VOICE ($_gender)"
+            echo "  Locale:     $LOCALE_VAL  Category: $CATEGORY"
 
             echo ""
             echo "--- Step B: Run narration pipeline ---"
@@ -291,6 +281,8 @@ print(selected or 'unknown')
                 --story         "$STORY_TXT" \
                 --config        "$TMP_CONFIG" \
                 --story_set_id  "$STORY_SET_ID" \
+                --locale        "$LOCALE_VAL" \
+                --slot          "$CATEGORY" \
               >> "$SCRIPT_DIR/logs/pipeline.log" 2>&1 \
               || echo "  WARNING: pipeline error — see logs/pipeline.log"
         else
