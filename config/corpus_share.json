@@ -9,8 +9,10 @@
     "Phase B (future): per-batch snapshot metadata replaces this file; the",
     "feasibility gate then reads corpus_share from the snapshot instead.",
     "",
-    "Source: post-DELETE state after craw2 Phase 1 rollout (commit 3e921eb)",
+    "Source: post-DELETE state after craw2 Phase 1 rollout (commit 3e921eb),",
     "plus politics-via-surface cleanup DELETE run on 2026-04-14.",
+    "crypto added 2026-05-05 with corpus_share=0.0 (new category, no historical data).",
+    "Re-measure after first week of crypto sources being live.",
     "",
     "Re-measure and update when any of the following happens:",
     "  - craw2 keyword map changes",
@@ -18,7 +20,7 @@
     "  - backlog of pending items drains significantly",
     "  - taxonomy_version bumped"
   ],
-  "version": 1,
+  "version": 2,
   "measured_at": "2026-04-14",
   "corpus_share": {
     "politics":      0.357,
@@ -29,6 +31,7 @@
     "sports":        0.062,
     "ai":            0.039,
     "science":       0.035,
-    "world":         0.022
+    "world":         0.022,
+    "crypto":        0.0
   }
 }

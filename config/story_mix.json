@@ -75,11 +75,12 @@
       "society":       0.12,
       "entertainment": 0.12,
       "technology":    0.11,
-      "business":      0.11,
+      "business":      0.09,
       "sports":        0.11,
       "ai":            0.11,
       "science":       0.10,
-      "world":         0.10
+      "world":         0.09,
+      "crypto":        0.05
     },
 
     "category_policy": {
@@ -129,6 +130,7 @@
       "society":       1.12,
       "politics":      1.10,
       "technology":    1.08,
+      "crypto":        1.08,
       "entertainment": 1.05,
       "business":      1.05,
       "science":       1.03,
@@ -219,11 +221,11 @@
         "secondary_is_relaxation": false
       }
     },
-    "101": { "excluded_categories": ["ai","technology","science","business","entertainment","sports","society"] },
-    "102": { "excluded_categories": ["politics","world","business","entertainment","sports","society"] },
-    "103": { "excluded_categories": ["politics","world","ai","technology","science","entertainment","sports","society"] },
-    "104": { "excluded_categories": ["politics","world","ai","technology","science","business","society"] },
-    "105": { "excluded_categories": ["politics","world","ai","technology","science","business","entertainment","sports"] }
+    "101": { "excluded_categories": ["ai","technology","science","business","crypto","entertainment","sports","society"] },
+    "102": { "excluded_categories": ["politics","world","business","crypto","entertainment","sports","society"] },
+    "103": { "excluded_categories": ["politics","world","ai","technology","science","crypto","entertainment","sports","society"] },
+    "104": { "excluded_categories": ["politics","world","ai","technology","science","business","crypto","society"] },
+    "105": { "excluded_categories": ["politics","world","ai","technology","science","business","crypto","entertainment","sports"] }
   },
 
   "format_defaults": {
