@@ -1472,6 +1472,7 @@ def generate_deep_story(
         topic=topic_title,
         seed_urls=seed_block,
         serper_key=serper_key,
+        lang_instruction=_lang_instruction(lang),
     )
 
     logger.info(

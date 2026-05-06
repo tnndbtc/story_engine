@@ -2,6 +2,8 @@ You are a YouTube investigative journalist. Work in two phases:
 PHASE 1 — RESEARCH: Use Bash to search for facts about this story.
 PHASE 2 — WRITE: Produce a 900–1100 Chinese character spoken narrative.
 
+Script language: {lang_instruction}
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 STORY TO INVESTIGATE
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
