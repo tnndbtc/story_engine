@@ -1,0 +1,138 @@
+You are scoring a story for a specific YouTube channel — not for general news value,
+but for whether THIS channel's audience will watch it all the way through.
+
+CHANNEL IDENTITY: "Hidden systems made visible."
+
+AUDIENCE PROFILE (25–45, technically literate, globally aware):
+  They stay for:
+    - Hidden mechanisms — how unseen systems shape everyday life
+    - Quiet shifts — things changing before anyone noticed
+    - Ordinary stakes — consequences ordinary people can feel directly
+    - Weird but real — counterintuitive science, economics, technology
+    - "What's actually happening underneath the surface"
+  They leave for:
+    - Diplomatic back-and-forth ("A says / B denies" format)
+    - Price-only news (crypto/stock moves without explaining the mechanism)
+    - Sports results, celebrity events
+    - Geopolitical posturing with no concrete personal consequence
+    - Stories that require significant prior context to follow
+
+STORY TITLE: {title}
+
+STORY BODY:
+{body}
+
+Score this story on the seven dimensions below. Return ONLY valid JSON —
+no explanation text outside the JSON, no markdown fences.
+
+{{
+  "curiosity_gap": {{
+    "score": <integer 0-20>,
+    "reason": "<one sentence>"
+  }},
+  "ordinary_people_stakes": {{
+    "score": <integer 0-20>,
+    "reason": "<one sentence>"
+  }},
+  "hidden_mechanism": {{
+    "score": <integer 0-20>,
+    "reason": "<one sentence>"
+  }},
+  "consequence_clarity": {{
+    "score": <integer 0-15>,
+    "reason": "<one sentence>"
+  }},
+  "audience_fit": {{
+    "score": <integer 0-15>,
+    "reason": "<one sentence>"
+  }},
+  "title_retention_alignment": {{
+    "score": <integer 0-5>,
+    "reason": "<one sentence>"
+  }},
+  "low_context_accessibility": {{
+    "score": <integer 0-5>,
+    "reason": "<one sentence>"
+  }},
+  "story_type": "<one of: health_science | tech_ai | crime | finance | geopolitics | sports | celebrity | accident | social_tech | political | environment | other>",
+  "total": <sum of all seven scores>,
+  "verdict": "<PRODUCE or SKIP>"
+}}
+
+SCORING GUIDE:
+
+curiosity_gap (0-20)
+  High: the premise is counterintuitive or impossible-sounding — creates
+        immediate "wait, what?" before the viewer understands the context.
+    "A virus that shouldn't exist showed up on a cruise ship"
+    "A 732-byte script broke every Linux system since 2017"
+    "India's market is flashing three warnings nobody is reporting"
+  Low: states an obvious or expected outcome.
+    "Government announces new policy"  "Company reports quarterly earnings"
+
+ordinary_people_stakes (0-20)
+  High: an ordinary viewer with no special knowledge immediately feels
+        personal impact — their money, health, job, device, or daily life.
+        The stakes must be FELT, not just intellectually acknowledged.
+    "AI is quietly consuming the chips your phone was supposed to get"
+    "This virus mutation could reach your city within weeks"
+    "Your savings are losing value through this mechanism nobody explains"
+  Low: consequence lands on governments, corporations, or distant nations
+       with no clear path to individual impact.
+    "Two nations dispute territorial rights"
+    "A hedge fund lost $2B in a bad trade"
+  IMPORTANT: avoid rewarding stories just because they mention large numbers
+  or famous institutions — ask whether an average viewer feels affected.
+
+hidden_mechanism (0-20)
+  High: reveals HOW something works that most people assumed was different,
+        didn't know existed, or never thought to question.
+    "The reason your flight keeps getting delayed is actually tied to
+     a 1970s maintenance contract loophole"
+    "BYD's sales collapse at home is funding its overseas expansion"
+  Low: event recap with no mechanism — just what happened, not why or how.
+    "Country X condemned Country Y's statement"
+    "Bitcoin rose 8% after market open"
+  IMPORTANT: the mechanism must be non-obvious. Reporting that "bad management
+  caused the failure" is NOT a hidden mechanism.
+
+consequence_clarity (0-15)
+  High: viewer can state in one sentence what changes for them or for the
+        world after watching. The cause-effect chain is explicit and crisp.
+    "After watching, I understand why my streaming library keeps shrinking"
+  Medium: consequence is real but requires inference.
+  Low: the story ends without a clear "so what" — viewer learns facts
+       but cannot describe the consequence.
+
+audience_fit (0-15)
+  Directly score how well this story matches the channel's identity above.
+  High (12-15): story IS the channel — hidden system, quiet shift, weird-but-real,
+                ordinary stakes. Audience would recommend it.
+    Examples of 15: "The forensic detail that proved friendly fire didn't happen"
+                    "AI is replacing the chip supply chain silently"
+                    "Why Taipei's pest control is making things worse"
+  Medium (6-11): fits some channel traits but has elements the audience dislikes.
+  Low (0-5): story is primarily geopolitical posturing, sports, price recap,
+             or requires heavy prior context.
+    Examples of 0-3: "Iran claims it struck a US warship / Pentagon denies"
+                     "Bitcoin price breaks $81k — analysts watch key levels"
+                     "Orlando fires coach after playoff exit"
+  EXCEPTION — do NOT penalize for geopolitics if the story's core is a hidden
+  mechanism, forensic finding, or institutional failure:
+    "A buckshot pellet traced to a specific gun ended the friendly-fire debate"
+      → high hidden_mechanism + high audience_fit (it's a forensics story)
+    "A North Korean hacker unit exploited a bank's legacy SWIFT code"
+      → high hidden_mechanism (it's a systems story, not a diplomatic story)
+  The test: could the story run with the political actors anonymised and still
+  be compelling? If yes, score audience_fit on the mechanism, not the politics.
+
+title_retention_alignment (0-5)
+  High: the title's implicit promise matches what the story actually delivers.
+        A viewer who clicks based on the title will NOT feel misled.
+  Low: title implies drama or revelation that the story body does not deliver
+       (clickbait that fails to pay off → viewers drop at 30%).
+
+low_context_accessibility (0-5)
+  High: someone with zero domain expertise understands the core story
+        within the first 30 seconds. No jargon assumed.
+  Low: requires specialist background to follow without explanation.

@@ -274,7 +274,53 @@ json.dump(cfg, open('$TMP_CONFIG', 'w'), indent=2, ensure_ascii=False)
             echo "  Locale:     $LOCALE_VAL  Category: $CATEGORY"
 
             echo ""
-            echo "--- Step B: Run narration pipeline ---"
+            echo "--- Step B: Attractiveness + trend gate ---"
+            # Pass STORY_SET_ID and DB_PATH via argv (heredoc is single-quoted,
+            # so $VAR inside it is NOT expanded by the shell).
+            # DB_PATH is defined near the top of this script as:
+            #   DB_PATH="${STORY_ENGINE_DB:-$SCRIPT_DIR/db.sqlite3}"
+            SSID="$STORY_SET_ID"
+            ATTRACT_RESULT=$(python3 - "$SSID" "$DB_PATH" <<'PYEOF'
+import sqlite3, json, sys
+story_set_id = int(sys.argv[1]) if len(sys.argv) > 1 else 0
+db           = sys.argv[2]      if len(sys.argv) > 2 else 'db.sqlite3'
+try:
+    conn = sqlite3.connect(db)
+    row = conn.execute(
+        "SELECT COALESCE(hs.final_score, hs.attractiveness_score) "
+        "FROM hierarchical_stories hs "
+        "WHERE hs.story_set_id = ?",
+        (story_set_id,)
+    ).fetchone()
+    conn.close()
+    score = row[0] if row and row[0] is not None else None
+    cfg = {}
+    try:
+        with open('config/clustering_config.json') as f:
+            cfg = json.load(f)
+    except Exception:
+        pass
+    threshold = int(cfg.get('attractiveness_threshold', 72))
+    print(f"{score if score is not None else 'NULL'}:{threshold}")
+except Exception:
+    print("NULL:72")
+PYEOF
+            )
+
+            ATTRACT_SCORE="${ATTRACT_RESULT%%:*}"
+            ATTRACT_THRESH="${ATTRACT_RESULT##*:}"
+
+            if [ "$ATTRACT_SCORE" = "NULL" ]; then
+                echo "  Gate score: not available — proceeding (fail open)"
+            elif [ "$ATTRACT_SCORE" -lt "$ATTRACT_THRESH" ]; then
+                echo "  Gate score: $ATTRACT_SCORE / 100 — below threshold $ATTRACT_THRESH — SKIPPING pipe"
+                exit 0
+            else
+                echo "  Gate score: $ATTRACT_SCORE / 100 — above threshold $ATTRACT_THRESH — proceeding"
+            fi
+
+            echo ""
+            echo "--- Step C: Run narration pipeline ---"
             source /home/tnnd/.virtualenvs/pipe/bin/activate
             cd "$PIPE_DIR"
             ./simple_run.sh \

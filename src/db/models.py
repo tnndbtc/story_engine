@@ -271,6 +271,58 @@ def init_db():
     except sqlite3.OperationalError:
         pass  # column already exists
 
+    # Migration: attractiveness scoring columns (Phase 1 pipe gate)
+    try:
+        conn.execute(
+            "ALTER TABLE hierarchical_stories "
+            "ADD COLUMN attractiveness_score INTEGER DEFAULT NULL"
+        )
+    except sqlite3.OperationalError:
+        pass  # column already exists
+
+    try:
+        conn.execute(
+            "ALTER TABLE hierarchical_stories "
+            "ADD COLUMN attractiveness_breakdown TEXT DEFAULT NULL"
+        )
+    except sqlite3.OperationalError:
+        pass  # column already exists
+
+    # Migration: trend scoring columns (Phase 1.5 lightweight trend assist)
+    try:
+        conn.execute(
+            "ALTER TABLE hierarchical_stories "
+            "ADD COLUMN trend_bonus INTEGER DEFAULT NULL"
+        )
+    except sqlite3.OperationalError:
+        pass  # column already exists
+
+    try:
+        conn.execute(
+            "ALTER TABLE hierarchical_stories "
+            "ADD COLUMN final_score INTEGER DEFAULT NULL"
+        )
+    except sqlite3.OperationalError:
+        pass  # column already exists
+
+    # Migration: story classification + soft tier columns
+    try:
+        conn.execute(
+            "ALTER TABLE hierarchical_stories "
+            "ADD COLUMN story_type TEXT DEFAULT NULL"
+        )
+    except sqlite3.OperationalError:
+        pass  # column already exists
+
+    try:
+        conn.execute(
+            "ALTER TABLE hierarchical_stories "
+            "ADD COLUMN produce_tier TEXT DEFAULT NULL"
+            # values: 'strong' (>=72), 'weak' (58–71), 'skip' (<58), NULL (unscored)
+        )
+    except sqlite3.OperationalError:
+        pass  # column already exists
+
     # Migration: add purity_log table if not present (Sprint 3 auto-calibration)
     try:
         conn.execute("""
@@ -754,6 +806,68 @@ def save_hierarchical_story(
     return story_id
 
 
+def save_attractiveness_score(
+    story_set_id: int,
+    score:        int,
+    breakdown:    dict,
+    story_type:   str | None = None,
+) -> None:
+    """
+    Write attractiveness score + JSON breakdown + story_type to hierarchical_stories.
+
+    Called after generate_story_batch() saves the story — non-fatal if it fails.
+    score: int 0–100 (sum of seven dimension scores, computed by attract_scorer)
+    breakdown: per-dimension {score, reason} dict (may include story_type key)
+    story_type: one of health_science | tech_ai | crime | finance | geopolitics |
+                sports | celebrity | accident | social_tech | political |
+                environment | other  (NULL if scorer did not return one)
+    """
+    conn = get_connection()
+    conn.execute(
+        """UPDATE hierarchical_stories
+           SET attractiveness_score = ?, attractiveness_breakdown = ?,
+               story_type = COALESCE(?, story_type)
+           WHERE story_set_id = ?""",
+        (score, json.dumps(breakdown, ensure_ascii=False), story_type, story_set_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def save_trend_score(
+    story_set_id: int,
+    trend_bonus:  int,
+    final_score:  int,
+) -> None:
+    """
+    Write trend_bonus, final_score, and produce_tier to hierarchical_stories.
+
+    Called after get_trend_bonus() in generate_story_batch() — non-fatal if fails.
+    final_score = attractiveness_score + trend_bonus
+
+    produce_tier values:
+      'strong' — final_score >= 72  (normal production)
+      'weak'   — final_score 58–71  (exploration band, produced but tagged)
+      'skip'   — final_score < 58   (not produced)
+    """
+    if final_score >= 72:
+        tier = 'strong'
+    elif final_score >= 58:
+        tier = 'weak'
+    else:
+        tier = 'skip'
+
+    conn = get_connection()
+    conn.execute(
+        """UPDATE hierarchical_stories
+           SET trend_bonus = ?, final_score = ?, produce_tier = ?
+           WHERE story_set_id = ?""",
+        (trend_bonus, final_score, tier, story_set_id),
+    )
+    conn.commit()
+    conn.close()
+
+
 def save_failed_hierarchical_story(
     story_set_id: int,
     batch_ts:     int,
@@ -1028,6 +1142,18 @@ def register_youtube_publish(
     now_ms  = int(time.time() * 1000)          # milliseconds — matches _now()
     pub_sec = published_at or int(time.time()) # seconds — for 72h cutoff arithmetic
     conn = get_connection()
+
+    # Auto-populate story_id from hierarchical_stories when not provided.
+    # youtube_publish_log.story_id stores hierarchical_stories.id (NOT stories.id).
+    # Join: youtube_publish_log.story_id = hierarchical_stories.id
+    if story_id is None and story_set_id is not None:
+        hs_row = conn.execute(
+            "SELECT id FROM hierarchical_stories WHERE story_set_id = ? LIMIT 1",
+            (story_set_id,),
+        ).fetchone()
+        if hs_row:
+            story_id = hs_row[0]
+
     cursor = conn.execute(
         """INSERT OR IGNORE INTO youtube_publish_log
            (video_id, story_set_id, story_id, channel_id, upload_profile,

@@ -1,0 +1,106 @@
+"""
+attract_scorer.py — Score a generated story for channel audience fit + pipe gating.
+
+One small Claude call reads the story title + body and returns a 0–100 score
+plus a per-dimension breakdown. Works for both EN and ZH story text.
+
+Optimizes for THIS channel's audience retention, not general news value.
+Channel identity: "Hidden systems made visible."
+
+Used by:
+  - generate_story_batch() in generator.py (real-time, after each story save)
+  - score_existing.py (retroactive, one-time calibration script)
+
+Scoring dimensions (total 100):
+  curiosity_gap             0–20
+  ordinary_people_stakes    0–20
+  hidden_mechanism          0–20
+  consequence_clarity       0–15
+  audience_fit              0–15
+  title_retention_alignment 0–5
+  low_context_accessibility 0–5
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import subprocess
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+_PROMPT_PATH = Path(__file__).resolve().parent.parent / "prompts" / "attract_score.txt"
+# __file__ = story_engine/src/engine/attract_scorer.py
+# .parent        = story_engine/src/engine/
+# .parent.parent = story_engine/src/
+# → story_engine/src/prompts/attract_score.txt  ✓
+
+_CLAUDE_BIN = os.environ.get("CLAUDE_BIN", "claude")
+
+_DIMS = [
+    "curiosity_gap",
+    "ordinary_people_stakes",
+    "hidden_mechanism",
+    "consequence_clarity",
+    "audience_fit",
+    "title_retention_alignment",
+    "low_context_accessibility",
+]
+
+
+def score_story(title: str, body: str, lang: str = "zh") -> tuple[int | None, dict]:
+    """
+    Score a story on six attractiveness dimensions using Claude.
+
+    Returns:
+        (total_score, breakdown_dict)
+        total_score: int 0–100 (deterministically summed from 6 dimension scores)
+        breakdown_dict: {dimension: {"score": int, "reason": str}, ...}
+
+    On any failure, returns (None, {}) — caller must check for None before saving.
+    The gate in run_generate.sh treats NULL score as pass (fail open), so callers
+    must NOT save a failure result to DB — only save when score is not None.
+    """
+    try:
+        prompt_template = _PROMPT_PATH.read_text(encoding="utf-8")
+    except Exception as exc:
+        logger.error("attract_scorer: cannot read prompt — %s", exc)
+        return None, {}
+
+    prompt = prompt_template.format(
+        title=title,
+        body=body[:3000],   # cap body to keep call cheap (~500 tokens input)
+    )
+
+    try:
+        result = subprocess.run(
+            [_CLAUDE_BIN, "--output-format", "text", "--max-turns", "1",
+             "--tools", "", "-p", prompt],
+            capture_output=True, text=True, timeout=45,
+            cwd=Path(__file__).resolve().parents[2],   # story_engine/
+        )
+        raw = result.stdout.strip()
+    except Exception as exc:
+        logger.error("attract_scorer: Claude call failed — %s", exc)
+        return None, {}
+
+    # Strip markdown code fences if present
+    if raw.startswith("```"):
+        raw = "\n".join(raw.split("\n")[1:])
+        raw = raw.rsplit("```", 1)[0].strip()
+
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        logger.error("attract_scorer: invalid JSON response — %r", raw[:200])
+        return None, {}
+
+    # Compute total deterministically — do NOT trust LLM's own arithmetic.
+    total = sum(int((data.get(d) or {}).get("score", 0)) for d in _DIMS)
+    breakdown = {
+        k: v for k, v in data.items()
+        if k not in ("total", "verdict")
+    }
+    return total, breakdown

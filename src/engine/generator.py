@@ -1942,6 +1942,69 @@ def generate_story_batch(
         logger.info(
             "generate_story_batch: saved as hierarchical_story #%d", story_id
         )
+
+        # ── Phase 1: Attractiveness scoring ──────────────────────────────────
+        # Score the generated story so run_generate.sh can gate the pipe call.
+        # Non-fatal: if scoring fails, score stays NULL and gate fails open.
+        # IMPORTANT: only save to DB when score is not None — a failure returns
+        # (None, {}) and must NOT be written, or the gate will block the story.
+        _score = None
+        try:
+            from engine.attract_scorer import score_story
+            from db.models import save_attractiveness_score
+            _title = deep_story.get('title', '')
+            _body  = deep_story.get('body', deep_story.get('hook', ''))
+            if _title and _body:
+                _score, _breakdown = score_story(_title, _body, lang)
+                if _score is not None:
+                    _story_type = _breakdown.pop('story_type', None)
+                    if isinstance(_story_type, str):
+                        _story_type = _story_type.strip() or None
+                    save_attractiveness_score(batch_id or 0, _score, _breakdown, _story_type)
+                    logger.info(
+                        "generate_story_batch: attractiveness_score=%d "
+                        "(story_set_id=%s, verdict=%s)",
+                        _score,
+                        batch_id,
+                        'PRODUCE' if _score >= 72 else 'SKIP',
+                    )
+                else:
+                    logger.warning(
+                        "generate_story_batch: attract_scorer returned None "
+                        "(story_set_id=%s) — score stays NULL, gate will pass", batch_id
+                    )
+        except Exception as _exc:
+            logger.warning(
+                "generate_story_batch: attractiveness scoring failed — %s "
+                "(score stays NULL, gate will pass)", _exc
+            )
+        # ── End Phase 1 attractiveness scoring ───────────────────────────────
+
+        # ── Phase 1.5: Trend bonus ────────────────────────────────────────────
+        # Trend assist: 0 (cold/neutral), +5 (hot), +10 (very hot).
+        # No negative penalty — cold topics are not bad, they are slow-burn.
+        # final_score = attractiveness_score + trend_bonus.
+        # Non-fatal: if trend scoring fails, trend_bonus stays NULL and gate
+        # falls back to attractiveness_score alone (COALESCE in run_generate.sh).
+        try:
+            from engine.trend_scorer import get_trend_bonus
+            from db.models import save_trend_score
+            _bonus = get_trend_bonus(batch_id or 0)
+            _final = (_score + _bonus) if _score is not None else None
+            if _final is not None:
+                save_trend_score(batch_id or 0, _bonus, _final)
+                logger.info(
+                    "generate_story_batch: trend_bonus=%+d final_score=%d "
+                    "(story_set_id=%s)",
+                    _bonus, _final, batch_id,
+                )
+        except Exception as _exc:
+            logger.warning(
+                "generate_story_batch: trend scoring failed — %s "
+                "(trend_bonus stays NULL, gate uses attractiveness_score)", _exc
+            )
+        # ── End Phase 1.5 trend scoring ───────────────────────────────────────
+
         return result
 
     except Exception as e:

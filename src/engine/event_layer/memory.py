@@ -48,15 +48,46 @@ store_event(...)
 
 from __future__ import annotations
 
+import json
 import logging
 import math
 import re
 import time
+from pathlib import Path
 
 from db.crawler_reader import get_embeddings
 from db.models import load_recent_events, store_event as _store_event  # noqa: F401
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Config loader for tunable thresholds
+# ---------------------------------------------------------------------------
+
+_CONFIG_PATH = Path(__file__).resolve().parents[3] / "config" / "clustering_config.json"
+# parents[3] = story_engine/  (this file is at story_engine/src/engine/event_layer/)
+# Resolves to: story_engine/config/clustering_config.json
+
+
+def _load_jaccard_threshold() -> float:
+    """Load jaccard_duplicate_threshold from clustering_config.json.
+
+    Cached at module import time — a process restart is required after
+    changing the config value. Falls back to 0.35 if config is missing
+    or malformed.
+    """
+    try:
+        with open(_CONFIG_PATH) as f:
+            value = float(json.load(f).get("jaccard_duplicate_threshold", 0.35))
+        logger.info("[memory] Loaded jaccard_duplicate_threshold: %.2f from config", value)
+        return value
+    except Exception as exc:
+        logger.warning(
+            "[memory] Could not load jaccard_duplicate_threshold from config (%s); "
+            "using fallback 0.35",
+            exc,
+        )
+        return 0.35
 
 # ---------------------------------------------------------------------------
 # Thresholds
@@ -70,14 +101,17 @@ _NEW_DEV_LOWER_COSINE       = 0.65
 # Phase 1 — Jaccard similarity (stopword-filtered tokens)
 # Fallback when embeddings are unavailable on either side.
 #
-# _DUPLICATE_THRESHOLD_JACCARD = 0.35
+# _DUPLICATE_THRESHOLD_JACCARD (configurable via clustering_config.json)
+#   Default was 0.35; lowered to 0.20 to catch same-event different-framing pairs
+#   (e.g. two Iran warship stories scored 0.27, slipping through at 0.35).
 #   "Eric Swalwell resigns from Congress" vs "Rep Eric Swalwell resigns from
-#   US House" → 0.50 (caught). Set at 0.35 to exclude the 0.30–0.34 band that
-#   caused false positives on same-template-different-entity pairs.
+#   US House" → 0.50 (still caught at 0.20).
+#   To tune: edit jaccard_duplicate_threshold in config/clustering_config.json
+#   and restart the process (value is cached at import time).
 #
 # _NEW_DEV_LOWER_JACCARD = 0.10
 #   Catches follow-up angles that share one or two key tokens.
-_DUPLICATE_THRESHOLD_JACCARD = 0.35
+_DUPLICATE_THRESHOLD_JACCARD = _load_jaccard_threshold()
 _NEW_DEV_LOWER_JACCARD       = 0.10
 
 # Minimum token count in a title (after stopword removal) to attempt matching.
