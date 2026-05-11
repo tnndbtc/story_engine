@@ -8,7 +8,9 @@ Endpoints:
   GET  /api/status           — engine health check
 """
 
+import subprocess
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
@@ -23,11 +25,16 @@ from api.schemas import (
     CommentItem,
     EngineStatus,
     YoutubeAnalyticRow,
+    YoutubeSubscriber,
+    YoutubeSubscriberPlaylist,
+    YoutubeSubscribedChannel,
+    VideoComment,
+    StoryWithComments,
     FormatType,
     ChannelType,
     LangType,
 )
-from db.models import get_story, get_stories_today, get_stories, get_story_sets, get_stories_by_set, get_youtube_analytics
+from db.models import get_story, get_stories_today, get_stories, get_story_sets, get_stories_by_set, get_youtube_analytics, get_subscribers, get_stories_with_comments
 from db.crawler_reader import get_item_count, test_connection, CRAWLER_DB_URL
 
 router = APIRouter(prefix="/api")
@@ -170,6 +177,130 @@ def get_story_set_analytics(story_set_id: int):
     """
     rows = get_youtube_analytics(story_set_id)
     return [YoutubeAnalyticRow(**r) for r in rows]
+
+
+_PIPE_PYTHON  = "/home/tnnd/.virtualenvs/pipe/bin/python"
+_SCRIPTS_DIR  = Path("/home/tnnd/data/code/pipe/code/deploy/youtube")
+_PIPE_CWD     = "/home/tnnd/data/code/pipe"
+
+
+@router.post("/subscribers/refresh")
+def refresh_subscribers():
+    """
+    Spawn fetch_subscribers.py in the background and return immediately.
+    The script writes to the DB; poll GET /api/subscribers after ~10 s.
+    """
+    subprocess.Popen(
+        [_PIPE_PYTHON, str(_SCRIPTS_DIR / "fetch_subscribers.py")],
+        cwd=_PIPE_CWD,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return {"status": "started"}
+
+
+@router.post("/comments/refresh")
+def refresh_comments():
+    """
+    Spawn fetch_video_comments.py --refetch in the background and return immediately.
+    The script writes to the DB; poll GET /api/comments after ~15 s.
+    """
+    subprocess.Popen(
+        [_PIPE_PYTHON, str(_SCRIPTS_DIR / "fetch_video_comments.py"), "--refetch"],
+        cwd=_PIPE_CWD,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return {"status": "started"}
+
+
+@router.get("/subscribers", response_model=list[YoutubeSubscriber])
+def list_subscribers():
+    """
+    Return all known public subscribers across all channel profiles.
+
+    Data is populated by fetch_subscribers.py (run manually or via cron).
+    Only subscribers with public subscriptions are visible — subscribers who
+    set their YouTube subscriptions to private will not appear here.
+    """
+    rows = get_subscribers()
+    result = []
+    for r in rows:
+        playlists = [
+            YoutubeSubscriberPlaylist(
+                id         = pl.get("id", ""),
+                title      = pl.get("title", ""),
+                item_count = pl.get("item_count", 0),
+                created_at = pl.get("created_at"),
+            )
+            for pl in r.get("public_playlists", [])
+        ]
+        # subscribed_to may be old format (list[str]) or new format (list[dict])
+        raw_subscribed = r.get("subscribed_to", [])
+        subscribed_channels: list[YoutubeSubscribedChannel] = []
+        for item in raw_subscribed:
+            if isinstance(item, str):
+                # Legacy format — just a profile key string, no channel details yet
+                subscribed_channels.append(YoutubeSubscribedChannel(
+                    profile=item, channel_id="", channel_name=item.upper(), subscribed_at=None
+                ))
+            elif isinstance(item, dict):
+                subscribed_channels.append(YoutubeSubscribedChannel(
+                    profile=item.get("profile", ""),
+                    channel_id=item.get("channel_id", ""),
+                    channel_name=item.get("channel_name", item.get("profile", "").upper()),
+                    subscribed_at=item.get("subscribed_at"),
+                ))
+
+        result.append(YoutubeSubscriber(
+            channel_id       = r["channel_id"],
+            display_name     = r["display_name"],
+            description      = r.get("description"),
+            country          = r.get("country"),
+            account_created  = r.get("account_created"),
+            subscriber_count = r.get("subscriber_count"),
+            video_count      = r.get("video_count"),
+            view_count       = r.get("view_count"),
+            subscribed_to    = subscribed_channels,
+            public_playlists = playlists,
+            fetched_at       = r.get("fetched_at"),
+        ))
+    return result
+
+
+@router.get("/comments", response_model=list[StoryWithComments])
+def list_story_comments():
+    """
+    Return all published stories that have at least one fetched viewer comment.
+
+    Only includes stories where comments have been fetched (fetch_video_comments.py).
+    Comments are ordered by like_count DESC within each video.
+    Stories are ordered by published_at DESC (newest first).
+    """
+    rows = get_stories_with_comments()
+    result = []
+    for r in rows:
+        comments = [
+            VideoComment(
+                comment_id        = c["comment_id"],
+                author_name       = c.get("author_name"),
+                author_channel_id = c.get("author_channel_id"),
+                text              = c["text"],
+                like_count        = c["like_count"],
+                published_at      = c.get("published_at"),
+            )
+            for c in r.get("comments", [])
+        ]
+        result.append(StoryWithComments(
+            video_id       = r["video_id"],
+            lang           = r["lang"],
+            upload_profile = r["upload_profile"],
+            story_set_id   = r.get("story_set_id"),
+            story_title    = r.get("story_title"),
+            published_at   = r.get("published_at"),
+            comments       = comments,
+        ))
+    return result
 
 
 def _redact_url(url: str) -> str:

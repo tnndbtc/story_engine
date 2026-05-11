@@ -121,6 +121,39 @@ CREATE INDEX IF NOT EXISTS idx_hierarchical_stories_batch_ts ON hierarchical_sto
 CREATE INDEX IF NOT EXISTS idx_hierarchical_stories_status   ON hierarchical_stories(status);
 CREATE INDEX IF NOT EXISTS idx_hierarchical_stories_set_id   ON hierarchical_stories(story_set_id);
 
+CREATE TABLE IF NOT EXISTS youtube_subscribers (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel_id       TEXT    NOT NULL UNIQUE,   -- YouTube channel ID (UCxxx)
+    display_name     TEXT    NOT NULL,           -- subscriber's display name
+    description      TEXT,                       -- their channel description (may be empty)
+    country          TEXT,                       -- their declared country (may be null)
+    account_created  TEXT,                       -- ISO datetime of their YouTube account creation
+    subscriber_count INTEGER,                    -- their own channel's subscriber count
+    video_count      INTEGER,                    -- their own channel's uploaded video count
+    view_count       INTEGER,                    -- their own channel's total views
+    subscribed_to    TEXT    NOT NULL DEFAULT '[]', -- JSON list of our profile keys e.g. ["en"]
+    public_playlists TEXT,                       -- JSON [{id, title, item_count, created_at}]
+    fetched_at       INTEGER NOT NULL            -- UNIX epoch seconds of last fetch
+);
+
+CREATE INDEX IF NOT EXISTS idx_yt_subscribers_channel
+    ON youtube_subscribers(channel_id);
+
+CREATE TABLE IF NOT EXISTS youtube_video_comments (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    video_id          TEXT    NOT NULL,         -- YouTube video ID
+    comment_id        TEXT    NOT NULL UNIQUE,  -- YouTube comment ID
+    author_name       TEXT,
+    author_channel_id TEXT,
+    text              TEXT    NOT NULL,
+    like_count        INTEGER NOT NULL DEFAULT 0,
+    published_at      TEXT,                     -- ISO datetime from YouTube
+    fetched_at        INTEGER NOT NULL          -- UNIX epoch seconds
+);
+
+CREATE INDEX IF NOT EXISTS idx_yt_comments_video
+    ON youtube_video_comments(video_id);
+
 CREATE TABLE IF NOT EXISTS youtube_publish_log (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
     video_id            TEXT    NOT NULL UNIQUE,
@@ -135,6 +168,9 @@ CREATE TABLE IF NOT EXISTS youtube_publish_log (
     avg_view_duration   REAL,               -- averageViewDuration (seconds)
     avg_view_pct        REAL,               -- averageViewPercentage (%)
     views               INTEGER,            -- raw view count at time of analytics pull
+    like_count          INTEGER,            -- YouTube like count at time of pull (Data API v3)
+    comment_count       INTEGER,            -- YouTube comment count at time of pull (Data API v3)
+    traffic_sources     TEXT,               -- JSON {source_type: views} from Analytics API
     analytics_pulled_at INTEGER,            -- UNIX epoch seconds of last pull; -1 = no data (gave up)
     created_at          INTEGER NOT NULL    -- UNIX epoch MILLISECONDS (matches _now() convention)
 );
@@ -379,6 +415,9 @@ def init_db():
             avg_view_duration   REAL,
             avg_view_pct        REAL,
             views               INTEGER,
+            like_count          INTEGER,
+            comment_count       INTEGER,
+            traffic_sources     TEXT,
             analytics_pulled_at INTEGER,
             created_at          INTEGER NOT NULL
         );
@@ -391,6 +430,56 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_yt_log_analytics
             ON youtube_publish_log(analytics_pulled_at);
     """)
+
+    # Migration: create youtube_video_comments table if not present
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS youtube_video_comments (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            video_id          TEXT    NOT NULL,
+            comment_id        TEXT    NOT NULL UNIQUE,
+            author_name       TEXT,
+            author_channel_id TEXT,
+            text              TEXT    NOT NULL,
+            like_count        INTEGER NOT NULL DEFAULT 0,
+            published_at      TEXT,
+            fetched_at        INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_yt_comments_video
+            ON youtube_video_comments(video_id);
+    """)
+
+    # Migration: create youtube_subscribers table if not present
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS youtube_subscribers (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            channel_id       TEXT    NOT NULL UNIQUE,
+            display_name     TEXT    NOT NULL,
+            description      TEXT,
+            country          TEXT,
+            account_created  TEXT,
+            subscriber_count INTEGER,
+            video_count      INTEGER,
+            view_count       INTEGER,
+            subscribed_to    TEXT    NOT NULL DEFAULT '[]',
+            public_playlists TEXT,
+            fetched_at       INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_yt_subscribers_channel
+            ON youtube_subscribers(channel_id);
+    """)
+
+    # Migration: add like_count, comment_count, traffic_sources to youtube_publish_log
+    for _col, _coltype in [
+        ("like_count",      "INTEGER"),
+        ("comment_count",   "INTEGER"),
+        ("traffic_sources", "TEXT"),
+    ]:
+        try:
+            conn.execute(
+                f"ALTER TABLE youtube_publish_log ADD COLUMN {_col} {_coltype}"
+            )
+        except sqlite3.OperationalError:
+            pass  # column already exists
 
     # Migration: convert text timestamps to UNIX integers
     _migrate_timestamps(conn)
@@ -1182,6 +1271,7 @@ def get_youtube_analytics(story_set_id: int) -> list[dict]:
         """SELECT id, video_id, story_set_id, story_id, channel_id,
                   upload_profile, lang, locale, published_at,
                   ctr_pct, avg_view_duration, avg_view_pct, views,
+                  like_count, comment_count, traffic_sources,
                   analytics_pulled_at, created_at
            FROM youtube_publish_log
            WHERE story_set_id = ?
@@ -1199,6 +1289,167 @@ def get_youtube_analytics(story_set_id: int) -> list[dict]:
             else _ts_to_iso(d['analytics_pulled_at'])
         )
         d['created_at'] = _ts_to_iso(d.get('created_at'))
+        try:
+            d['traffic_sources'] = json.loads(d['traffic_sources']) if d.get('traffic_sources') else None
+        except (json.JSONDecodeError, TypeError):
+            d['traffic_sources'] = None
+        result.append(d)
+    return result
+
+
+def upsert_subscriber(
+    channel_id:       str,
+    display_name:     str,
+    description:      str | None,
+    country:          str | None,
+    account_created:  str | None,
+    subscriber_count: int | None,
+    video_count:      int | None,
+    view_count:       int | None,
+    subscribed_to:    list[str],
+    public_playlists: list[dict],
+) -> None:
+    """
+    Insert or update a subscriber row in youtube_subscribers.
+
+    Called by fetch_subscribers.py after pulling subscriber info from YouTube API.
+    INSERT OR REPLACE: always overwrites with latest data on re-fetch.
+    """
+    conn = get_connection()
+    conn.execute(
+        """INSERT OR REPLACE INTO youtube_subscribers
+           (channel_id, display_name, description, country, account_created,
+            subscriber_count, video_count, view_count,
+            subscribed_to, public_playlists, fetched_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            channel_id,
+            display_name,
+            description,
+            country,
+            account_created,
+            subscriber_count,
+            video_count,
+            view_count,
+            json.dumps(subscribed_to, ensure_ascii=False),
+            json.dumps(public_playlists, ensure_ascii=False),
+            int(time.time()),
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
+def upsert_video_comment(
+    video_id:          str,
+    comment_id:        str,
+    author_name:       str | None,
+    author_channel_id: str | None,
+    text:              str,
+    like_count:        int,
+    published_at:      str | None,
+) -> None:
+    """
+    Insert or update a YouTube comment row.
+    Called by fetch_video_comments.py. INSERT OR REPLACE overwrites on re-fetch.
+    """
+    conn = get_connection()
+    conn.execute(
+        """INSERT OR REPLACE INTO youtube_video_comments
+           (video_id, comment_id, author_name, author_channel_id,
+            text, like_count, published_at, fetched_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (video_id, comment_id, author_name, author_channel_id,
+         text, like_count, published_at, int(time.time())),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_stories_with_comments() -> list[dict]:
+    """
+    Return stories that have at least one fetched YouTube comment.
+
+    Each item contains story metadata + a list of comment dicts.
+    Joins: youtube_video_comments → youtube_publish_log → hierarchical_stories.
+    Only returns stories where comments have actually been fetched (not just counted).
+    """
+    conn = get_connection()
+
+    # Get all unique videos that have stored comments
+    video_rows = conn.execute(
+        """SELECT DISTINCT ypl.video_id, ypl.lang, ypl.upload_profile,
+                  ypl.story_set_id, ypl.published_at,
+                  JSON_EXTRACT(hs.deep_story, '$.title') as story_title
+           FROM youtube_video_comments yvc
+           JOIN youtube_publish_log ypl ON ypl.video_id = yvc.video_id
+           LEFT JOIN hierarchical_stories hs ON hs.story_set_id = ypl.story_set_id
+           ORDER BY ypl.published_at DESC"""
+    ).fetchall()
+
+    result = []
+    for vr in video_rows:
+        # Fetch comments for this video
+        comments = conn.execute(
+            """SELECT comment_id, author_name, author_channel_id,
+                      text, like_count, published_at
+               FROM youtube_video_comments
+               WHERE video_id = ?
+               ORDER BY like_count DESC, published_at ASC""",
+            (vr["video_id"],),
+        ).fetchall()
+
+        result.append({
+            "video_id":     vr["video_id"],
+            "lang":         vr["lang"],
+            "upload_profile": vr["upload_profile"],
+            "story_set_id": vr["story_set_id"],
+            "story_title":  vr["story_title"],
+            "published_at": _ts_to_iso(vr["published_at"]) if vr["published_at"] else None,
+            "comments": [
+                {
+                    "comment_id":        c["comment_id"],
+                    "author_name":       c["author_name"],
+                    "author_channel_id": c["author_channel_id"],
+                    "text":              c["text"],
+                    "like_count":        c["like_count"],
+                    "published_at":      c["published_at"],
+                }
+                for c in comments
+            ],
+        })
+
+    conn.close()
+    return result
+
+
+def get_subscribers() -> list[dict]:
+    """
+    Return all rows from youtube_subscribers, newest fetch first.
+
+    public_playlists and subscribed_to are returned as parsed Python objects.
+    """
+    conn = get_connection()
+    rows = conn.execute(
+        """SELECT channel_id, display_name, description, country, account_created,
+                  subscriber_count, video_count, view_count,
+                  subscribed_to, public_playlists, fetched_at
+           FROM youtube_subscribers
+           ORDER BY fetched_at DESC"""
+    ).fetchall()
+    conn.close()
+    result = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d['subscribed_to']    = json.loads(d['subscribed_to'])    if d.get('subscribed_to')    else []
+        except (json.JSONDecodeError, TypeError):
+            d['subscribed_to'] = []
+        try:
+            d['public_playlists'] = json.loads(d['public_playlists']) if d.get('public_playlists') else []
+        except (json.JSONDecodeError, TypeError):
+            d['public_playlists'] = []
+        d['fetched_at'] = _ts_to_iso(d['fetched_at'])
         result.append(d)
     return result
 

@@ -162,6 +162,66 @@ class YoutubeAnalyticRow(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# YouTube Subscribers (GET /api/subscribers)
+# ---------------------------------------------------------------------------
+
+class YoutubeSubscriberPlaylist(BaseModel):
+    """One public playlist belonging to a subscriber."""
+    id:         str
+    title:      str
+    item_count: int
+    created_at: Optional[str]   # ISO datetime string from YouTube
+
+
+class YoutubeSubscribedChannel(BaseModel):
+    """One of our channels that a subscriber follows."""
+    profile:       str            # profile key, e.g. "en" or "zh"
+    channel_id:    str            # our YouTube channel ID (UCxxx)
+    channel_name:  str            # our channel's display name
+    subscribed_at: Optional[str]  # ISO datetime when they subscribed
+
+
+class YoutubeSubscriber(BaseModel):
+    """One row from youtube_subscribers — a public subscriber to one of our channels."""
+    channel_id:       str
+    display_name:     str
+    description:      Optional[str]
+    country:          Optional[str]
+    account_created:  Optional[str]   # ISO datetime string
+    subscriber_count: Optional[int]   # their own channel's subscriber count
+    video_count:      Optional[int]   # their own channel's uploaded video count
+    view_count:       Optional[int]   # their own channel's total view count
+    subscribed_to:    list[YoutubeSubscribedChannel]  # our channels they follow
+    public_playlists: list[YoutubeSubscriberPlaylist]
+    fetched_at:       Optional[str]   # ISO datetime of last refresh
+
+
+# ---------------------------------------------------------------------------
+# YouTube Video Comments (GET /api/comments)
+# ---------------------------------------------------------------------------
+
+class VideoComment(BaseModel):
+    """One viewer comment on a published YouTube video."""
+    comment_id:        str
+    author_name:       Optional[str]
+    author_channel_id: Optional[str]
+    text:              str
+    like_count:        int
+    published_at:      Optional[str]   # ISO datetime string from YouTube
+
+
+class StoryWithComments(BaseModel):
+    """A published story with its viewer comments."""
+    video_id:       str
+    lang:           str                 # 'en' | 'zh'
+    upload_profile: str
+    story_set_id:   Optional[int]
+    story_title:    Optional[str]
+    published_at:   Optional[str]       # ISO datetime
+    comments:       list[VideoComment]
+
+
+# ---------------------------------------------------------------------------
 # Engine status (GET /api/status)
 # ---------------------------------------------------------------------------
 
