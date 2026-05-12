@@ -1,9 +1,9 @@
 You are scoring a story for a specific YouTube channel — not for general news value,
-but for whether THIS channel's audience will watch it all the way through.
+but for whether THIS channel's English-speaking audience will watch it all the way through.
 
 CHANNEL IDENTITY: "Hidden systems made visible."
 
-AUDIENCE PROFILE (25–45, technically literate, globally aware):
+AUDIENCE PROFILE (English-speaking, 25–45, globally aware, technically literate):
   They stay for:
     - Hidden mechanisms — how unseen systems shape everyday life
     - Quiet shifts — things changing before anyone noticed
@@ -15,7 +15,11 @@ AUDIENCE PROFILE (25–45, technically literate, globally aware):
     - Price-only news (crypto/stock moves without explaining the mechanism)
     - Sports results, celebrity events
     - Geopolitical posturing with no concrete personal consequence
-    - Stories that require significant prior context to follow
+    - Stories requiring heavy prior context to follow
+    - Regional Asian politics/culture with no clear path to English-speaker impact
+      (e.g. Chinese provincial election disputes, Taiwan legislative procedurals,
+       Japan domestic party reshuffles — unless the mechanism affects English-
+       speaking audiences directly)
 
 STORY TITLE: {title}
 
@@ -66,23 +70,23 @@ curiosity_gap (0-20)
         immediate "wait, what?" before the viewer understands the context.
     "A virus that shouldn't exist showed up on a cruise ship"
     "A 732-byte script broke every Linux system since 2017"
-    "India's market is flashing three warnings nobody is reporting"
+    "The Fed's inflation model has a 40-year-old flaw nobody fixed"
   Low: states an obvious or expected outcome.
     "Government announces new policy"  "Company reports quarterly earnings"
 
 ordinary_people_stakes (0-20)
-  High: an ordinary viewer with no special knowledge immediately feels
-        personal impact — their money, health, job, device, or daily life.
+  High: an ordinary English-speaking viewer with no special knowledge immediately
+        feels personal impact — their money, health, job, device, or daily life.
         The stakes must be FELT, not just intellectually acknowledged.
     "AI is quietly consuming the chips your phone was supposed to get"
     "This virus mutation could reach your city within weeks"
     "Your savings are losing value through this mechanism nobody explains"
   Low: consequence lands on governments, corporations, or distant nations
-       with no clear path to individual impact.
+       with no clear path to individual impact on English-speaking viewers.
     "Two nations dispute territorial rights"
-    "A hedge fund lost $2B in a bad trade"
+    "A Chinese city's real estate developer filed for restructuring"
   IMPORTANT: avoid rewarding stories just because they mention large numbers
-  or famous institutions — ask whether an average viewer feels affected.
+  or famous institutions — ask whether an average English-speaking viewer feels affected.
 
 hidden_mechanism (0-20)
   High: reveals HOW something works that most people assumed was different,
@@ -105,38 +109,34 @@ consequence_clarity (0-15)
        but cannot describe the consequence.
 
 audience_fit (0-15)
-  Directly score how well this story matches the channel's identity above.
+  Directly score how well this story matches the English-speaking channel audience above.
   High (12-15): story IS the channel — hidden system, quiet shift, weird-but-real,
-                ordinary stakes. Audience would recommend it.
+                ordinary stakes relevant to English-speaking audiences globally.
+                Audience would recommend it.
     Examples of 15: "The forensic detail that proved friendly fire didn't happen"
                     "AI is replacing the chip supply chain silently"
-                    "Why Taipei's pest control is making things worse"
-  Medium (6-11): fits some channel traits but has elements the audience dislikes.
+                    "Why the US banking system lets fraudsters drain accounts in 10 seconds"
+  Medium (6-11): fits some channel traits but has elements the audience dislikes,
+                 OR is a strong story geographically narrow to Asia without
+                 clear English-speaker relevance.
   Low (0-5): story is primarily geopolitical posturing, sports, price recap,
-             or requires heavy prior context.
+             or requires heavy prior context. Includes stories about Asian
+             regional politics or culture with no clear English-speaker impact.
     Examples of 0-3: "Iran claims it struck a US warship / Pentagon denies"
                      "Bitcoin price breaks $81k — analysts watch key levels"
                      "Orlando fires coach after playoff exit"
+                     "Taiwan's legislature debates procedural rules again"
   EXCEPTION — do NOT penalize for geopolitics if the story's core is a hidden
   mechanism, forensic finding, or institutional failure:
     "A buckshot pellet traced to a specific gun ended the friendly-fire debate"
       → high hidden_mechanism + high audience_fit (it's a forensics story)
     "A North Korean hacker unit exploited a bank's legacy SWIFT code"
       → high hidden_mechanism (it's a systems story, not a diplomatic story)
+    "China's chip export controls created an invisible supply chain nobody mapped"
+      → mechanism is global impact on English-speaking tech industry
   The test: could the story run with the political actors anonymised and still
-  be compelling? If yes, score audience_fit on the mechanism, not the politics.
-  EXCEPTION — do NOT penalize entertainment stories for celebrity surface framing
-  if the story's core reveals a hidden mechanism about the industry, business
-  model, or systemic failure behind the event:
-    "Why every Netflix show gets cancelled after two seasons"
-      → high hidden_mechanism + high audience_fit (industry economics story)
-    "The contract clause that kept actors poor for 30 years"
-      → high hidden_mechanism (systemic institutional failure, not gossip)
-    "How one studio's accounting method makes every blockbuster look like a loss"
-      → mechanism-reveal: directly affects anyone who watches films
-  Score audience_fit on the MECHANISM, not on whether celebrities appear in it.
-  Low entertainment scores are only justified when the story is pure reaction/
-  gossip with no mechanism: "Celebrity X and Y broke up" → audience_fit 0-3.
+  be compelling to an English-speaking viewer? If yes, score audience_fit on
+  the mechanism, not the politics.
 
 title_retention_alignment (0-5)
   High: the title's implicit promise matches what the story actually delivers.

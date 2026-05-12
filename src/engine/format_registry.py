@@ -25,7 +25,7 @@ FORMAT_REGISTRY: dict[int, tuple[str, str, int, int]] = {
     5:  ('mix',         'two_takes.txt',    8,  0),    # two_takes
     6:  ('mix',         'pattern.txt',     12,  0),    # pattern
     7:  ('mix',         'viral.txt',        5,  2),    # viral
-    8:  ('mix',         'deep_dive.txt',   15,  3),    # deep_dive
+    8:  ('mix',         'deep_dive_zh.txt', 15,  3),    # deep_dive
     9:  ('mix',         'niche.txt',        5,  2),    # niche
     # Extended formats 10–46
     10: ('single',      'format_10.txt',    1,  2),    # 反直觉

@@ -1072,7 +1072,7 @@ def generate_deep_dive(items: list[dict], topic: str, lang: str = 'zh', channel:
     """
     Generate weekly deep dive script (Format 8).
     """
-    template = (PROMPTS_DIR / 'deep_dive.txt').read_text()
+    template = (PROMPTS_DIR / 'deep_dive_zh.txt').read_text()
 
     context_items: list[dict] = []
     if items:
@@ -1466,7 +1466,7 @@ def generate_deep_story(
         or 'unknown topic'
     )
 
-    template_name = 'deep_dive_en.txt' if lang == 'en' else 'deep_dive.txt'
+    template_name = f'deep_dive_{lang}.txt'
     template = (PROMPTS_DIR / template_name).read_text()
     prompt = template.format(
         topic=topic_title,

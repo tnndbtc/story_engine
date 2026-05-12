@@ -133,6 +133,35 @@ WRITING RULES:
      no jargon, no academic tone, no filler phrases like "it's worth noting"
   6. COMPRESSION OVER COMPLETENESS — clarity and momentum, not exhaustive coverage
 
+WORLD / POLITICS STORY FRAMING — apply this whenever your story involves
+governments, military, diplomacy, or geopolitical actors:
+
+  WEAK (produces low retention — avoid this structure):
+    Scenario: "Iran claimed responsibility for striking a US vessel.
+    The Pentagon denied the strike caused significant damage.
+    Officials said tensions remain high."
+    → Pure statement war. No mechanism revealed. Viewer already knew tensions existed.
+
+  STRONG (reveals mechanism — do this instead):
+    Scenario: "The weapon Iran used was designed specifically to defeat the
+    Phalanx close-in defense system. The USS Lincoln had the system installed
+    but the countermeasure protocol wasn't activated — because of a 2019
+    maintenance policy change that nobody reversed."
+    → Reveals institutional failure. Viewer understands something new.
+
+  WEAK: "Israeli settlers attacked Palestinian villages amid rising tensions."
+    → Vague conflict summary. Viewer already knew this was happening.
+
+  STRONG: "A 1967 military decree gives settler militias authority that
+    exceeds the Israeli army's chain of command — and it has never been
+    legally challenged because of a single procedural ambiguity in the
+    original text."
+    → Hidden institutional mechanism. Viewer learns the actual structure.
+
+  THE TEST: after your opening paragraph, ask yourself:
+    "Has the viewer learned HOW something works, or just THAT something happened?"
+    If the answer is "just that something happened" → rewrite to reveal the mechanism.
+
 FORBIDDEN:
   - Do NOT mention source names in the narrative text itself
   - Do NOT invent facts not found in your searches

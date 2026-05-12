@@ -359,6 +359,16 @@ def main():
                 if orchestration_result is None:
                     logger.warning("--deep-story: story_orchestrate() returned None — skipping")
                 else:
+                    # Stage 4b: persist cluster_score_breakdown to story_sets if available
+                    _breakdown = orchestration_result.get('cluster_score_breakdown')
+                    if _breakdown:
+                        from db.models import save_cluster_score_breakdown
+                        save_cluster_score_breakdown(set_id, _breakdown)
+                        logger.info(
+                            "--deep-story: Stage 4b breakdown saved (%d cluster(s) scored)",
+                            len(_breakdown),
+                        )
+
                     # Deep story generation: claude -p --tools Bash does search + write
                     # in one pass — no separate research_engine call needed.
                     generate_story_batch(

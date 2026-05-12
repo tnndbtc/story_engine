@@ -1,0 +1,77 @@
+You are evaluating clusters of news headlines for a YouTube channel whose identity is:
+"Hidden systems made visible."
+
+Below are up to 5 candidate news story clusters. Each cluster contains source
+headlines grouped around a single event.
+
+For each cluster, score it on 7 dimensions (each 0–10) and provide a one-sentence reason.
+
+DIMENSION DEFINITIONS:
+
+  curiosity_gap        — does the premise create immediate "wait, what?" tension?
+                         High: counterintuitive or impossible-sounding premise.
+                         Low: obvious or expected outcome.
+
+  hidden_mechanism     — does the cluster reveal HOW an unseen system works,
+                         rather than just WHAT happened?
+                         High: exposes an institutional, technical, or economic mechanism.
+                         Low: pure event recap — A happened, B happened.
+
+  audience_fit         — does this match the "hidden systems made visible" channel identity?
+                         High: mechanism-reveal, quiet-shift, weird-but-real, systemic failure.
+                         Low: sports, celebrity gossip, geopolitical posturing with no mechanism.
+
+  human_relevance      — would a normal educated viewer immediately understand why this
+                         matters to their life, money, health, work, technology, or society?
+                         NOTE: different from audience_fit.
+                           A niche gaming mechanic can score high on curiosity_gap but low
+                           on human_relevance. A North Korean cyberattack on bank SWIFT codes
+                           scores high on human_relevance (banking system everyone uses).
+                         High: viewer feels it directly — their savings, health, devices, job.
+                         Low: affects only specialists, distant regions, or abstract entities.
+
+  retention_likelihood — structural prediction: will viewers stay past 30 seconds?
+                         High: story has escalating reveals, each sentence raises a new question.
+                         Low: story front-loads the answer — nothing left to discover after hook.
+
+  explanatory_payoff   — does watching deliver a clear "so THAT'S why" moment?
+                         High: viewer leaves with a concrete new understanding.
+                         Low: viewer learns facts but cannot describe the consequence.
+
+  statement_war        — INVERTED PENALTY (10 = good, 0 = bad):
+                         10 = no statement-war framing at all.
+                          0 = cluster dominated by "A says / B denies" headlines.
+                         Examples of 0–2 (penalize these):
+                           "Iran says X / Pentagon denies Y"
+                           "Russia violated ceasefire / Moscow disputes claim"
+                           "Official condemns attack / government rejects accusation"
+                           Generic diplomatic back-and-forth with no mechanism.
+                         Examples of 8–10 (reward these):
+                           Mechanism-reveal stories, systemic failure stories,
+                           scientific or economic discoveries, institutional exposés.
+
+CLUSTERS TO EVALUATE:
+{clusters_block}
+
+Return ONLY valid JSON — no text outside the JSON, no markdown fences.
+Return a JSON array, one object per cluster, in the SAME ORDER as the input clusters:
+
+[
+  {{
+    "cluster_id": "<event_id exactly as given in the input>",
+    "scores": {{
+      "curiosity_gap":        <integer 0-10>,
+      "hidden_mechanism":     <integer 0-10>,
+      "audience_fit":         <integer 0-10>,
+      "human_relevance":      <integer 0-10>,
+      "retention_likelihood": <integer 0-10>,
+      "explanatory_payoff":   <integer 0-10>,
+      "statement_war":        <integer 0-10>
+    }},
+    "reason": "<one sentence explaining the decisive factor for this cluster>"
+  }},
+  ...
+]
+
+DO NOT output final_score or recommendation — those are computed in code.
+DO NOT output anything other than the JSON array.

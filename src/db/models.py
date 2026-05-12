@@ -481,6 +481,16 @@ def init_db():
         except sqlite3.OperationalError:
             pass  # column already exists
 
+    # Migration: add cluster_score_breakdown column to story_sets (Stage 4b LLM scorer)
+    # Stores JSON array of per-cluster LLM scores for the run, for debugging and
+    # future training data (correlate dimensions vs avg_view_pct).
+    try:
+        conn.execute(
+            "ALTER TABLE story_sets ADD COLUMN cluster_score_breakdown TEXT DEFAULT NULL"
+        )
+    except sqlite3.OperationalError:
+        pass  # column already exists
+
     # Migration: convert text timestamps to UNIX integers
     _migrate_timestamps(conn)
 
@@ -571,6 +581,33 @@ def complete_story_set(set_id: int, status: str = 'complete'):
     )
     conn.commit()
     conn.close()
+
+
+def save_cluster_score_breakdown(set_id: int, breakdown: list[dict]) -> None:
+    """
+    Persist the Stage 4b LLM cluster-scorer breakdown to story_sets.
+
+    Args:
+        set_id:    story_sets.id for the current run.
+        breakdown: list of per-cluster score dicts (from lm_cluster_scorer).
+                   Stored as JSON text in cluster_score_breakdown column.
+
+    Non-fatal: logs a warning on any DB error, never raises.
+    """
+    import json as _json
+    try:
+        conn = get_connection()
+        conn.execute(
+            "UPDATE story_sets SET cluster_score_breakdown = ? WHERE id = ?",
+            (_json.dumps(breakdown, ensure_ascii=False), set_id),
+        )
+        conn.commit()
+        conn.close()
+    except Exception as exc:
+        import logging as _logging
+        _logging.getLogger(__name__).warning(
+            "save_cluster_score_breakdown: failed to save for set_id=%d — %s", set_id, exc
+        )
 
 
 def record_used_items(story_set_id: int, story_id: int, format: str,

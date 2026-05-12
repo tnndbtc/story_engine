@@ -31,11 +31,26 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-_PROMPT_PATH = Path(__file__).resolve().parent.parent / "prompts" / "attract_score.txt"
+_PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 # __file__ = story_engine/src/engine/attract_scorer.py
 # .parent        = story_engine/src/engine/
 # .parent.parent = story_engine/src/
-# → story_engine/src/prompts/attract_score.txt  ✓
+# → story_engine/src/prompts/  ✓
+
+
+def _prompt_path(lang: str) -> Path:
+    """
+    Pick the attract-score prompt file for the given language.
+
+    Routes:
+        lang='en'  → attract_score_en.txt  (English-audience rubric)
+        otherwise  → attract_score_zh.txt  (default / ZH rubric)
+
+    Both files use identical dimensions and JSON schema, so downstream code
+    (total computation, breakdown storage) is unchanged.
+    """
+    name = "attract_score_en.txt" if lang == "en" else "attract_score_zh.txt"
+    return _PROMPTS_DIR / name
 
 _CLAUDE_BIN = os.environ.get("CLAUDE_BIN", "claude")
 
@@ -64,7 +79,7 @@ def score_story(title: str, body: str, lang: str = "zh") -> tuple[int | None, di
     must NOT save a failure result to DB — only save when score is not None.
     """
     try:
-        prompt_template = _PROMPT_PATH.read_text(encoding="utf-8")
+        prompt_template = _prompt_path(lang).read_text(encoding="utf-8")
     except Exception as exc:
         logger.error("attract_scorer: cannot read prompt — %s", exc)
         return None, {}

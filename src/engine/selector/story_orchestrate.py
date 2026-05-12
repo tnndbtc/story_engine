@@ -601,8 +601,122 @@ def story_orchestrate(
 
     # Sort: deep_score DESC, member_count DESC, event_id ASC (deterministic tiebreak)
     eligible.sort(key=lambda x: (-_deep_score(x[0], x[1]), -x[0].member_count, x[0].event_id))
-    deep_cluster, deep_norm = eligible[0]
-    deep_final              = _deep_score(deep_cluster, deep_norm)
+
+    # ── Stage 4b: LLM cluster scorer ─────────────────────────────────────────
+    # Score the top-5 eligible clusters semantically before committing to rank 1.
+    # Integration rules (tiebreaker — does NOT replace deterministic ranking):
+    #   a. LLM top pick matches deterministic rank 1 → no change.
+    #   b. LLM top pick differs AND its final_score exceeds deterministic rank 1's
+    #      final_score by >= LM_SCORER_OVERRIDE_DELTA → swap to LLM pick.
+    #   c. Otherwise → keep deterministic rank 1.
+    #   d. If lm_cluster_scorer returns None → always keep deterministic rank 1.
+    # The cluster_score_breakdown is always returned in the result for DB storage.
+    LM_SCORER_OVERRIDE_DELTA = 10   # minimum score advantage for LLM to override
+
+    cluster_score_breakdown: list[dict] | None = None
+
+    try:
+        from engine.selector.lm_cluster_scorer import score_clusters
+        top5_clusters = [c for c, _ in eligible[:5]]
+        lm_scores     = score_clusters(top5_clusters)
+    except Exception as _lm_exc:
+        logger.warning(
+            "story_orchestrate: Stage 4b import/call failed — %s — using deterministic rank 1",
+            _lm_exc,
+        )
+        lm_scores = None
+
+    # Build a lookup: event_id → lm score entry
+    lm_score_map: dict[str, dict] = {}
+    if lm_scores:
+        for entry in lm_scores:
+            lm_score_map[entry["event_id"]] = entry
+
+    # Determine final deep_cluster using 4-rule integration
+    det_rank1_cluster, det_rank1_norm = eligible[0]
+    det_rank1_final = _deep_score(det_rank1_cluster, det_rank1_norm)
+
+    deep_cluster = det_rank1_cluster
+    deep_norm    = det_rank1_norm
+    deep_final   = det_rank1_final
+    lm_overrode  = False
+
+    if lm_scores:
+        lm_top      = lm_scores[0]                         # highest LLM final_score
+        lm_top_id   = lm_top["event_id"]
+        det_top_id  = det_rank1_cluster.event_id
+
+        if lm_top_id == det_top_id:
+            # Rule a: agreement — no change
+            logger.info(
+                "story_orchestrate: Stage 4b — LLM agrees with deterministic rank 1 "
+                "(event_id=%s, lm_final_score=%d %s)",
+                lm_top_id, lm_top["final_score"], lm_top["recommendation"],
+            )
+        else:
+            # Rules b/c: disagreement — check score delta
+            det_lm_entry    = lm_score_map.get(det_top_id, {})
+            det_lm_score    = det_lm_entry.get("final_score", 0)
+            lm_top_score    = lm_top["final_score"]
+            score_delta     = lm_top_score - det_lm_score
+
+            if score_delta >= LM_SCORER_OVERRIDE_DELTA:
+                # Rule b: LLM wins — find the matching cluster object
+                override_cluster = next(
+                    (c for c, _ in eligible if c.event_id == lm_top_id), None
+                )
+                if override_cluster is not None:
+                    override_norm  = next(s for c, s in eligible if c.event_id == lm_top_id)
+                    deep_cluster   = override_cluster
+                    deep_norm      = override_norm
+                    deep_final     = _deep_score(override_cluster, override_norm)
+                    lm_overrode    = True
+                    logger.info(
+                        "story_orchestrate: Stage 4b OVERRIDE — LLM pick event_id=%s "
+                        "lm_score=%d vs det_score=%d (delta=%d >= %d) "
+                        "recommendation=%s",
+                        lm_top_id, lm_top_score, det_lm_score, score_delta,
+                        LM_SCORER_OVERRIDE_DELTA, lm_top["recommendation"],
+                    )
+                else:
+                    logger.warning(
+                        "story_orchestrate: Stage 4b — LLM top pick event_id=%s not "
+                        "found in eligible list — keeping deterministic rank 1",
+                        lm_top_id,
+                    )
+            else:
+                # Rule c: delta too small — keep deterministic rank 1
+                logger.info(
+                    "story_orchestrate: Stage 4b — LLM prefers event_id=%s but "
+                    "score delta %d < %d threshold — keeping deterministic rank 1 "
+                    "(event_id=%s)",
+                    lm_top_id, score_delta, LM_SCORER_OVERRIDE_DELTA, det_top_id,
+                )
+
+    # Build cluster_score_breakdown for DB storage
+    if lm_scores:
+        cluster_score_breakdown = []
+        for entry in lm_scores:
+            cluster_score_breakdown.append({
+                "event_id":       entry["event_id"],
+                "final_score":    entry["final_score"],
+                "recommendation": entry["recommendation"],
+                "selected":       entry["event_id"] == deep_cluster.event_id,
+                "scores":         entry["scores"],
+                "reason":         entry["reason"],
+            })
+        if lm_overrode:
+            logger.info(
+                "story_orchestrate: Stage 4b breakdown — %d clusters scored, "
+                "LLM overrode deterministic pick",
+                len(cluster_score_breakdown),
+            )
+        else:
+            logger.info(
+                "story_orchestrate: Stage 4b breakdown — %d clusters scored, "
+                "deterministic pick confirmed",
+                len(cluster_score_breakdown),
+            )
 
     ranking_metadata[deep_cluster.event_id] = {
         'cluster_score':    round(deep_final, 4),
@@ -611,9 +725,10 @@ def story_orchestrate(
     }
     logger.info(
         "story_orchestrate: Step 2 — deep_story selected event_id=%s "
-        "score=%.4f member_count=%d hotness=%.1f",
+        "score=%.4f member_count=%d hotness=%.1f%s",
         deep_cluster.event_id, deep_final,
         deep_cluster.member_count, deep_cluster.event_hotness,
+        " (Stage 4b override)" if lm_overrode else "",
     )
 
     # ── Step 3: Supporting story selection ────────────────────────────────────
@@ -828,8 +943,9 @@ def story_orchestrate(
     )
 
     return {
-        'deep_story':         deep_cluster,
-        'supporting_stories': supporting,
-        'excluded_clusters':  excluded_clusters,
-        'ranking_metadata':   ranking_metadata,
+        'deep_story':              deep_cluster,
+        'supporting_stories':      supporting,
+        'excluded_clusters':       excluded_clusters,
+        'ranking_metadata':        ranking_metadata,
+        'cluster_score_breakdown': cluster_score_breakdown,  # None if Stage 4b failed/skipped
     }
