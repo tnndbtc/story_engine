@@ -352,9 +352,30 @@ def main():
         else:
             logger.info("--deep-story: orchestrating %d clusters...", len(cluster_map))
             try:
+                # Load profile config to extract cluster_title_blocklist (fail-safe)
+                _cluster_title_blocklist: list[str] = []
+                try:
+                    from engine.selector.config import load_with_profile
+                    _profile_cfg = load_with_profile(
+                        CONFIG_PATH, args.config_profile, lang=args.lang
+                    )
+                    _cluster_title_blocklist = _profile_cfg.cluster_title_blocklist
+                    if _cluster_title_blocklist:
+                        logger.info(
+                            "--deep-story: cluster_title_blocklist loaded (%d pattern(s)) "
+                            "from profile=%s",
+                            len(_cluster_title_blocklist), args.config_profile or '(base)',
+                        )
+                except Exception as _cfg_load_exc:
+                    logger.warning(
+                        "--deep-story: could not load profile config for title blocklist "
+                        "— %s — proceeding without blocklist", _cfg_load_exc,
+                    )
+
                 orchestration_result = story_orchestrate(
                     cluster_map,
                     apply_repetition_penalty=not args.no_repetition_penalty,
+                    cluster_title_blocklist=_cluster_title_blocklist or None,
                 )
                 if orchestration_result is None:
                     logger.warning("--deep-story: story_orchestrate() returned None — skipping")

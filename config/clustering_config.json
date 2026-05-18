@@ -5,8 +5,8 @@
   "threshold_min": 0.45,
   "threshold_max": 0.7,
   "change_min_delta": 0.03,
-  "last_calibrated_at": "2026-05-12 03:17:01",
-  "sample_count_at_calibration": 319328,
-  "jaccard_duplicate_threshold": 0.2,
+  "last_calibrated_at": "2026-05-18 03:17:01",
+  "sample_count_at_calibration": 412052,
+  "jaccard_duplicate_threshold": 0.35,
   "attractiveness_threshold": 72
 }

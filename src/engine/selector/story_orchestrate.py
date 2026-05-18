@@ -479,6 +479,7 @@ def _passes_quality_floor(cluster) -> tuple[bool, str | None]:
 def story_orchestrate(
     cluster_map: dict,
     apply_repetition_penalty: bool = True,
+    cluster_title_blocklist: list[str] | None = None,
 ) -> dict | None:
     """
     Stage 3: Select deep_story and supporting_stories from a cluster_map.
@@ -490,6 +491,11 @@ def story_orchestrate(
                      multiplier to clusters whose entity fingerprint appeared in any
                      of the last REPEAT_WINDOW_BATCHES batches. History is always
                      saved regardless of this flag.
+        cluster_title_blocklist: Optional list of regex pattern strings. Any cluster
+                     whose representative title (or first 3 timeline titles) matches
+                     any pattern is excluded before story selection. Used to block
+                     low-retention story types per profile (e.g. price-update stories
+                     in run7_crypto). Patterns compiled with re.IGNORECASE.
 
     Returns:
         {
@@ -601,6 +607,73 @@ def story_orchestrate(
 
     # Sort: deep_score DESC, member_count DESC, event_id ASC (deterministic tiebreak)
     eligible.sort(key=lambda x: (-_deep_score(x[0], x[1]), -x[0].member_count, x[0].event_id))
+
+    # ── Step 2b: Title keyword blocklist filter ────────────────────────────────
+    # Applied after sort so the best clusters are checked first (logging gives
+    # actionable output). Clusters matching any blocklist pattern are excluded.
+    if cluster_title_blocklist:
+        import re as _re
+
+        compiled_patterns = []
+        for raw_pat in cluster_title_blocklist:
+            try:
+                compiled_patterns.append(_re.compile(raw_pat, _re.IGNORECASE))
+            except _re.error as _pat_err:
+                logger.warning(
+                    "story_orchestrate: Step 2b — invalid blocklist pattern %r (%s) — skipped",
+                    raw_pat, _pat_err,
+                )
+
+        def _cluster_blocked(cluster) -> tuple[bool, str]:
+            """Return (blocked, matched_pattern_str) for a cluster."""
+            titles: list[str] = []
+            rep = getattr(cluster, 'representative', None)
+            if rep is not None:
+                t = (getattr(rep, 'canonical_title', None) or
+                     getattr(rep, 'title_original', None) or '').strip()
+                if t:
+                    titles.append(t)
+            for entry in (getattr(cluster, 'timeline', None) or [])[:3]:
+                t = entry.get('title', '').strip()
+                if t:
+                    titles.append(t)
+            for title in titles:
+                for pat in compiled_patterns:
+                    if pat.search(title):
+                        return True, pat.pattern
+            return False, ""
+
+        kept: list = []
+        for cluster, norm_score in eligible:
+            blocked, matched = _cluster_blocked(cluster)
+            if blocked:
+                excluded_clusters.append(cluster)
+                ranking_metadata[cluster.event_id] = {
+                    'cluster_score':    0.0,
+                    'selection_rank':   -1,
+                    'rejection_reason': f'title_blocklist:{matched[:60]}',
+                }
+                logger.info(
+                    "story_orchestrate: Step 2b — excluded cluster %s (title blocked by %r)",
+                    cluster.event_id, matched[:60],
+                )
+            else:
+                kept.append((cluster, norm_score))
+
+        if not kept:
+            logger.warning(
+                "story_orchestrate: Step 2b — all %d eligible clusters blocked by title "
+                "blocklist — falling back to full eligible list",
+                len(eligible),
+            )
+            # Fail-open: if blocklist would exclude everything, keep all eligible
+        else:
+            if len(kept) < len(eligible):
+                logger.info(
+                    "story_orchestrate: Step 2b — %d/%d clusters passed title blocklist",
+                    len(kept), len(eligible),
+                )
+            eligible = kept
 
     # ── Stage 4b: LLM cluster scorer ─────────────────────────────────────────
     # Score the top-5 eligible clusters semantically before committing to rank 1.

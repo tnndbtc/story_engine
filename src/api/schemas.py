@@ -222,6 +222,44 @@ class StoryWithComments(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Games / KataGo channel analytics (GET /api/games/channel-stats, GET /api/games/videos)
+# ---------------------------------------------------------------------------
+
+class GamesChannelStats(BaseModel):
+    """Channel-level stats for the KataGo/games YouTube channel."""
+    channel_id:       str
+    channel_name:     Optional[str]
+    subscriber_count: Optional[int]
+    video_count:      Optional[int]
+    view_count:       Optional[int]
+    fetched_at:       Optional[str]   # ISO datetime of last refresh
+
+
+class GamesComment(BaseModel):
+    """One viewer comment on a KataGo video."""
+    comment_id:        str
+    author_name:       Optional[str]
+    author_channel_id: Optional[str]
+    text:              str
+    like_count:        int
+    published_at:      Optional[str]   # ISO datetime
+
+
+class GamesVideoRow(BaseModel):
+    """One published KataGo video with its YouTube stats."""
+    video_id:          str
+    title:             Optional[str]
+    published_at:      Optional[str]    # ISO datetime
+    views:             Optional[int]
+    likes:             Optional[int]
+    comment_count:     Optional[int]
+    avg_view_duration: Optional[float]  # seconds; None until Analytics API data arrives
+    avg_view_pct:      Optional[float]  # %; None until Analytics API data arrives
+    fetched_at:        Optional[str]    # ISO datetime of last fetch
+    comments:          list[GamesComment] = []
+
+
+# ---------------------------------------------------------------------------
 # Engine status (GET /api/status)
 # ---------------------------------------------------------------------------
 

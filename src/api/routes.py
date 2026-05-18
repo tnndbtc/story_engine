@@ -8,6 +8,7 @@ Endpoints:
   GET  /api/status           — engine health check
 """
 
+import sqlite3 as _sqlite3
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -33,6 +34,9 @@ from api.schemas import (
     FormatType,
     ChannelType,
     LangType,
+    GamesChannelStats,
+    GamesComment,
+    GamesVideoRow,
 )
 from db.models import get_story, get_stories_today, get_stories, get_story_sets, get_stories_by_set, get_youtube_analytics, get_subscribers, get_stories_with_comments
 from db.crawler_reader import get_item_count, test_connection, CRAWLER_DB_URL
@@ -183,6 +187,12 @@ _PIPE_PYTHON  = "/home/tnnd/.virtualenvs/pipe/bin/python"
 _SCRIPTS_DIR  = Path("/home/tnnd/data/code/pipe/code/deploy/youtube")
 _PIPE_CWD     = "/home/tnnd/data/code/pipe"
 
+_GAMES_ROOT   = Path("/home/tnnd/data/code/games")
+_GAMES_DB     = _GAMES_ROOT / "games.db"
+_GAMES_PYTHON = "/home/tnnd/.virtualenvs/games/bin/python3"
+
+_GAMES_CHANNEL_ID = "UCLeNQ9jLgctQzOhjYseIlFQ"
+
 
 @router.post("/subscribers/refresh")
 def refresh_subscribers():
@@ -301,6 +311,94 @@ def list_story_comments():
             comments       = comments,
         ))
     return result
+
+
+@router.get("/games/channel-stats", response_model=GamesChannelStats)
+def get_games_channel_stats():
+    """Return cached channel-level stats for the KataGo YouTube channel."""
+    _empty = GamesChannelStats(
+        channel_id=_GAMES_CHANNEL_ID,
+        channel_name=None,
+        subscriber_count=None,
+        video_count=None,
+        view_count=None,
+        fetched_at=None,
+    )
+    try:
+        conn = _sqlite3.connect(str(_GAMES_DB))
+        conn.row_factory = _sqlite3.Row
+        row = conn.execute(
+            "SELECT * FROM channel_stats WHERE channel_id = ? LIMIT 1",
+            (_GAMES_CHANNEL_ID,),
+        ).fetchone()
+        conn.close()
+        if row is None:
+            return _empty
+        return GamesChannelStats(**dict(row))
+    except Exception:
+        return _empty
+
+
+@router.get("/games/videos", response_model=list[GamesVideoRow])
+def list_games_videos():
+    """
+    Return all published KataGo videos with their YouTube stats and comments, newest first.
+    Comments are embedded inside each video row (sorted by like_count DESC).
+    """
+    try:
+        conn = _sqlite3.connect(str(_GAMES_DB))
+        conn.row_factory = _sqlite3.Row
+
+        videos = conn.execute(
+            "SELECT * FROM video_analytics ORDER BY published_at DESC"
+        ).fetchall()
+
+        # Fetch all comments grouped by video_id in one query
+        comment_rows = []
+        try:
+            comment_rows = conn.execute(
+                "SELECT * FROM game_comments ORDER BY like_count DESC, published_at DESC"
+            ).fetchall()
+        except _sqlite3.OperationalError:
+            pass  # table not created yet
+
+        conn.close()
+
+        # Build comment map: video_id -> [GamesComment, ...]
+        from collections import defaultdict
+        comment_map: dict[str, list[GamesComment]] = defaultdict(list)
+        for c in comment_rows:
+            cd = dict(c)
+            comment_map[cd["video_id"]].append(GamesComment(
+                comment_id        = cd["comment_id"],
+                author_name       = cd.get("author_name"),
+                author_channel_id = cd.get("author_channel_id"),
+                text              = cd["text"],
+                like_count        = cd.get("like_count", 0),
+                published_at      = cd.get("published_at"),
+            ))
+
+        result = []
+        for row in videos:
+            d = dict(row)
+            result.append(GamesVideoRow(
+                **{k: v for k, v in d.items() if k != "comments"},
+                comments=comment_map.get(d["video_id"], []),
+            ))
+        return result
+    except Exception:
+        return []
+
+
+@router.post("/games/refresh")
+def refresh_games_analytics():
+    """Spawn fetch_games_analytics.py in background. Poll GET /api/games/channel-stats after ~15s."""
+    subprocess.Popen(
+        [_GAMES_PYTHON, str(_GAMES_ROOT / "fetch_games_analytics.py")],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return {"status": "started"}
 
 
 def _redact_url(url: str) -> str:

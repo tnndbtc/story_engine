@@ -112,6 +112,18 @@ def score_story(title: str, body: str, lang: str = "zh") -> tuple[int | None, di
         logger.error("attract_scorer: invalid JSON response — %r", raw[:200])
         return None, {}
 
+    # Guard: if the LLM returned valid JSON but scored fewer than 4 of 7 dimensions,
+    # it likely failed silently (returned {}, nulls, or garbled output that still parsed).
+    # Return None so the gate treats this as "no score" rather than saving a false 0.
+    scored_dims = sum(1 for d in _DIMS if int((data.get(d) or {}).get("score", 0)) > 0)
+    if scored_dims < 4:
+        logger.error(
+            "attract_scorer: only %d/%d dimensions scored — LLM response likely malformed "
+            "(returning None to prevent false score=0 blocking a valid story)",
+            scored_dims, len(_DIMS),
+        )
+        return None, {}
+
     # Compute total deterministically — do NOT trust LLM's own arithmetic.
     total = sum(int((data.get(d) or {}).get("score", 0)) for d in _DIMS)
     breakdown = {

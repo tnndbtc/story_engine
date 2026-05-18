@@ -110,6 +110,12 @@ class BatchConfig:
     # Per-run channel profile id (None = base file, no overlay applied)
     profile_id: str | None = None
 
+    # Cluster-level title keyword blocklist (raw regex strings).
+    # Clusters whose representative title matches ANY pattern are excluded before
+    # story selection. Applied in story_orchestrate() after the quality floor.
+    # Set per-profile in config/{lang}/story_mix_{profile}.json → ranking.cluster_title_blocklist.
+    cluster_title_blocklist: list[str] = field(default_factory=list)
+
 
 # ---------------------------------------------------------------------------
 # Known top-level keys in story_mix.json (v1 and v2)
@@ -223,6 +229,10 @@ def load_config(config_path: str) -> BatchConfig:
 
     surface_weight_overrides: dict[str, float] = (
         ranking.get('platform_weight_overrides') or raw.get('surface_weight_overrides', {})
+    )
+
+    cluster_title_blocklist: list[str] = list(
+        ranking.get('cluster_title_blocklist') or raw.get('cluster_title_blocklist', [])
     )
 
     # platform_aliases: v2 nests under normalization; v1 is top-level
@@ -348,6 +358,7 @@ def load_config(config_path: str) -> BatchConfig:
         normalization=normalization,
         category_dominance_multiplier=category_dominance,
         default_uncapped_platform_max_share=default_uncapped_share,
+        cluster_title_blocklist=cluster_title_blocklist,
         profile_id=None,
     )
 
@@ -393,6 +404,7 @@ _OVERLAY_ALLOWED_SOFT_KEYS = frozenset({
 _OVERLAY_ALLOWED_RANKING_KEYS = frozenset({
     'topic_boosts',
     'platform_weight_overrides',
+    'cluster_title_blocklist',   # list[str] of regex patterns; matched against cluster titles
 })
 
 
