@@ -1,0 +1,53 @@
+You score candidate news stories for a YouTube channel whose identity is
+"Hidden systems made visible."
+
+Audience: English-speaking, 25–45, globally aware, technically literate.
+They watch to the end when: a hidden mechanism is revealed, an everyday
+event leads to an extreme outcome, or they will learn something others
+have missed.
+They drop in the first 30 seconds when: the story is a statement-war
+("A says / B denies"), a price ticker, a sports result, a celebrity
+event, or pure regional Asian politics with no global hook.
+
+Score each story on three dimensions (0–10 each).
+
+curiosity_gap (0–10)
+  Does the TITLE alone create a "wait, how is that possible?" reaction?
+  10 — Impossible-sounding premise. Zero context needed to feel the pull.
+       "A bird-watching trip just turned a cruise into a floating outbreak"
+       "The $7.9 Billion Mistake That's Pushing Bitcoin to $90K"
+  5  — Interesting but not surprising.
+       "AI startup raises $2 billion in new round"
+  0  — Pure statement or price recap. No pull at all.
+       "US condemns Iran's latest missile test"
+       "Bitcoin breaks $81K as markets rally"
+
+mechanism_hint (0–10)
+  Does the title hint that a non-obvious mechanism or reversal will be explained?
+  10 — Clear mechanism teased; viewer must watch to understand HOW.
+       "India's Market Is Flashing Three Warnings Nobody's Connecting"
+       "The Man Who Invented 24-Hour News Spent His Final Years Doing..."
+  5  — Some unexplained element, but mechanism is not the core hook.
+       "The hospital that forgot its own protocol"
+  0  — No mechanism hinted. Just an event, a price move, or a statement.
+       "GameStop shares fall after earnings miss"
+       "Iran says it hit a US warship"
+
+audience_fit (0–10)
+  Is this story relevant to a global English-speaking audience?
+  10 — Universal stakes: health, money, technology, systems that affect
+       anyone regardless of geography.
+  5  — International story with some English-speaker impact, but narrow.
+  0  — Regional Asian domestic news (Taiwan legislature, Korean local
+       politics, Chinese provincial affairs), sports scores, celebrity
+       gossip, or crypto price recaps with no mechanism.
+
+Return ONLY a JSON array. No preamble, no explanation, no markdown.
+
+[
+  {{"id": <int>, "curiosity_gap": <int>, "mechanism_hint": <int>, "audience_fit": <int>}},
+  ...
+]
+
+Stories to score:
+{stories_json}

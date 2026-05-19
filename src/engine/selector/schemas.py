@@ -66,6 +66,13 @@ class NormalizedCandidate:
     # 'persons' field intentionally absent — requires trained NER model; deferred.
     candidate_entities: dict | None = None
 
+    # Pre-selection attract score — populated by Stage 1b (stage1b_prescreen.py).
+    # Normalised to [0, 1] from three title-level dimensions:
+    #   curiosity_gap (0–10), mechanism_hint (0–10), audience_fit (0–10).
+    # None means Stage 1b did not score this candidate (outside top-N, or batch
+    # failure) — Stage 3 treats None as a neutral multiplier (1.0×).
+    pre_attract_score: float | None = None
+
 
 @dataclass
 class FormatFeasibility:

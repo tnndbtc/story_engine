@@ -71,9 +71,29 @@ def stage3_select(
     }
 
     # Step 2 — Sort candidates (deterministic — applied once, used in both passes)
+    #
+    # Primary sort key: effective_hotness adjusted by the pre_attract multiplier
+    # from Stage 1b.  The multiplier ranges from 0.70 (score=0, pure statement-war
+    # / price-ticker) to 1.50 (score=1, strong curiosity-gap / mechanism-reveal).
+    # A None score (Stage 1b skipped or batch failure) maps to 1.0 (neutral).
+    #
+    # This re-ranks candidates so mechanism-reveal / curiosity-gap stories surface
+    # above statement-war / regional news even when the latter has higher raw
+    # social-velocity hotness.
+    #
+    # The original effective_hotness is kept as a secondary sort key so candidates
+    # with identical adjusted scores preserve their prior relative ordering.
+    def _pre_attract_mult(c: NormalizedCandidate) -> float:
+        """Map pre_attract_score [0, 1] → multiplier [0.70, 1.50].  None → 1.0."""
+        if c.pre_attract_score is None:
+            return 1.0
+        # Linear: 0.0 → 0.70 (statement-war penalty), 0.5 → 1.10, 1.0 → 1.50
+        return 0.70 + c.pre_attract_score * 0.80
+
     sorted_candidates = sorted(
         candidates,
         key=lambda c: (
+            -(c.effective_hotness * _pre_attract_mult(c)),
             -c.effective_hotness,
             -c.hotness,
             -c.freshness.timestamp(),
@@ -104,9 +124,12 @@ def stage3_select(
             score             = candidate.effective_hotness,
             hotness           = candidate.hotness,
             rank_inputs       = {
-                "effective_hotness": candidate.effective_hotness,
-                "hotness":           candidate.hotness,
-                "freshness_ts":      candidate.freshness.timestamp(),
+                "effective_hotness":         candidate.effective_hotness,
+                "hotness":                   candidate.hotness,
+                "freshness_ts":              candidate.freshness.timestamp(),
+                "pre_attract_score":         candidate.pre_attract_score,
+                "pre_attract_mult":          _pre_attract_mult(candidate),
+                "adjusted_effective_hotness": candidate.effective_hotness * _pre_attract_mult(candidate),
             },
             final_assignment  = final_assignment,
             batch_ts          = batch_ts,

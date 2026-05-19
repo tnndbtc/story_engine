@@ -132,11 +132,21 @@ def run_batch(
         _store_trace_handle(batch_ts, trace_handle, logs_dir)
         snap_path = snapshot_path
     else:
-        candidates = stage1_normalize(db_path, config, format_ids, hours, batch_ts)
+        candidates = stage1_normalize(db_path, config, format_ids, hours, batch_ts, lang=lang)
         # snapshot path is inferred from batch_ts by save_snapshot
         import os
         snap_dir = os.path.join(os.path.dirname(os.path.abspath(db_path)), "snapshots")
         snap_path = os.path.join(snap_dir, f"{batch_ts}_stage1.json")
+
+        # 3b. Stage 1b — pre-selection title/description attract scoring.
+        # Scores the top PRESCREEN_TOP_N candidates on curiosity_gap,
+        # mechanism_hint, and audience_fit via a lightweight batched LLM call.
+        # Mutates pre_attract_score on each NormalizedCandidate in-place.
+        # Fail-open: candidates whose score cannot be obtained retain
+        # pre_attract_score=None and are treated as neutral by Stage 3.
+        # Skipped for snapshot replays (pre_attract_score stays None → neutral).
+        from engine.selector.stage1b_prescreen import prescreen_candidates
+        prescreen_candidates(candidates, lang=lang)
 
     # 4. Register candidates with Stage 4 (so it can build full NormalizedCandidate objects)
     register_candidates(candidates)

@@ -290,6 +290,7 @@ def stage1_normalize(
     format_ids: list[int],
     hours: int,
     batch_ts: int,
+    lang: str | None = None,
 ) -> list[NormalizedCandidate]:
     """
     Stage 1: normalize raw crawler items into typed NormalizedCandidate objects.
@@ -300,6 +301,10 @@ def stage1_normalize(
         format_ids: List of integer format IDs included in this batch.
         hours:      Lookback window in hours.
         batch_ts:   UNIX milliseconds — used for trace file name and snapshot name.
+        lang:       Output language ("en" or "zh"). When set, restricts the
+                    candidate pool to articles whose lang_group matches.
+                    This prevents non-English sources (e.g. Taiwanese/Korean
+                    tabloids) from flooding the pool for English runs.
 
     Returns:
         List of NormalizedCandidate objects with is_used==False only.
@@ -343,16 +348,25 @@ def stage1_normalize(
     # Per-platform K is set to a large value to prevent low-hotness platforms
     # being excluded before cap filtering. In focused mode, LIMIT is applied
     # per category, so total fetched may be up to limit × N_categories.
+    #
+    # lang_group filter: when the output language is known, restrict the
+    # candidate pool to articles in that language.  This prevents regional
+    # tabloids (e.g. chinatimes, naver_news) from consuming slots in English
+    # runs simply because their raw hotness scores are competitive.
+    # English-language sources *about* South Korea / Taiwan (AP, Reuters, etc.)
+    # still appear because their lang_group is 'en'.
     raw_items = get_top_items(
         limit=500,
         hours=hours,
         per_platform_k=50,
         allowed_categories=fetch_allowed_categories,
+        lang_group=lang if lang else None,
     )
     logger.info(
-        "Stage 1: fetched %d raw items from crawler (hours=%d, allowlist=%s)",
+        "Stage 1: fetched %d raw items from crawler (hours=%d, allowlist=%s, lang_group=%s)",
         len(raw_items), hours,
         fetch_allowed_categories if fetch_allowed_categories else 'none',
+        lang if lang else 'all',
     )
 
     # Step 2 — Pre-fetch used URLs for binary dedup
