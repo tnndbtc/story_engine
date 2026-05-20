@@ -246,17 +246,55 @@ def _parse_json_response(text: str) -> dict:
     """
     cleaned = text.strip()
 
-    # Strip markdown code fences if present
-    if cleaned.startswith('```'):
+    # Strip markdown code fences — handles both:
+    #   (a) response starts with ```  (simple case)
+    #   (b) response has prose BEFORE the code fence ("Perfect! … ```json\n{…}\n```")
+    if '```' in cleaned:
         lines = cleaned.split('\n')
         lines = [l for l in lines if not l.strip().startswith('```')]
-        cleaned = '\n'.join(lines)
+        cleaned = '\n'.join(lines).strip()
 
-    # Try direct parse first
-    try:
-        return json.loads(cleaned)
-    except json.JSONDecodeError:
-        pass
+    # Escape literal newlines inside JSON string values.
+    # Claude sometimes puts real \n chars inside a JSON "body" string instead
+    # of the required \\n escape, which makes json.loads fail.  We can safely
+    # do this by replacing bare \n / \r\n that appear between balanced quotes.
+    import re as _re
+    def _escape_newlines_in_strings(s: str) -> str:
+        """Replace literal newlines inside JSON string literals with \\n."""
+        out = []
+        in_string = False
+        escaped = False
+        i = 0
+        while i < len(s):
+            ch = s[i]
+            if escaped:
+                out.append(ch)
+                escaped = False
+            elif ch == '\\' and in_string:
+                out.append(ch)
+                escaped = True
+            elif ch == '"':
+                out.append(ch)
+                in_string = not in_string
+            elif in_string and ch == '\n':
+                out.append('\\n')
+            elif in_string and ch == '\r':
+                out.append('\\r')
+            else:
+                out.append(ch)
+            i += 1
+        return ''.join(out)
+
+    cleaned_nl = _escape_newlines_in_strings(cleaned)
+
+    # Try direct parse first (with and without newline fix)
+    for candidate in [cleaned, cleaned_nl]:
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            pass
+
+    cleaned = cleaned_nl  # work with newline-fixed version from here on
 
     # Use raw_decode to find ALL complete JSON objects in the response.
     # The agent sometimes outputs prose + draft JSON + explanation + final JSON;
@@ -1276,7 +1314,11 @@ _DEEP_SYSTEM_PROMPT = (
     "You are an investigative journalist and YouTube storyteller. "
     "FIRST research the story using iterative Bash searches, THEN write the final narrative. "
     "Output ONLY a valid JSON object — no prose, no markdown before or after. "
-    "Your entire response must start with { and end with }."
+    "Your entire response must start with { and end with }. "
+    "LANGUAGE RULE (ZH): If the prompt says to write in Chinese (Simplified, zh-Hans), "
+    "you MUST write every word of the output in Simplified Chinese (简体中文). "
+    "Reading Traditional Chinese sources is fine, but the output body and title MUST use "
+    "Simplified Chinese characters only — never Traditional Chinese (繁體字)."
 )
 
 _DEEP_TIMEOUT = 600  # 10 minutes — iterative Bash tool calls take time
@@ -1506,6 +1548,12 @@ def generate_deep_story(
         )
         retry_raw = _call_claude(retry_prompt, lang=lang)
         parsed = _parse_json_response(retry_raw)
+        if not parsed.get('body', '').strip():
+            logger.warning(
+                "generate_deep_story: retry also produced empty body — "
+                "raw retry output (%d chars): %s",
+                len(retry_raw), retry_raw[:500],
+            )
 
     # Build combined source list: crawler sources + newly searched sources
     crawler_sources = _build_source_list(item)

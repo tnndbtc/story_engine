@@ -8,6 +8,7 @@ Endpoints:
   GET  /api/status           — engine health check
 """
 
+import json
 import sqlite3 as _sqlite3
 import subprocess
 from datetime import datetime
@@ -37,8 +38,9 @@ from api.schemas import (
     GamesChannelStats,
     GamesComment,
     GamesVideoRow,
+    ChannelVideoRow,
 )
-from db.models import get_story, get_stories_today, get_stories, get_story_sets, get_stories_by_set, get_youtube_analytics, get_subscribers, get_stories_with_comments
+from db.models import get_story, get_stories_today, get_stories, get_story_sets, get_stories_by_set, get_youtube_analytics, get_subscribers, get_stories_with_comments, get_channel_videos
 from db.crawler_reader import get_item_count, test_connection, CRAWLER_DB_URL
 
 router = APIRouter(prefix="/api")
@@ -183,6 +185,35 @@ def get_story_set_analytics(story_set_id: int):
     return [YoutubeAnalyticRow(**r) for r in rows]
 
 
+@router.get("/analytics/channel", response_model=list[ChannelVideoRow])
+def get_channel_analytics(lang: str = "en"):
+    """
+    Return all published deep-story videos for the given channel language (en|zh),
+    newest first, with analytics data and story title.
+
+    analytics_pulled_at values:
+      null      → pending (video < 72h old or not yet fetched)
+      'no_data' → gave up after 14 days
+      ISO str   → analytics successfully fetched
+    """
+    rows = get_channel_videos(lang)
+    return [ChannelVideoRow(**r) for r in rows]
+
+
+_STRATEGY_CHANGES_PATH = Path("/home/tnnd/data/code/story_engine/strategy_changes.json")
+
+@router.get("/analytics/strategy-changes")
+def get_strategy_changes():
+    """
+    Return the list of strategy periods from strategy_changes.json.
+    Sorted newest-first. Each entry: { date: "YYYY-MM-DD", label: "策略X…" }
+    """
+    try:
+        return json.loads(_STRATEGY_CHANGES_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+
+
 _PIPE_PYTHON  = "/home/tnnd/.virtualenvs/pipe/bin/python"
 _SCRIPTS_DIR  = Path("/home/tnnd/data/code/pipe/code/deploy/youtube")
 _PIPE_CWD     = "/home/tnnd/data/code/pipe"
@@ -320,6 +351,7 @@ def get_games_channel_stats():
         channel_id=_GAMES_CHANNEL_ID,
         channel_name=None,
         subscriber_count=None,
+        real_subscriber_count=None,
         video_count=None,
         view_count=None,
         fetched_at=None,

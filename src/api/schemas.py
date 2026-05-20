@@ -227,12 +227,13 @@ class StoryWithComments(BaseModel):
 
 class GamesChannelStats(BaseModel):
     """Channel-level stats for the KataGo/games YouTube channel."""
-    channel_id:       str
-    channel_name:     Optional[str]
-    subscriber_count: Optional[int]
-    video_count:      Optional[int]
-    view_count:       Optional[int]
-    fetched_at:       Optional[str]   # ISO datetime of last refresh
+    channel_id:            str
+    channel_name:          Optional[str]
+    subscriber_count:      Optional[int]   # 0 when hidden by YouTube (<1K)
+    real_subscriber_count: Optional[int]   # exact count via Analytics API
+    video_count:           Optional[int]
+    view_count:            Optional[int]
+    fetched_at:            Optional[str]   # ISO datetime of last refresh
 
 
 class GamesComment(BaseModel):
@@ -257,6 +258,26 @@ class GamesVideoRow(BaseModel):
     avg_view_pct:      Optional[float]  # %; None until Analytics API data arrives
     fetched_at:        Optional[str]    # ISO datetime of last fetch
     comments:          list[GamesComment] = []
+
+
+# ---------------------------------------------------------------------------
+# Story-engine channel analytics  (GET /api/analytics/channel?lang=en|zh)
+# ---------------------------------------------------------------------------
+
+class ChannelVideoRow(BaseModel):
+    """One published deep-story video for the EN or ZH channel."""
+    video_id:            str
+    lang:                str                # 'en' | 'zh'
+    story_set_id:        Optional[int]
+    title:               Optional[str]      # from hierarchical_stories.deep_story $.title
+    profile_id:          Optional[str]      # run2_ai | run3_world | … (category)
+    published_at:        Optional[str]      # ISO datetime
+    views:               Optional[int]
+    avg_view_duration:   Optional[float]    # seconds
+    avg_view_pct:        Optional[float]    # %
+    like_count:          Optional[int]
+    comment_count:       Optional[int]
+    analytics_pulled_at: Optional[str]      # None=pending, 'no_data'=gave up, ISO=fetched
 
 
 # ---------------------------------------------------------------------------

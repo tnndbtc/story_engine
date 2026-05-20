@@ -66,6 +66,12 @@ Search strategy (execute IN ORDER):
 PHASE 2 — WRITE (only after all research is done)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+⚠️  LANGUAGE REQUIREMENT (MANDATORY): Write in SIMPLIFIED CHINESE (简体中文) ONLY.
+    You may have read sources in Traditional Chinese — that is fine for research.
+    But the output title and body MUST use Simplified Chinese characters exclusively.
+    Traditional Chinese characters (繁體字) are FORBIDDEN in the output.
+    If you catch yourself writing 「這」write 「这」, 「說」→「说」, 「時」→「时」, 「為」→「为」, etc.
+
 THIS IS A SPOKEN CHINESE VIDEO NARRATIVE.
 NOT a report. NOT an analysis document. NOT a bullet list.
 
@@ -151,9 +157,12 @@ OUTPUT FORMAT
 After all research is complete, output ONLY this JSON.
 Start with {{ and end with }}. No text before or after.
 
+FINAL LANGUAGE CHECK: Before writing the JSON, confirm that title and body use
+SIMPLIFIED CHINESE (简体中文) only. No Traditional Chinese characters allowed.
+
 {{
-  "title": "吸引人的标题，最多25字",
-  "body": "完整叙事，900-1100汉字，纯文字。分成4-6个自然段落，段落之间用\\n\\n分隔。无标签，无分节符，无列表。",
+  "title": "吸引人的标题，最多25字（必须使用简体中文）",
+  "body": "完整叙事，900-1100汉字，纯文字，简体中文。分成4-6个自然段落，段落之间用\\n\\n分隔。无标签，无分节符，无列表。",
   "sources": [
     {{"url": "https://example.com/article", "title": "文章标题"}},
     {{"url": "https://...", "title": "..."}}

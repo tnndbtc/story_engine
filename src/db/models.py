@@ -713,6 +713,8 @@ def get_story_sets(
         d = dict(r)
         d['batch_ts'] = _ts_to_iso(d['batch_ts'])
         d['created_at'] = _ts_to_iso(d['created_at'])
+        # All current sets use hierarchical_stories; fall back to hier_count when flat story_count is 0
+        d['story_count'] = d.get('hier_count') or d.get('story_count', 0)
         result.append(d)
     return result
 
@@ -1401,6 +1403,57 @@ def upsert_video_comment(
     )
     conn.commit()
     conn.close()
+
+
+def get_channel_videos(lang: str) -> list[dict]:
+    """
+    Return all published videos for the given lang channel (en or zh),
+    newest first, with their analytics data and story title.
+
+    Joins:
+      youtube_publish_log → hierarchical_stories (title via deep_story JSON)
+      youtube_publish_log → story_sets (profile_id / category label)
+
+    analytics_pulled_at encoding (same as get_youtube_analytics):
+      None      → pending (video < 72h old or not yet fetched)
+      'no_data' → gave up after 14 days (no YouTube data available)
+      ISO str   → successfully fetched at this timestamp
+    """
+    conn = get_connection()
+    rows = conn.execute(
+        """SELECT
+               ypl.video_id,
+               ypl.lang,
+               ypl.story_set_id,
+               ypl.published_at,
+               ypl.views,
+               ypl.avg_view_duration,
+               ypl.avg_view_pct,
+               ypl.like_count,
+               ypl.comment_count,
+               ypl.analytics_pulled_at,
+               ss.profile_id,
+               json_extract(hs.deep_story, '$.title') AS title
+           FROM youtube_publish_log ypl
+           LEFT JOIN story_sets ss         ON ss.id  = ypl.story_set_id
+           LEFT JOIN hierarchical_stories hs ON hs.story_set_id = ypl.story_set_id
+           WHERE ypl.lang = ?
+           ORDER BY ypl.published_at DESC""",
+        (lang,),
+    ).fetchall()
+    conn.close()
+
+    result = []
+    for r in rows:
+        d = dict(r)
+        d['published_at'] = _ts_to_iso(d.get('published_at'))
+        d['analytics_pulled_at'] = (
+            None        if d['analytics_pulled_at'] is None
+            else 'no_data' if d['analytics_pulled_at'] == -1
+            else _ts_to_iso(d['analytics_pulled_at'])
+        )
+        result.append(d)
+    return result
 
 
 def get_stories_with_comments() -> list[dict]:
