@@ -71,18 +71,27 @@ curiosity_gap (0-20)
     "Government announces new policy"  "Company reports quarterly earnings"
 
 ordinary_people_stakes (0-20)
-  High: an ordinary viewer with no special knowledge immediately feels
-        personal impact — their money, health, job, device, or daily life.
-        The stakes must be FELT, not just intellectually acknowledged.
-    "AI is quietly consuming the chips your phone was supposed to get"
-    "This virus mutation could reach your city within weeks"
-    "Your savings are losing value through this mechanism nobody explains"
-  Low: consequence lands on governments, corporations, or distant nations
-       with no clear path to individual impact.
-    "Two nations dispute territorial rights"
-    "A hedge fund lost $2B in a bad trade"
-  IMPORTANT: avoid rewarding stories just because they mention large numbers
-  or famous institutions — ask whether an average viewer feels affected.
+  问一个问题：这个故事是否直接影响到观众自己的设备、钱包、账户、健康、
+  工作或日常工具——而且是现在正在发生，观众可能还不知道？
+
+  High (15–20): 观众本人就是被影响的那个人。是他们自己的设备、银行账户、
+        常用软件或身体受到了影响。
+    "谷歌Chrome悄悄在你电脑里装了4GB" → 你的电脑，已经发生了
+    "AI抢走了本该给你手机的芯片" → 你的手机
+    "免费AI时代的终结信号" → 观众正在使用的服务
+    "这个病毒可能已经进入你的城市" → 观众自身健康风险
+
+  Medium (7–14): 影响观众所在的行业、国家或金融体系，但需要观众自行推导
+        与自身的联系。
+
+  Low (0–6): 影响的是其他具体的人、公司或国家，观众是旁观者。
+    "CEO签了4000份offer然后裁了1100人" → 是别人的工作，不是观众的
+    "某国基础设施出现问题" → 别国的事
+    "比亚迪国内销量下滑" → 一家公司的业绩
+    "某球队无法进入举办国" → 别人的体育事件
+
+  关键原则：影响"社会大众"或"人们普遍"不算高分。必须是观众本人直接受影响。
+  大数字和知名机构本身不能提高这个维度的分数。
 
 hidden_mechanism (0-20)
   High: reveals HOW something works that most people assumed was different,
@@ -139,10 +148,24 @@ audience_fit (0-15)
   gossip with no mechanism: "Celebrity X and Y broke up" → audience_fit 0-3.
 
 title_retention_alignment (0-5)
-  High: the title's implicit promise matches what the story actually delivers.
-        A viewer who clicks based on the title will NOT feel misled.
-  Low: title implies drama or revelation that the story body does not deliver
-       (clickbait that fails to pay off → viewers drop at 30%).
+  标题是否保留了悬念，让观众必须看完才能得到答案？
+  注意：这不是评估标题是否准确——而是评估标题是否制造了一个"不看就无法解答"的开放性问题。
+
+  High (4–5): 标题提出了强烈的问题，但答案藏在视频里，不看就不知道。
+    "那个让所有科技CEO都在抢着炫耀的数字" → 什么数字？必须看
+    "他说要卖币，第二天却买了4300万美元" → 为什么？必须看
+    "Chrome悄悄在你电脑里塞了4GB秘密" → 是什么秘密？必须看
+    "免费AI时代的终结信号" → 什么信号？必须看
+
+  Medium (2–3): 标题暗示有意外，但部分揭示了结果。
+
+  Low (0–1): 标题已经把整个故事讲完了，观众看完标题就知道全部内容，没有继续看的理由。
+    "这位CEO亲自签了4000份offer，然后裁了1100人"
+        → 讽刺已经在标题里，没有悬念，不需要看视频
+    "AI在一个月内写了开发者100%的代码"
+        → 结论在标题里，故事已经讲完
+    "Coinbase创下市场份额纪录，同时亏损3.94亿美元"
+        → 两个事实都说完了，没有开放性问题
 
 low_context_accessibility (0-5)
   High: someone with zero domain expertise understands the core story

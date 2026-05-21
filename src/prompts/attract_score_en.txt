@@ -75,18 +75,32 @@ curiosity_gap (0-20)
     "Government announces new policy"  "Company reports quarterly earnings"
 
 ordinary_people_stakes (0-20)
-  High: an ordinary English-speaking viewer with no special knowledge immediately
-        feels personal impact — their money, health, job, device, or daily life.
-        The stakes must be FELT, not just intellectually acknowledged.
-    "AI is quietly consuming the chips your phone was supposed to get"
-    "This virus mutation could reach your city within weeks"
-    "Your savings are losing value through this mechanism nobody explains"
-  Low: consequence lands on governments, corporations, or distant nations
-       with no clear path to individual impact on English-speaking viewers.
-    "Two nations dispute territorial rights"
-    "A Chinese city's real estate developer filed for restructuring"
-  IMPORTANT: avoid rewarding stories just because they mention large numbers
-  or famous institutions — ask whether an average English-speaking viewer feels affected.
+  Ask ONE question: is the VIEWER'S OWN device, money, account, health, job,
+  or daily workflow already being affected — right now, without them knowing?
+
+  High (15–20): the viewer IS the person affected. Their specific device, bank
+        account, workplace tool, or body is implicated directly.
+    "Google quietly put 4GB on YOUR computer" → YOUR device, already done
+    "The bank race rewriting how YOUR money moves" → YOUR money, ongoing now
+    "AI consuming the chips YOUR phone was supposed to get" → YOUR hardware
+    "This virus mutation could reach YOUR city" → YOUR health risk
+
+  Medium (7–14): affects the viewer's industry, country, or financial system
+        in a tangible way — they need to infer their personal connection.
+    "The Fed's model has a flaw affecting all savings" → requires inference
+    "A supply chain shift changing tech prices globally" → indirect impact
+
+  Low (0–6): affects OTHER specific people, companies, or countries.
+        The viewer watches from the outside with no direct personal stake.
+    "CEO signed 4,000 offer letters then cut 1,100 jobs" → other people's jobs
+    "Brazil's infrastructure paid out $400" → another country's problem
+    "Iran's football team can't enter the host country" → other people's sport
+    "Coinbase posted record market share and a $394M loss" → a company's results
+    "Two nations dispute territorial rights" → distant geopolitics
+
+  CRITICAL: a story that affects "people in general" or "society broadly" is NOT
+  high stakes for the viewer. The viewer must be the specific person affected.
+  Famous institutions and large numbers do NOT raise this score.
 
 hidden_mechanism (0-20)
   High: reveals HOW something works that most people assumed was different,
@@ -139,10 +153,29 @@ audience_fit (0-15)
   the mechanism, not the politics.
 
 title_retention_alignment (0-5)
-  High: the title's implicit promise matches what the story actually delivers.
-        A viewer who clicks based on the title will NOT feel misled.
-  Low: title implies drama or revelation that the story body does not deliver
-       (clickbait that fails to pay off → viewers drop at 30%).
+  Does the title WITHHOLD the payoff so the viewer MUST watch to resolve it?
+  This is NOT about accuracy — it is about whether the title creates an open
+  question that cannot be answered without watching.
+
+  High (4–5): title raises a strong question the viewer cannot answer from
+        the title alone. The punchline, mechanism, or outcome is hidden.
+    "The Number Tech CEOs Are Racing to Brag About" → what number? must watch
+    "Spent His Final Years Doing This" → doing WHAT? must watch
+    "Chrome quietly put something on your computer" → WHAT? must watch
+    "A bird-watching trip turned a cruise into a floating outbreak" → HOW?
+
+  Medium (2–3): title hints at something surprising but partially reveals it.
+
+  Low (0–1): title states the entire story. The viewer already knows the
+        punchline after reading the title. Nothing left to discover.
+    "This CEO signed 4,000 offer letters then cut 1,100 jobs for AI"
+        → irony is fully stated, nothing to resolve, no reason to watch
+    "This AI just wrote 100% of a developer's code for a month"
+        → conclusion is in the title, story is already told
+    "Coinbase posted record market share and a $394M loss"
+        → both facts stated, no open question remains
+    "This $400 Payout Reveals Brazil's Hidden Infrastructure Problem"
+        → "reveals" is in the title, tension pre-resolved
 
 low_context_accessibility (0-5)
   High: someone with zero domain expertise understands the core story
