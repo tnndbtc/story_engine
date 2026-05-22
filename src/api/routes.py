@@ -37,6 +37,8 @@ from api.schemas import (
     LangType,
     GamesChannelStats,
     GamesComment,
+    GamesCountryRow,
+    GamesSubtitleRow,
     GamesVideoRow,
     ChannelVideoRow,
 )
@@ -418,6 +420,44 @@ def list_games_videos():
                 comments=comment_map.get(d["video_id"], []),
             ))
         return result
+    except Exception:
+        return []
+
+
+@router.get("/games/audience-countries", response_model=list[GamesCountryRow])
+def get_games_audience_countries():
+    """
+    Return lifetime viewer counts by country for the KataGo channel, sorted by views DESC.
+    Populated by fetch_games_analytics.py (requires yt-analytics.readonly scope).
+    Returns [] if no data has been fetched yet.
+    """
+    try:
+        conn = _sqlite3.connect(str(_GAMES_DB))
+        conn.row_factory = _sqlite3.Row
+        rows = conn.execute(
+            "SELECT country, views, fetched_at FROM channel_country_views ORDER BY views DESC"
+        ).fetchall()
+        conn.close()
+        return [GamesCountryRow(**dict(r)) for r in rows]
+    except Exception:
+        return []
+
+
+@router.get("/games/subtitle-langs", response_model=list[GamesSubtitleRow])
+def get_games_subtitle_langs():
+    """
+    Return lifetime views by CC/subtitle language for the KataGo channel, sorted by views DESC.
+    Empty string lang means subtitles were off.
+    Populated by fetch_games_analytics.py.
+    """
+    try:
+        conn = _sqlite3.connect(str(_GAMES_DB))
+        conn.row_factory = _sqlite3.Row
+        rows = conn.execute(
+            "SELECT lang, views, fetched_at FROM channel_subtitle_lang ORDER BY views DESC"
+        ).fetchall()
+        conn.close()
+        return [GamesSubtitleRow(**dict(r)) for r in rows]
     except Exception:
         return []
 

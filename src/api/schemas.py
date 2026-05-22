@@ -260,6 +260,20 @@ class GamesVideoRow(BaseModel):
     comments:          list[GamesComment] = []
 
 
+class GamesCountryRow(BaseModel):
+    """Viewer-country breakdown for the KataGo channel (GET /api/games/audience-countries)."""
+    country:    str            # ISO 3166-1 alpha-2, e.g. "US", "TW"
+    views:      int
+    fetched_at: Optional[str]  # ISO datetime of last refresh
+
+
+class GamesSubtitleRow(BaseModel):
+    """CC/subtitle language breakdown for the KataGo channel (GET /api/games/subtitle-langs)."""
+    lang:       str            # e.g. "zh-Hans", "en", "" = subtitles off
+    views:      int
+    fetched_at: Optional[str]
+
+
 # ---------------------------------------------------------------------------
 # Story-engine channel analytics  (GET /api/analytics/channel?lang=en|zh)
 # ---------------------------------------------------------------------------
