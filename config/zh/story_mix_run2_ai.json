@@ -68,11 +68,16 @@
       "stackoverflow": 1.50,
       "paperswithcode": 2.00,
       "arxiv_ai_rss":  2.00,
-      "weibo":         0.30,
-      "baidu":         0.30,
+      "weibo":         1.00,
+      "baidu":         1.00,
+      "zhihu":         1.00,
       "google_trends": 0.20,
       "wikipedia":     0.50,
-      "news_rss":      0.70
+      "news_rss":      0.45,
+      "chinatimes":    0.50,
+      "hk01":          0.50,
+      "ettoday":       0.40,
+      "36kr":          1.20
     }
   }
 }

@@ -60,6 +60,7 @@ EXTRA_ARGS=""
 PROFILE_ARGS=""
 LANG_ARG="zh"
 DEEP_STORY_MODE=0
+STORY_ONLY_MODE=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -69,6 +70,10 @@ while [ $# -gt 0 ]; do
             ;;
         --deep-story)
             DEEP_STORY_MODE=1
+            shift
+            ;;
+        --story-only)
+            STORY_ONLY_MODE=1
             shift
             ;;
         --lang)
@@ -321,16 +326,75 @@ PYEOF
 
             echo ""
             echo "--- Step C: Run narration pipeline ---"
-            source /home/tnnd/.virtualenvs/pipe/bin/activate
-            cd "$PIPE_DIR"
-            ./simple_run.sh \
-                --story         "$STORY_TXT" \
-                --config        "$TMP_CONFIG" \
-                --story_set_id  "$STORY_SET_ID" \
-                --locale        "$LOCALE_VAL" \
-                --slot          "$CATEGORY" \
-              >> "$SCRIPT_DIR/logs/pipeline.log" 2>&1 \
-              || echo "  WARNING: pipeline error — see logs/pipeline.log"
+            if [ "$STORY_ONLY_MODE" -eq 1 ]; then
+                # ── Story-only mode: create pipe project skeleton, no TTS/render ──
+                echo "  Mode: story-only — creating project skeleton (no TTS/render)"
+                source /home/tnnd/.virtualenvs/pipe/bin/activate
+
+                # Slug = story filename stem (e.g. ai_story_2026-05-22_0900utc_42_no_norm)
+                _SLUG="$(basename "$STORY_TXT" .txt)"
+                _REL_EP_DIR="projects/${_SLUG}/episodes/s01e01"
+                _ABS_EP_DIR="$PIPE_DIR/${_REL_EP_DIR}"
+                _RENDERS_DIR="$_ABS_EP_DIR/renders/${LOCALE_VAL}"
+                mkdir -p "$_RENDERS_DIR"
+
+                # Copy story.txt
+                cp "$STORY_TXT" "$_ABS_EP_DIR/story.txt"
+                echo "  ✓ story.txt  → $_ABS_EP_DIR/story.txt"
+
+                # Write meta.json
+                python3 -c "
+import json, re
+text  = open('$STORY_TXT', encoding='utf-8').read()
+title = ''
+for line in text.splitlines():
+    m = re.match(r'^#{1,6}\s+(.+)', line)
+    if m: title = m.group(1).strip(); break
+if not title:
+    for line in text.splitlines():
+        s = line.strip().lstrip('-').strip()
+        if s: title = s; break
+sid = '$STORY_SET_ID'
+json.dump({
+    'story_title':  title,
+    'story_format': 'simple_narration',
+    'locales':      '$LOCALE_VAL',
+    'episode_id':   's01e01',
+    'story_set_id': int(sid) if sid.isdigit() else None,
+    'story_id':     None,
+}, open('$_ABS_EP_DIR/meta.json', 'w', encoding='utf-8'), ensure_ascii=False, indent=2)
+print('  ✓ meta.json')
+"
+                # Write minimal VoiceCast.json at project level
+                echo '{"narrator": {}}' > "$PIPE_DIR/projects/${_SLUG}/VoiceCast.json"
+                echo "  ✓ VoiceCast.json"
+
+                # Save story basename for gen_youtube_json.py later
+                basename "$STORY_TXT" > "$_ABS_EP_DIR/story_source_basename"
+                echo "  ✓ story_source_basename"
+
+                # Save relative EP_DIR so ingest_heygen_video.sh can find it
+                echo "$_REL_EP_DIR" > "$SCRIPT_DIR/.last_ai_ep_dir"
+                echo "  ✓ .last_ai_ep_dir saved"
+                echo ""
+                echo "  ┌──────────────────────────────────────────────────────┐"
+                echo "  │  story.txt ready — run HeyGen, then:                 │"
+                echo "  │  cd $PIPE_DIR"
+                echo "  │  ./ingest_heygen_video.sh <output.mp4>               │"
+                echo "  └──────────────────────────────────────────────────────┘"
+            else
+                # ── Full pipeline mode (TTS + render + upload) ──────────────────
+                source /home/tnnd/.virtualenvs/pipe/bin/activate
+                cd "$PIPE_DIR"
+                ./simple_run.sh \
+                    --story         "$STORY_TXT" \
+                    --config        "$TMP_CONFIG" \
+                    --story_set_id  "$STORY_SET_ID" \
+                    --locale        "$LOCALE_VAL" \
+                    --slot          "$CATEGORY" \
+                  >> "$SCRIPT_DIR/logs/pipeline.log" 2>&1 \
+                  || echo "  WARNING: pipeline error — see logs/pipeline.log"
+            fi
         else
             echo "  WARNING: export OK but .last_export_txt empty or missing"
         fi

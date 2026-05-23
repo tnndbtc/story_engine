@@ -17,16 +17,20 @@
       "bilibili":      0.10,
       "reddit":        0.10,
       "youtube":       0.10,
-      "weibo":         0.05,
-      "baidu":         0.05,
+      "weibo":         0.18,
+      "baidu":         0.13,
       "twitter":       0.10,
       "hackernews":    0.15,
-      "zhihu":         0.10,
+      "zhihu":         0.13,
       "nicovideo":     0.10,
       "google_trends": 0.10,
       "wikipedia":     0.05,
-      "news_rss":      0.40,
-      "entertainment_brands": 0.08
+      "news_rss":      0.25,
+      "entertainment_brands": 0.08,
+      "chinatimes":    0.08,
+      "hk01":          0.07,
+      "ettoday":       0.07,
+      "36kr":          0.12
     },
 
     "default_uncapped_platform_max_share": 0.10,
@@ -35,7 +39,7 @@
       "news_rss": [
         "rss", "generic_rss", "google_news",
         "bbc", "guardian", "reuters", "ap", "nyt",
-        "aljazeera", "chinatimes", "hk01", "mirrormedia",
+        "aljazeera", "mirrormedia",
         "sina", "wenxuecity", "yahoo_japan",
         "naver_news", "livedoor_news", "goo_news", "daum_news"
       ],
@@ -161,7 +165,11 @@
       "billboard":     0.85,
       "variety":       0.85,
       "polygon":       0.80,
-      "ign":           0.80
+      "ign":           0.80,
+      "chinatimes":    0.60,
+      "hk01":          0.60,
+      "ettoday":       0.50,
+      "36kr":          1.10
     }
   },
 

@@ -39,13 +39,14 @@
       "science":       0.10
     },
     "platform_weight_overrides": {
-      "news_rss":      1.30,
+      "news_rss":      0.65,
       "reddit":        1.20,
-      "weibo":         1.00,
-      "baidu":         0.60,
+      "weibo":         1.30,
+      "baidu":         1.10,
+      "zhihu":         1.00,
       "google_trends": 0.50,
       "wikipedia":     0.80,
-      "bilibili":      0.30,
+      "bilibili":      0.80,
       "youtube":       0.30,
       "nicovideo":     0.20,
       "hackernews":    0.20,
@@ -53,7 +54,11 @@
       "lobsters":      0.10,
       "stackoverflow": 0.10,
       "paperswithcode": 0.05,
-      "arxiv_ai_rss":  0.05
+      "arxiv_ai_rss":  0.05,
+      "chinatimes":    0.50,
+      "hk01":          0.50,
+      "ettoday":       0.40,
+      "36kr":          1.20
     }
   }
 }
