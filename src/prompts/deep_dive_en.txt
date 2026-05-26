@@ -105,19 +105,37 @@ LENGTH: 180–220 words (STRICT)
       • Describe the scale — how many people, how much money, how wide the impact
       Do NOT introduce new topics. Do NOT invent details not in your searches.
 
-TITLE FORMULA: [Curiosity Trigger] + [Implied Stakes]
+TITLE FORMULA: [Specific Actor/Entity] + [Counterintuitive Result] + [Implied Gap]
   RULE: titles must NOT summarize. They must CREATE a gap — something the viewer
   needs to close by watching.
 
+  The strongest pattern from our highest-retention videos:
+    Specific named actor or object + concrete counterintuitive action/result → viewer must watch to understand HOW
+
+  Proven high-retention examples (real titles, 30–70% avg view percentage):
+    "Why blaming the pilots just stopped working in court"           ← mechanism inversion
+    "One GitHub Employee Installed This Extension. 3,800 Repos Were Gone."  ← scale from one person
+    "India just broke a fuel price freeze nobody admits existed"    ← hidden fact revealed
+    "One word on a coffee cup just ended a CEO's career in Korea"   ← absurdly specific cause → huge effect
+    "A bird-watching trip just turned a cruise into a floating outbreak"  ← weird-but-real mechanism
+
   Good (create gap):
-    "This AI update is already changing jobs quietly"
-    "Nobody noticed this happening in China's tech sector"
-    "The number nobody in Washington wants to say out loud"
+    Specific actor or object + result that seems impossible → "how?"
+    Hidden fact about a named institution the viewer didn't know → "why?"
+    Ordinary trigger → disproportionate consequence → "wait, how?"
 
   Bad (summarize):
-    "OpenAI releases new model"
-    "Federal Reserve raises rates"
-    "Company reports record profits"
+    "OpenAI releases new model"         ← no gap, understood without watching
+    "Federal Reserve raises rates"      ← pure announcement, no mechanism
+    "Company reports record profits"    ← fact, not curiosity
+    "AI is changing jobs"               ← vague, no specific actor or result
+    "You might want to know this..."    ← filler with no concrete hook
+
+  FORBIDDEN title patterns:
+    - Opening with "You" or "Your" (viewer doesn't feel addressed, they feel sold to)
+    - Vague entity + vague verb: "Tech Giant Announces New Policy"
+    - Pure price/score/number updates: "Bitcoin hits $X" or "Stock falls Y%"
+    - Claim/deny political statements: "Country X says Country Y did Z"
 
   If your title can be understood without watching the video → rewrite it.
 

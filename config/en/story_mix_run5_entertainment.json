@@ -15,7 +15,11 @@
     "  - nicovideo dropped 1.20 → 0.10 (Japanese content)",
     "  - weibo dropped 1.00 → 0.10 (Chinese social)",
     "  - baidu dropped 0.50 → 0.10 (Chinese search)",
-    "  - news_rss raised 0.80 → 1.10 (English entertainment/sports news)"
+    "  - news_rss raised 0.80 → 1.10 (English entertainment/sports news)",
+    "",
+    "2026-05-26: Added cluster_title_blocklist to filter pure product-feature/animation/",
+    "  speedrun stories with no mechanism reveal. These consistently produce <10% retention.",
+    "  Reduced entertainment topic_boost 3.00 → 2.20 to raise overall quality bar."
   ],
 
   "soft_targets": {
@@ -34,8 +38,8 @@
 
   "ranking": {
     "topic_boosts": {
-      "entertainment": 3.00,
-      "sports":        2.50,
+      "entertainment": 2.20,
+      "sports":        2.00,
       "society":       0.10,
       "world":         0.10,
       "politics":      0.05,
@@ -59,6 +63,13 @@
       "stackoverflow":  0.05,
       "paperswithcode": 0.05,
       "arxiv_ai_rss":   0.05
-    }
+    },
+    "cluster_title_blocklist": [
+      "(?i)\\b(animations?|graphics?|textures?|physics|render|visuals?)\\s+(are|is|look|make|makes?|making)\\b",
+      "(?i)\\bspeedr?un(ning|ner|s)?\\b",
+      "(?i)\\b(voice\\s+acting|voice\\s+lines?|dubbed?|locali[sz]ation)\\b",
+      "(?i)^(Nintendo|Microsoft|Sony|Xbox|PlayStation|Steam|Valve|Blizzard|Ubisoft|EA|Activision).{0,40}(announces?|reveals?|launches?|releases?|drops?|adds?|updates?)\\b",
+      "(?i)\\b(patch\\s+notes?|patch\\s+\\d|update\\s+\\d|hotfix|changelog)\\b"
+    ]
   }
 }

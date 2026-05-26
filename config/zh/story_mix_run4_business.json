@@ -15,7 +15,12 @@
     "  science    0.06/0.035=1.71",
     "  politics   0.30/0.357=0.84",
     "  society    0.30/0.233=1.29",
-    "  world/entertainment/sports: 0.00"
+    "  world/entertainment/sports: 0.00",
+    "",
+    "2026-05-26: Added cluster_title_blocklist to filter pure earnings-report/",
+    "  stock-price/sales-volume content — ZH business avg_avp only 5.3% across 13 videos.",
+    "  These story types (财报解读, 股价涨跌, 销量数字) consistently fail to retain viewers.",
+    "  Keeper stories: pricing mechanism reveals, institutional failure, hidden business logic."
   ],
 
   "soft_targets": {
@@ -57,6 +62,13 @@
       "baidu":         0.30,
       "google_trends": 0.20,
       "wikipedia":     0.50
-    }
+    },
+    "cluster_title_blocklist": [
+      "(?i)(财报|营收|净利润|毛利率|利润率?|盈利).{0,25}(暴增|暴跌|大增|大跌|增长|下滑|超预期|创新高|创新低|环比|同比)",
+      "(?i)(股价|大盘|指数|市值|港股|A股|美股).{0,25}(上涨|下跌|暴跌|暴涨|飙升|跳水|收涨|收跌|高开|低开)",
+      "(?i)(销量|销售额|出货量|发货量).{0,25}(同比|环比|连跌|连涨|新低|新高|增长|下滑|超过)",
+      "(?i)^(比亚迪|华为|阿里|腾讯|字节跳动|百度|小米|宁德时代|蔚来|理想|小鹏|美团|拼多多).{0,20}(宣布|公告|发布|披露|公布).{0,30}(财报|业绩|季报|年报)",
+      "(?i)(油价|金价|铜价|大宗商品).{0,20}(今日|单日|本周|本月).{0,20}(涨|跌|变动|走势)"
+    ]
   }
 }

@@ -12,7 +12,12 @@
     "  - youtube raised 0.10 → 0.60 (English political news channels)",
     "  - reddit added 1.20 (political discussion communities)",
     "  - weibo/baidu dropped 0.40 → 0.10 (Chinese-language content)",
-    "  - bbc/guardian/reuters/aljazeera unchanged (already English sources)"
+    "  - bbc/guardian/reuters/aljazeera unchanged (already English sources)",
+    "",
+    "2026-05-26: Added cluster_title_blocklist to filter 'statement war' political content",
+    "  (claim/deny, vague tensions, pure reaction quotes) — avg_avp 16.6%, only 8 total views.",
+    "  Reduced politics topic_boost 3.00 → 1.80 to substantially reduce throughput and",
+    "  force only high-mechanism stories through the quality bar."
   ],
 
   "soft_targets": {
@@ -31,7 +36,7 @@
 
   "ranking": {
     "topic_boosts": {
-      "politics":      3.00,
+      "politics":      1.80,
       "world":         0.05,
       "society":       0.05,
       "business":      0.05,
@@ -58,6 +63,12 @@
       "devto":         0.10,
       "lobsters":      0.10,
       "stackoverflow": 0.10
-    }
+    },
+    "cluster_title_blocklist": [
+      "(?i)\\b(claims?|says?|denies?|confirms?|admits?|alleges?)\\s+.{0,60}\\b(hit|struck|fired\\s+on|attack(ed)?)\\b",
+      "(?i)\\b(tensions?|standoff|stalemate)\\s+(remain|continue|escalat|grow|rise|heighten)",
+      "(?i)\\b(warn(s|ed|ing)?|threatens?|vows?|pledges?)\\s+(to\\s+|that\\s+).{0,40}(retaliat|respond|act|strike)",
+      "(?i)\\b(pentagon|white\\s+house|kremlin|ministry)\\s+(deny|denies|denied|says|said|confirms?|declines?\\s+to)\\b"
+    ]
   }
 }
