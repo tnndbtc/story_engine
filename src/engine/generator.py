@@ -1991,6 +1991,30 @@ def generate_story_batch(
             "generate_story_batch: saved as hierarchical_story #%d", story_id
         )
 
+        # ── Event memory: record this story so future batches can dedup ──────
+        # Must be here (after save, before scoring) — scoring exceptions must
+        # not prevent the event from being recorded.
+        # deep_cluster is an EventCluster object; use getattr, not dict.get().
+        try:
+            _em_title   = deep_story.get('title', '')
+            _em_sources = deep_story.get('sources', [])
+            _em_emb     = getattr(deep_cluster, 'embedding_center', None)
+            _em_ents    = _extract_entities(_em_title, _em_sources)
+            store_event(
+                story_id         = story_id,
+                story_set_id     = batch_id or 0,
+                story_title      = _em_title,
+                sources          = _em_sources,
+                embedding_center = _em_emb,
+                entities         = _em_ents,
+            )
+            logger.info("generate_story_batch: event_memory updated (story #%d)", story_id)
+        except Exception as _se:
+            logger.warning(
+                "generate_story_batch: store_event failed (story #%d): %s", story_id, _se
+            )
+        # ── End event memory ──────────────────────────────────────────────────
+
         # ── Phase 1: Attractiveness scoring ──────────────────────────────────
         # Score the generated story so run_generate.sh can gate the pipe call.
         # Non-fatal: if scoring fails, score stays NULL and gate fails open.
