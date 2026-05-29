@@ -2077,6 +2077,27 @@ def generate_story_batch(
             )
         # ── End Phase 1.5 trend scoring ───────────────────────────────────────
 
+        # ── Phase 1.6: Blocked story_type override ───────────────────────────
+        # story_types with consistently poor retention are forced to skip
+        # regardless of their attract/trend score, so they never reach publishing.
+        # Extend this set as new low-retention types are identified in reviews.
+        _BLOCKED_STORY_TYPES = frozenset({'social_tech'})
+        if _story_type in _BLOCKED_STORY_TYPES:
+            try:
+                from db.models import force_tier_skip
+                force_tier_skip(batch_id or 0)
+                logger.info(
+                    "generate_story_batch: story_type=%s is blocked — "
+                    "produce_tier forced to skip (story_set_id=%s)",
+                    _story_type, batch_id,
+                )
+            except Exception as _exc:
+                logger.warning(
+                    "generate_story_batch: force_tier_skip failed for story_type=%s — %s",
+                    _story_type, _exc,
+                )
+        # ── End Phase 1.6 ────────────────────────────────────────────────────
+
         return result
 
     except Exception as e:

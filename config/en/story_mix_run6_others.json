@@ -14,7 +14,14 @@
     "  - weibo dropped 1.00 → 0.10 (Chinese social)",
     "  - baidu dropped 0.60 → 0.10 (Chinese search)",
     "  - nicovideo dropped 0.20 → 0.10 (Japanese content)",
-    "  - news_rss raised 1.30 → 1.50 (English world/society news feeds)"
+    "  - news_rss raised 1.30 → 1.50 (English world/society news feeds)",
+    "",
+    "2026-05-29: Added cluster_title_blocklist to filter low-retention non-mechanism stories.",
+    "  Target patterns (all confirmed <5% avg_view_pct in review data):",
+    "  - 'Just claimed another life' format (pure death announcement, no mechanism)",
+    "  - 'He/She asked/said/left...' pronoun-led clickbait (content mismatch, no mechanism)",
+    "  - 'So remote / most isolated' soft human-interest (low YouTube discovery signal)",
+    "  - 'Why X keeps returning/happening' recurring-event explanation (generic, no gap)"
   ],
 
   "soft_targets": {
@@ -43,6 +50,12 @@
       "ai":            0.10,
       "science":       0.10
     },
+    "cluster_title_blocklist": [
+      "(?i)\\b(just\\s+)?(claimed|takes?|took)\\s+(another|a\\s+new|its\\s+(latest|next))\\s+(life|victim|casualty)\\b",
+      "(?i)^(He|She)\\s+(asked|begged|told|said|left|gave|got|made|wanted|paid|posted|sent)\\b",
+      "(?i)\\b(so|most|very)\\s+(remote|isolated|cut.?off)\\b",
+      "(?i)^Why\\s+\\w+(\\s+\\w+)?\\s+keeps?\\s+(returning|happening|coming\\s+back|recurring|striking|spreading|appearing)\\b"
+    ],
     "platform_weight_overrides": {
       "news_rss":       1.50,
       "reddit":         1.80,

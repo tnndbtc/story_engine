@@ -136,6 +136,14 @@ TITLE FORMULA: [Specific Actor/Entity] + [Counterintuitive Result] + [Implied Ga
     - Vague entity + vague verb: "Tech Giant Announces New Policy"
     - Pure price/score/number updates: "Bitcoin hits $X" or "Stock falls Y%"
     - Claim/deny political statements: "Country X says Country Y did Z"
+    - Generic "AI" as actor with no specific company, product, or person:
+        BAD:  "Every AI system has a blind spot only humans can see"    ← no named entity
+        BAD:  "The AI model you're using helped hackers break security" ← vague + "you're"
+        BAD:  "AI is quietly changing how banks work"                   ← no actor, no gap
+        GOOD: "One GitHub Employee Installed This Extension. 3,800 Repos Were Gone."
+        GOOD: "The Protocol War That Decided AI's Future Happened in Four Months"
+        RULE: if the story is about AI, name the specific company, model, or person.
+              "AI" alone is never a specific enough actor.
 
   If your title can be understood without watching the video → rewrite it.
 

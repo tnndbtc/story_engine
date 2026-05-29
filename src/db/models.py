@@ -996,6 +996,24 @@ def save_trend_score(
     conn.close()
 
 
+def force_tier_skip(story_set_id: int) -> None:
+    """
+    Override produce_tier to 'skip' for a story that passed scoring but whose
+    story_type is on the blocked list (e.g. social_tech).
+
+    Called from generator.py Phase 1.6 after trend scoring completes.
+    Only updates produce_tier — leaves final_score and trend_bonus intact so
+    the record is still auditable.
+    """
+    conn = get_connection()
+    conn.execute(
+        "UPDATE hierarchical_stories SET produce_tier = 'skip' WHERE story_set_id = ?",
+        (story_set_id,),
+    )
+    conn.commit()
+    conn.close()
+
+
 def save_failed_hierarchical_story(
     story_set_id: int,
     batch_ts:     int,
