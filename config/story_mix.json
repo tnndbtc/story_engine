@@ -301,5 +301,27 @@
       "format_eligibility",
       "selection_policy.constraint_priority_order"
     ]
+  },
+
+  "analytics_feedback": {
+    "_comment": "Controls for Changes 1–5 (YouTube Analytics feedback loop). Read by story_orchestrate.py and attract_scorer.py.",
+
+    "exploration_budget": 0.15,
+    "_exploration_budget_note": "Fraction of story slots reserved for under-explored types (Change 3). At MAX_SUPPORTING=4 + 1 deep = 5 slots, 0.15 → 1 explore slot per batch.",
+
+    "category_story_type_map": {
+      "_comment": "Proxy mapping from crawler category to story_type used before generation assigns the real type (Change 1). Mirrors _CATEGORY_TO_STORY_TYPE in story_orchestrate.py.",
+      "ai":            "tech_ai",
+      "technology":    "tech_ai",
+      "science":       "health_science",
+      "politics":      "geopolitics",
+      "world":         "geopolitics",
+      "society":       "social_tech",
+      "entertainment": "celebrity",
+      "business":      "finance",
+      "sports":        "sports",
+      "crypto":        "finance",
+      "unknown":       "other"
+    }
   }
 }

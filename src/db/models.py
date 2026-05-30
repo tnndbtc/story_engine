@@ -1562,6 +1562,236 @@ def get_subscribers() -> list[dict]:
     return result
 
 
+# ---------------------------------------------------------------------------
+# Analytics Feedback functions (Changes 1, 2, 5)
+# ---------------------------------------------------------------------------
+
+def get_story_type_performance() -> dict:
+    """
+    Change 1: Story-type performance multiplier with Bayesian smoothing.
+
+    Returns dict[story_type, {smoothed_score, n_samples, raw_avg}] where
+    smoothed_score is a composite of retention and views, Bayesian-smoothed
+    toward the global mean to prevent small samples from dominating.
+
+    composite_score(video) =
+        0.7 * (avg_view_pct / 100)
+      + 0.3 * log10(views + 1) / log10(max_views + 1)
+
+    smoothed_score(type) =
+        (n * raw_avg  +  K * global_avg) / (n + K),  K = 10
+
+    Returns {} if no analytics data is available (fail-open).
+    """
+    import math as _math
+
+    K          = 10    # Bayesian shrinkage constant
+    MIN_VIEWS  = 100   # ignore micro-view videos
+
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """SELECT h.story_type, y.avg_view_pct, y.views
+               FROM hierarchical_stories h
+               JOIN youtube_publish_log y ON y.story_id = h.id
+               WHERE y.avg_view_pct IS NOT NULL
+                 AND y.analytics_pulled_at > 0
+                 AND y.views >= ?
+                 AND h.story_type IS NOT NULL""",
+            (MIN_VIEWS,)
+        ).fetchall()
+    finally:
+        conn.close()
+
+    if not rows:
+        return {}
+
+    all_views = [r['views'] for r in rows if r['views'] and r['views'] > 0]
+    max_views  = max(all_views) if all_views else 1
+
+    def _composite(avg_view_pct, views):
+        retention  = (avg_view_pct or 0) / 100.0   # stored as %, normalize to 0–1
+        view_score = _math.log10((views or 1) + 1) / _math.log10(max_views + 1)
+        return 0.7 * retention + 0.3 * view_score
+
+    # Group by story_type
+    type_scores: dict = {}
+    for r in rows:
+        st = r['story_type']
+        if st not in type_scores:
+            type_scores[st] = []
+        type_scores[st].append(_composite(r['avg_view_pct'], r['views']))
+
+    # Global average across all videos
+    all_composites = [s for scores in type_scores.values() for s in scores]
+    global_avg     = sum(all_composites) / len(all_composites) if all_composites else 0.5
+
+    # Bayesian smoothing per type
+    result: dict = {}
+    for st, scores in type_scores.items():
+        n          = len(scores)
+        raw_avg    = sum(scores) / n
+        smoothed   = (n * raw_avg + K * global_avg) / (n + K)
+        result[st] = {
+            'smoothed_score': smoothed,
+            'n_samples':      n,
+            'raw_avg':        raw_avg,
+        }
+
+    return result
+
+
+def get_story_type_prediction_error() -> dict:
+    """
+    Change 2: Prediction error feedback.
+
+    Computes per-story-type mean prediction error over the last 30 videos:
+        error = actual_performance_score − predicted_attract_score / 100
+
+    Where:
+        actual_performance_score =
+            0.5 * (avg_view_pct / 100)
+          + 0.3 * (ctr_pct / 100)
+          + 0.2 * log10(views + 1) / log10(max_views + 1)
+
+    Returns dict[story_type, correction_float] clamped to [−0.15, +0.15].
+    Only types with n_samples >= MIN_SAMPLES are included.
+    Returns {} on no data (fail-open).
+    """
+    import math as _math
+
+    MIN_SAMPLES     = 5
+    WINDOW          = 30      # rolling last N videos per type
+    MAX_CORRECTION  = 0.15
+    MIN_VIEWS       = 100
+
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """SELECT h.story_type, h.attractiveness_score,
+                      y.avg_view_pct, y.ctr_pct, y.views
+               FROM hierarchical_stories h
+               JOIN youtube_publish_log y ON y.story_id = h.id
+               WHERE y.avg_view_pct IS NOT NULL
+                 AND y.analytics_pulled_at > 0
+                 AND y.views >= ?
+                 AND h.story_type IS NOT NULL
+                 AND h.attractiveness_score IS NOT NULL
+               ORDER BY y.published_at DESC""",
+            (MIN_VIEWS,)
+        ).fetchall()
+    finally:
+        conn.close()
+
+    if not rows:
+        return {}
+
+    all_views = [r['views'] for r in rows if r['views'] and r['views'] > 0]
+    max_views  = max(all_views) if all_views else 1
+
+    def _actual(avg_view_pct, ctr_pct, views):
+        retention  = (avg_view_pct or 0) / 100.0
+        ctr        = (ctr_pct or 0) / 100.0
+        view_score = _math.log10((views or 1) + 1) / _math.log10(max_views + 1)
+        return 0.5 * retention + 0.3 * ctr + 0.2 * view_score
+
+    type_errors: dict = {}
+    type_counts: dict = {}
+
+    for r in rows:
+        st = r['story_type']
+        type_counts[st] = type_counts.get(st, 0) + 1
+        if type_counts[st] > WINDOW:
+            continue   # beyond rolling window
+
+        predicted = (r['attractiveness_score'] or 0) / 100.0
+        actual    = _actual(r['avg_view_pct'], r['ctr_pct'], r['views'])
+        error     = actual - predicted
+
+        if st not in type_errors:
+            type_errors[st] = []
+        type_errors[st].append(error)
+
+    result: dict = {}
+    for st, errors in type_errors.items():
+        if len(errors) >= MIN_SAMPLES:
+            mean_err  = sum(errors) / len(errors)
+            result[st] = max(-MAX_CORRECTION, min(MAX_CORRECTION, mean_err))
+
+    return result
+
+
+def get_traffic_source_profile() -> dict:
+    """
+    Change 5: Traffic source profile per story_type.
+
+    Returns dict[story_type, {search_pct: float, suggested_pct: float}]
+    aggregated across all published videos for that type.
+
+    search_pct    = fraction of views from YT_SEARCH
+    suggested_pct = fraction of views from RELATED_VIDEO + YT_CHANNEL + SUBSCRIBER
+
+    Returns {} if no traffic_sources data is available (fail-open).
+    """
+    MIN_VIEWS = 100
+
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """SELECT h.story_type, y.traffic_sources, y.views
+               FROM hierarchical_stories h
+               JOIN youtube_publish_log y ON y.story_id = h.id
+               WHERE y.traffic_sources IS NOT NULL
+                 AND y.analytics_pulled_at > 0
+                 AND y.views >= ?
+                 AND h.story_type IS NOT NULL""",
+            (MIN_VIEWS,)
+        ).fetchall()
+    finally:
+        conn.close()
+
+    if not rows:
+        return {}
+
+    SEARCH_KEYS    = {'YT_SEARCH'}
+    SUGGESTED_KEYS = {'RELATED_VIDEO', 'YT_CHANNEL', 'SUBSCRIBER'}
+
+    type_src_views:   dict = {}   # story_type → {source_type: total_views}
+    type_total_views: dict = {}   # story_type → sum of raw views
+
+    for r in rows:
+        st          = r['story_type']
+        total_views = r['views'] or 0
+        try:
+            sources = json.loads(r['traffic_sources']) if r['traffic_sources'] else {}
+        except (json.JSONDecodeError, TypeError):
+            continue
+
+        if st not in type_src_views:
+            type_src_views[st]   = {}
+            type_total_views[st] = 0
+
+        type_total_views[st] += total_views
+        for src_type, src_views in sources.items():
+            type_src_views[st][src_type] = (
+                type_src_views[st].get(src_type, 0) + (src_views or 0)
+            )
+
+    result: dict = {}
+    for st, source_map in type_src_views.items():
+        total = type_total_views.get(st, 0)
+        if total == 0:
+            continue
+        search_views    = sum(source_map.get(k, 0) for k in SEARCH_KEYS)
+        suggested_views = sum(source_map.get(k, 0) for k in SUGGESTED_KEYS)
+        result[st] = {
+            'search_pct':    search_views    / total,
+            'suggested_pct': suggested_views / total,
+        }
+
+    return result
+
+
 def _row_to_dict(row: sqlite3.Row) -> dict:
     """Convert a database row to a dictionary with parsed JSON fields.
     Converts UNIX timestamps to ISO strings for API display.

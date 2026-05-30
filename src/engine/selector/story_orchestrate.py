@@ -88,6 +88,35 @@ _HISTORY_PATH: Path = (
     Path(__file__).resolve().parents[3] / 'logs' / 'ranking_history.json'
 )
 
+# ── Analytics feedback constants (Changes 1, 3, 5) ───────────────────────────
+
+# Change 1 — analytics type multiplier range
+ANALYTICS_MULT_MIN  = 0.85   # lowest multiplier for worst-performing story types
+ANALYTICS_MULT_MAX  = 1.20   # highest multiplier for best-performing story types
+ANALYTICS_MIN_N     = 3      # minimum sample count before a type gets a multiplier
+
+# Change 3 — exploration budget
+EXPLORE_BUDGET      = 0.15   # fraction of total story slots reserved for exploration
+MAX_EXPLORE_SLOTS   = 1      # hard cap: never add more than this many explore stories
+
+# Change 5 — suggested-dominant threshold for explore pool
+SUGGESTED_DOMINANT_THRESHOLD = 0.60   # suggested_pct > this → eligible for explore slot
+
+# Category → story_type proxy mapping (used before generation assigns the real type)
+_CATEGORY_TO_STORY_TYPE: dict = {
+    'ai':            'tech_ai',
+    'technology':    'tech_ai',
+    'science':       'health_science',
+    'politics':      'geopolitics',
+    'world':         'geopolitics',
+    'society':       'social_tech',
+    'entertainment': 'celebrity',
+    'business':      'finance',
+    'sports':        'sports',
+    'crypto':        'finance',
+    'unknown':       'other',
+}
+
 
 # ── Entity fingerprint ────────────────────────────────────────────────────────
 
@@ -514,6 +543,51 @@ def story_orchestrate(
     excluded_clusters:list = []
     ranking_metadata:dict  = {}
 
+    # ── Change 1: Load analytics feedback (fail-open) ────────────────────────
+    # Loads story-type performance scores and traffic profiles from the local DB.
+    # If the DB is unavailable or has no data yet, all analytics dicts are empty
+    # and multipliers default to 1.0 (neutral — no behaviour change).
+    type_perf:       dict = {}
+    traffic_profile: dict = {}
+    try:
+        from db.models import get_story_type_performance, get_traffic_source_profile
+        type_perf        = get_story_type_performance()
+        traffic_profile  = get_traffic_source_profile()
+        if type_perf:
+            logger.info(
+                "story_orchestrate: analytics feedback loaded — %d story types with data",
+                len(type_perf),
+            )
+    except Exception as _analytics_exc:
+        logger.debug(
+            "story_orchestrate: analytics feedback unavailable — %s", _analytics_exc
+        )
+
+    # Pre-compute per-type multipliers (normalised to [ANALYTICS_MULT_MIN, ANALYTICS_MULT_MAX])
+    type_perf_mult: dict[str, float] = {}
+    qualifying = {
+        t: v for t, v in type_perf.items()
+        if v.get('n_samples', 0) >= ANALYTICS_MIN_N
+    }
+    if qualifying:
+        smoothed_vals = [v['smoothed_score'] for v in qualifying.values()]
+        _min_s = min(smoothed_vals)
+        _max_s = max(smoothed_vals)
+        _span  = _max_s - _min_s
+        for t, v in qualifying.items():
+            if _span > 0:
+                type_perf_mult[t] = (
+                    ANALYTICS_MULT_MIN
+                    + (v['smoothed_score'] - _min_s) / _span
+                    * (ANALYTICS_MULT_MAX - ANALYTICS_MULT_MIN)
+                )
+            else:
+                type_perf_mult[t] = 1.0  # all types identical → neutral
+        logger.debug(
+            "story_orchestrate: analytics multipliers — %s",
+            {t: round(m, 3) for t, m in type_perf_mult.items()},
+        )
+
     # ── Step 5 (load): read batch history for repetition penalty ──────────────
     batches    = _load_history()
     batches    = _evict_history(batches)
@@ -580,6 +654,20 @@ def story_orchestrate(
             )
         else:
             final_score = base_score
+
+        # Change 1: Analytics type multiplier
+        # Map cluster category → predicted story_type → Bayesian-smoothed multiplier.
+        # Only applied when we have >= ANALYTICS_MIN_N data points for this type.
+        cat            = _cluster_category(cluster)
+        predicted_type = _CATEGORY_TO_STORY_TYPE.get(cat, 'other')
+        analytics_mult = type_perf_mult.get(predicted_type, 1.0)
+        if analytics_mult != 1.0:
+            final_score = final_score * analytics_mult
+            logger.debug(
+                "story_orchestrate: analytics multiplier — cluster %s cat=%r "
+                "type=%s mult=%.3f score → %.4f",
+                cluster.event_id, cat, predicted_type, analytics_mult, final_score,
+            )
 
         scored.append((cluster, final_score))
 
@@ -921,6 +1009,60 @@ def story_orchestrate(
             "threshold %.2f — proceeding with deep story only",
             MIN_ALIGNMENT_SCORE,
         )
+
+    # ── Change 3 + 5: Exploration budget ─────────────────────────────────────
+    # Reserve one slot for under-explored story types so the system cannot
+    # converge entirely onto historically well-performing categories.
+    #
+    # Eligible for explore slot (Change 5 drives prioritisation):
+    #   a. Predicted story_type with n_samples < ANALYTICS_MIN_N (low data)
+    #   b. Predicted story_type whose traffic is suggested-dominant (high variance,
+    #      high breakout potential — routed here instead of boosting main ranking)
+    #
+    # The explore cluster is drawn from `remaining` (pre-alignment-filter) to give
+    # truly novel content a chance, but still requires passing the quality floor.
+    if EXPLORE_BUDGET > 0 and len(supporting) < MAX_SUPPORTING:
+        _explore_added    = 0
+        _selected_eids    = {deep_cluster.event_id} | {c.event_id for c in supporting}
+        _explore_pool: list = []
+
+        for c, s in remaining:
+            if c.event_id in _selected_eids:
+                continue
+            cat            = _cluster_category(c)
+            predicted_type = _CATEGORY_TO_STORY_TYPE.get(cat, 'other')
+            type_data      = type_perf.get(predicted_type, {})
+            n_samples      = type_data.get('n_samples', 0)
+            traffic        = traffic_profile.get(predicted_type, {})
+            is_low_sample  = n_samples < ANALYTICS_MIN_N
+            is_suggested   = traffic.get('suggested_pct', 0) > SUGGESTED_DOMINANT_THRESHOLD
+
+            if is_low_sample or is_suggested:
+                ok, _ = _passes_quality_floor(c)
+                if ok:
+                    overlap = _entity_overlap(deep_cluster, c)
+                    if overlap <= ENTITY_OVERLAP_HARD_CAP:
+                        _explore_pool.append((c, s, n_samples))
+
+        # Sort by event_hotness DESC — best signal despite low analytics data
+        _explore_pool.sort(key=lambda x: -x[0].event_hotness)
+
+        for exp_cluster, exp_raw_score, exp_n in _explore_pool:
+            if _explore_added >= MAX_EXPLORE_SLOTS:
+                break
+            overlap      = _entity_overlap(deep_cluster, exp_cluster)
+            exp_score    = _support_score(exp_raw_score, overlap)
+            supporting.append(exp_cluster)
+            support_scores.append(exp_score)
+            _selected_eids.add(exp_cluster.event_id)
+            _explore_added += 1
+            pred_t = _CATEGORY_TO_STORY_TYPE.get(_cluster_category(exp_cluster), 'other')
+            logger.info(
+                "story_orchestrate: explore slot — cluster %s type=%s n_samples=%d "
+                "hotness=%.1f (budget=%.0f%%)",
+                exp_cluster.event_id, pred_t, exp_n,
+                exp_cluster.event_hotness, EXPLORE_BUDGET * 100,
+            )
 
     # Record ranking_metadata for selected supporting stories
     for rank, (cluster, score) in enumerate(zip(supporting, support_scores), start=1):
