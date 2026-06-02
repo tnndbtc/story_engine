@@ -155,6 +155,8 @@ _ALLOWED_KEYS = frozenset({
     'determinism',
     'observability',
     'tuning_layer_bounds',
+    # analytics feedback layer (YouTube performance signals fed back into selection)
+    'analytics_feedback',
 })
 
 

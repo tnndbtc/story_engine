@@ -257,6 +257,22 @@ def refresh_comments():
     return {"status": "started"}
 
 
+@router.post("/analytics/refresh")
+def refresh_channel_analytics():
+    """
+    Spawn fetch_analytics.py in the background and return immediately.
+    Pulls YouTube Analytics for all eligible published deep-story videos (EN + ZH).
+    Poll GET /api/analytics/channel after ~20 s.
+    """
+    subprocess.Popen(
+        [_PIPE_PYTHON, str(_SCRIPTS_DIR / "fetch_analytics.py")],
+        cwd=_PIPE_CWD,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return {"status": "started"}
+
+
 @router.get("/subscribers", response_model=list[YoutubeSubscriber])
 def list_subscribers():
     """
