@@ -256,6 +256,7 @@ class GamesVideoRow(BaseModel):
     comment_count:     Optional[int]
     avg_view_duration: Optional[float]  # seconds; None until Analytics API data arrives
     avg_view_pct:      Optional[float]  # %; None until Analytics API data arrives
+    lang:              Optional[str]    # 'en' = KataGo playlist, 'zh' = Go Chinese playlist
     fetched_at:        Optional[str]    # ISO datetime of last fetch
     comments:          list[GamesComment] = []
 
