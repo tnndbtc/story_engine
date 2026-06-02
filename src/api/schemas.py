@@ -257,6 +257,8 @@ class GamesVideoRow(BaseModel):
     avg_view_duration: Optional[float]  # seconds; None until Analytics API data arrives
     avg_view_pct:      Optional[float]  # %; None until Analytics API data arrives
     lang:              Optional[str]    # 'en' = KataGo playlist, 'zh' = Go Chinese playlist
+    is_famous:         Optional[int]    # 1 = famous game, 0 = ai_selfplay
+    ab_variant:        Optional[str]    # 'male-en' | 'female-en' | 'male-zh' | 'female-zh'
     fetched_at:        Optional[str]    # ISO datetime of last fetch
     comments:          list[GamesComment] = []
 
