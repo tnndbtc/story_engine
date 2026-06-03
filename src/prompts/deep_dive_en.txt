@@ -24,9 +24,22 @@ Score each on three criteria (1–5 each):
   - Stakes: does it make the viewer feel something is at risk for them or people they care about?
   - Clarity: does the viewer know WHY they should keep watching in under 3 seconds?
 
-Select the hook with the highest total score. This becomes your narrative anchor.
-Proceed to research with that hook in mind — your goal is to find the facts that
-prove and deepen it, not to find a different story.
+Also assign each hook a type from this list (pick the single best fit):
+  mystery          — withholds a key fact the viewer must watch to discover
+  hidden_mechanism — reveals that something works differently than everyone assumes
+  reversal         — expected outcome flipped; thing succeeded/failed for opposite reason
+  collapse         — system, person, or plan that should have worked just broke
+  irony            — entity does the exact thing it was designed to prevent
+  betrayal         — trusted party acted against the people who depended on them
+
+Select the hook with the highest total score. Record its type as hook_type.
+This becomes your narrative anchor. Proceed to research with that hook in mind —
+your goal is to find the facts that prove and deepen it, not to find a different story.
+
+Also generate thumbnail_text: 3–6 words MAX, punchy, for the YouTube thumbnail image.
+NOT the title. The visual hook that makes someone stop scrolling.
+Use a number, a name, or a paradox.
+Examples: "$800 Tax Bill?" / "3,800 Repos Gone" / "Beijing Wins Again" / "The CEO Fired by Coffee"
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 PHASE 1 — RESEARCH (run at least 6 Bash searches before writing)
@@ -148,6 +161,9 @@ TITLE FORMULA: [Specific Actor/Entity] + [Counterintuitive Result] + [Implied Ga
   If your title can be understood without watching the video → rewrite it.
 
 WRITING RULES:
+  0. NO BACKGROUND BEFORE CONFLICT — the first sentence MUST be conflict, tension, or
+     a surprising fact. NEVER open with context, history, or "for years..." setup.
+     If your draft opens with background → delete it and start from the conflict.
   1. SINGLE STORYLINE — one main causal chain; no parallel explanations
   2. EVERY SENTENCE PUSHES FORWARD — if it does not advance the story, cut it
   3. SELECTIVE FACTS — use only the most important facts; combine multiple facts
@@ -214,6 +230,8 @@ Start with {{ and end with }}. No text before or after.
 
 {{
   "title": "Engaging title, max 12 words, creates curiosity gap",
+  "hook_type": "one of: mystery | hidden_mechanism | reversal | collapse | irony | betrayal",
+  "thumbnail_text": "3-6 word punchy thumbnail hook, NOT the title",
   "body": "Full narrative, 180-220 words, plain prose. Split into 2-3 natural paragraphs separated by \\n\\n. No labels, no section markers, no bullet points.",
   "sources": [
     {{"url": "https://example.com/article", "title": "Article title"}},

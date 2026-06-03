@@ -61,6 +61,93 @@ from db.models import load_recent_events, store_event as _store_event  # noqa: F
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
+# Published-video dedup (topic-cluster cooldown)
+# ---------------------------------------------------------------------------
+# Jaccard threshold for matching candidates against recently PUBLISHED YouTube
+# videos. Lower than the event-memory threshold (0.20 vs 0.35) because we want
+# to catch "same event, different angle" pairs that slipped through event-memory
+# (e.g., three Ebola stories published across consecutive batches).
+_PUBLISHED_DUP_THRESHOLD_JACCARD = 0.20
+_PUBLISHED_DUP_WINDOW_DAYS       = 14  # 14-day cooldown for published topics
+
+
+def load_published_video_titles(window_days: int = 14) -> list[dict]:
+    """
+    Return recently published YouTube video titles from youtube_publish_log,
+    joined with hierarchical_stories to get the generated story title.
+    Used to enforce a topic-cluster cooldown across production runs.
+    """
+    try:
+        from db.models import get_connection
+        conn = get_connection()
+        cutoff_sec = int(time.time()) - window_days * 86400
+        rows = conn.execute(
+            """
+            SELECT
+                ypl.video_id,
+                ypl.published_at,
+                COALESCE(
+                    json_extract(hs.deep_story, '$.title'),
+                    json_extract(hs.deep_story, '$.hook'),
+                    ''
+                ) AS story_title
+            FROM youtube_publish_log ypl
+            LEFT JOIN story_sets ss ON ss.id = ypl.story_set_id
+            LEFT JOIN hierarchical_stories hs ON hs.story_set_id = ss.id
+            WHERE ypl.published_at IS NOT NULL
+              AND ypl.published_at >= ?
+              AND story_title != ''
+            ORDER BY ypl.published_at DESC
+            """,
+            (cutoff_sec,),
+        ).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+    except Exception as exc:
+        logger.warning("load_published_video_titles failed: %s", exc)
+        return []
+
+
+def check_against_published(
+    candidates,  # list[NormalizedCandidate]
+    window_days: int = _PUBLISHED_DUP_WINDOW_DAYS,
+) -> set[str]:
+    """
+    Return a set of candidate URLs whose titles match a recently published
+    YouTube video title above _PUBLISHED_DUP_THRESHOLD_JACCARD.
+    Used to enforce topic-cluster cooldown (14-day window, lower threshold).
+    """
+    published = load_published_video_titles(window_days=window_days)
+    if not published:
+        return set()
+
+    blocked_urls: set[str] = set()
+    for candidate in candidates:
+        cand_title = candidate.title_original or candidate.canonical_title or ''
+        if not cand_title:
+            continue
+        cand_tokens = _tokenize(cand_title)
+        if len(cand_tokens) < _MIN_TOKENS:
+            continue
+
+        for pub in published:
+            pub_title = pub.get('story_title', '')
+            if not pub_title:
+                continue
+            sim = _similarity(cand_title, pub_title)
+            if sim >= _PUBLISHED_DUP_THRESHOLD_JACCARD:
+                days_since = max(0.0, (time.time() - (pub.get('published_at') or 0)) / 86400.0)
+                logger.debug(
+                    "published_dedup: blocked url=%r sim=%.2f days_since=%.1f pub_title=%r",
+                    candidate.url[:70], sim, days_since, pub_title[:60],
+                )
+                blocked_urls.add(candidate.url)
+                break
+
+    return blocked_urls
+
+
+# ---------------------------------------------------------------------------
 # Config loader for tunable thresholds
 # ---------------------------------------------------------------------------
 

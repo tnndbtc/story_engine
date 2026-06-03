@@ -481,6 +481,18 @@ def init_db():
         except sqlite3.OperationalError:
             pass  # column already exists
 
+    # Migration: add hook_type and thumbnail_text to youtube_publish_log
+    for _col, _coltype in [
+        ("hook_type",      "TEXT"),
+        ("thumbnail_text", "TEXT"),
+    ]:
+        try:
+            conn.execute(
+                f"ALTER TABLE youtube_publish_log ADD COLUMN {_col} {_coltype}"
+            )
+        except sqlite3.OperationalError:
+            pass  # column already exists
+
     # Migration: add cluster_score_breakdown column to story_sets (Stage 4b LLM scorer)
     # Stores JSON array of per-cluster LLM scores for the run, for debugging and
     # future training data (correlate dimensions vs avg_view_pct).

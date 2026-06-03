@@ -63,7 +63,11 @@
       "(?i)^(bitcoin|btc|eth|ethereum|crypto).{0,50}(crosses?|hits?|reaches?|falls?\\s+(to|below)|drops?\\s+(to|below)|rises?\\s+(to|above)|surges?\\s+(to|past)|plunges?\\s+(to|below)).{0,30}\\$?\\d",
       "(?i)\\b(bitcoin|btc|eth|ethereum|crypto)\\s+(price|market)\\s+(update|recap|today|watch|alert|roundup|briefing)",
       "(?i)\\b(weekly|daily|morning|evening)\\s+(crypto|bitcoin|btc|market)\\s+(update|recap|briefing|roundup)",
-      "(?i)\\bbitcoin\\s+price\\s+(is|at|now|hits|falls|drops|rises|crosses|surges|plunges)\\b"
+      "(?i)\\bbitcoin\\s+price\\s+(is|at|now|hits|falls|drops|rises|crosses|surges|plunges)\\b",
+      "(?i)\\b(bitcoin|btc|crypto).{0,50}(still won|outperform|beaten by|vs\\.?\\s+(s&p|nasdaq|sp500|stock))",
+      "(?i)\\b(s&p|nasdaq|sp500|stock market).{0,50}(beat|outperform|won against|vs\\.?\\s+bitcoin)",
+      "(?i)\\b(saylor|strategy|microstrategy).{0,60}(bet|holds?|buys?|bought|adds?|acquires?|accumulates?).{0,30}(bitcoin|btc)\\b",
+      "(?i)\\b(x|y|z)\\s+buys?\\s+(more\\s+)?(bitcoin|btc|eth|ethereum|crypto)\\b"
     ]
   }
 }

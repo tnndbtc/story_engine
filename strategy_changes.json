@@ -1,4 +1,5 @@
 [
+  {"date": "2026-06-03", "label": "策略F（包装层优化：缩略图启用thumbnail_text短钩子、DB加hook_type/thumbnail_text字段、脚本规则前15秒必出冲突/前30秒必出机制/禁止背景开头、ZH加PHASE 0钩子分类、topic-cluster 14天冷却期拦截同事件多批重复、crypto加price-commentary过滤、ZH降至1条/天仅run2_ai+run7_crypto、hook_type轮转追踪）"},
   {"date": "2026-05-30", "label": "策略E（留存优化全面落地：run5_entertainment EN/ZH暂停、social_tech全局强制skip、run4_business EN增至2x/day、run6_others EN加cluster_title_blocklist拦截非机制故事、EN/ZH title_prompt升级AI专项规则、ZH YouTube元数据加双语标签+niche锚点）"},
   {"date": "2026-05-27", "label": "策略D（分类质量分层：EN娱乐/政治降频+blocklist、ZH商业blocklist砍财报、标题公式升级为具体主体+反直觉结果）"},
   {"date": "2026-05-19", "label": "策略C（P0修复：去重阈值0.2→0.35、LLM打分失败返回NULL、crypto价格故事硬拦截）"},

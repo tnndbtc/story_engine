@@ -580,6 +580,24 @@ def stage1_normalize(
     except Exception as _emem_exc:
         logger.warning("event_memory classification skipped (error): %s", _emem_exc)
 
+    # Step 3b — Published-video topic-cluster dedup (14-day window, Jaccard 0.20)
+    # Catches "same event, different angle" stories that slipped through event-memory.
+    # Example: 3 Ebola stories published across consecutive batches all pass event-memory
+    # dedup (different angles, sim < 0.35) but should be blocked by a 14-day cooldown.
+    try:
+        from engine.event_layer.memory import check_against_published
+        _published_blocked = check_against_published(all_candidates, window_days=14)
+        if _published_blocked:
+            logger.info(
+                "Stage 1: published_dedup blocked %d candidate(s) (14-day topic cooldown)",
+                len(_published_blocked),
+            )
+        for c in all_candidates:
+            if c.url in _published_blocked and not c.is_used:
+                c.is_used = True
+    except Exception as _pub_exc:
+        logger.warning("published_dedup skipped (error): %s", _pub_exc)
+
     # Step 4 — Format eligibility tagging
     for candidate in all_candidates:
         eligible: set[int] = set()

@@ -219,13 +219,20 @@ def export_stories(db_path: str, export_dir: str,
         )
 
         # ── Build item list ───────────────────────────────────────────────────
-        title   = ds.get("title",   "Untitled")
-        body    = ds.get("body",    "")   # new single-narrative format
-        hook    = ds.get("hook",    "")   # legacy format
-        bullets = ds.get("bullets", [])   # legacy format
-        twist   = ds.get("twist",   "")   # legacy format
+        title          = ds.get("title",          "Untitled")
+        body           = ds.get("body",           "")   # new single-narrative format
+        hook           = ds.get("hook",           "")   # legacy format
+        bullets        = ds.get("bullets",        [])   # legacy format
+        twist          = ds.get("twist",          "")   # legacy format
+        thumbnail_text = ds.get("thumbnail_text", "")   # short thumbnail hook text
+        hook_type      = ds.get("hook_type",      "")   # hook classification
 
         items = [f"## {strip_md(title)}"]
+        # Write metadata for render pipeline (### lines are excluded from TTS)
+        if thumbnail_text:
+            items.append(f"### thumbnail: {thumbnail_text.strip()}")
+        if hook_type:
+            items.append(f"### hook_type: {hook_type.strip()}")
         if body:
             # Split body into paragraphs first (\n\n-separated), then each paragraph
             # into short TTS clips (~50 chars for Chinese, ~30 words for English).

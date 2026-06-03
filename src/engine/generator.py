@@ -1593,6 +1593,8 @@ def generate_deep_story(
     return {
         'title':            parsed.get('title', topic_title),
         'body':             body,
+        'hook_type':        parsed.get('hook_type', ''),
+        'thumbnail_text':   parsed.get('thumbnail_text', ''),
         # Legacy fields — empty; get_stories_by_set() reads 'body' first
         'hook':             '',
         'bullets':          [],
