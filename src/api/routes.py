@@ -202,7 +202,8 @@ def get_channel_analytics(lang: str = "en"):
     return [ChannelVideoRow(**r) for r in rows]
 
 
-_STRATEGY_CHANGES_PATH = Path("/home/tnnd/data/code/story_engine/strategy_changes.json")
+_STRATEGY_CHANGES_PATH       = Path("/home/tnnd/data/code/story_engine/strategy_changes.json")
+_GAMES_STRATEGY_CHANGES_PATH = Path("/home/tnnd/data/code/games/strategy_changes.json")
 
 @router.get("/analytics/strategy-changes")
 def get_strategy_changes():
@@ -212,6 +213,19 @@ def get_strategy_changes():
     """
     try:
         return json.loads(_STRATEGY_CHANGES_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+
+
+@router.get("/games/strategy-changes")
+def get_games_strategy_changes():
+    """
+    Return the list of KataGo title/upload strategy periods from
+    games/strategy_changes.json.  Same format as /analytics/strategy-changes.
+    Sorted newest-first. Each entry: { date: "YYYY-MM-DD", label: "策略X…" }
+    """
+    try:
+        return json.loads(_GAMES_STRATEGY_CHANGES_PATH.read_text(encoding="utf-8"))
     except Exception:
         return []
 
