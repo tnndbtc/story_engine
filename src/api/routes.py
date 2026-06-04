@@ -41,6 +41,10 @@ from api.schemas import (
     GamesSubtitleRow,
     GamesVideoRow,
     ChannelVideoRow,
+    CommentQuestion,
+    VideoWithCommentQuestions,
+    WinrateResult,
+    WinrateStep,
 )
 from db.models import get_story, get_stories_today, get_stories, get_story_sets, get_stories_by_set, get_youtube_analytics, get_subscribers, get_stories_with_comments, get_channel_videos
 from db.crawler_reader import get_item_count, test_connection, CRAWLER_DB_URL
@@ -407,40 +411,52 @@ def get_games_channel_stats():
 def list_games_videos():
     """
     Return all published KataGo videos with their YouTube stats and comments, newest first.
-    Comments are embedded inside each video row (sorted by like_count DESC).
+    Video stats come from SQLite (games.db / video_analytics).
+    Comments come from PostgreSQL go_db (game_comments) — migrated from SQLite.
     """
     try:
-        conn = _sqlite3.connect(str(_GAMES_DB))
-        conn.row_factory = _sqlite3.Row
+        import psycopg2
+        import psycopg2.extras
+        from collections import defaultdict
 
-        videos = conn.execute(
+        # ── video stats from SQLite ───────────────────────────────────────────
+        sqlite_conn = _sqlite3.connect(str(_GAMES_DB))
+        sqlite_conn.row_factory = _sqlite3.Row
+        videos = sqlite_conn.execute(
             "SELECT * FROM video_analytics ORDER BY published_at DESC"
         ).fetchall()
+        sqlite_conn.close()
 
-        # Fetch all comments grouped by video_id in one query
-        comment_rows = []
-        try:
-            comment_rows = conn.execute(
-                "SELECT * FROM game_comments ORDER BY like_count DESC, published_at DESC"
-            ).fetchall()
-        except _sqlite3.OperationalError:
-            pass  # table not created yet
-
-        conn.close()
-
-        # Build comment map: video_id -> [GamesComment, ...]
-        from collections import defaultdict
+        # ── comments from PostgreSQL go_db ────────────────────────────────────
         comment_map: dict[str, list[GamesComment]] = defaultdict(list)
-        for c in comment_rows:
-            cd = dict(c)
-            comment_map[cd["video_id"]].append(GamesComment(
-                comment_id        = cd["comment_id"],
-                author_name       = cd.get("author_name"),
-                author_channel_id = cd.get("author_channel_id"),
-                text              = cd["text"],
-                like_count        = cd.get("like_count", 0),
-                published_at      = cd.get("published_at"),
-            ))
+        try:
+            pg_conn = psycopg2.connect(_GO_DB_URL)
+            pg_conn.row_factory = None
+            cur = pg_conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            cur.execute("""
+                SELECT gc.comment_id,
+                       gc.author            AS author_name,
+                       gc.author_channel_id,
+                       gc.text,
+                       gc.like_count,
+                       gc.published_at,
+                       gv.video_id
+                FROM game_comments gc
+                JOIN game_videos gv ON gv.video_db_id = gc.video_db_id
+                ORDER BY gc.like_count DESC NULLS LAST, gc.published_at DESC
+            """)
+            for c in cur.fetchall():
+                comment_map[c["video_id"]].append(GamesComment(
+                    comment_id        = c["comment_id"],
+                    author_name       = c["author_name"],
+                    author_channel_id = c["author_channel_id"],
+                    text              = c["text"],
+                    like_count        = c["like_count"] or 0,
+                    published_at      = str(c["published_at"]) if c["published_at"] else None,
+                ))
+            pg_conn.close()
+        except Exception:
+            pass  # go_db unreachable or table not yet populated — return videos without comments
 
         result = []
         for row in videos:
@@ -501,6 +517,180 @@ def refresh_games_analytics():
         stderr=subprocess.DEVNULL,
     )
     return {"status": "started"}
+
+
+_GO_DB_URL = "postgres://dbuser:dbpass@localhost:5432/go_db"
+
+
+def _go_db_conn():
+    """Return a new psycopg2 connection to go_db (the games PostgreSQL database)."""
+    import psycopg2
+    import psycopg2.extras
+    return psycopg2.connect(_GO_DB_URL)
+
+
+@router.get("/games/comment-questions", response_model=list[VideoWithCommentQuestions])
+def get_comment_questions():
+    """
+    Return all KataGo videos that have at least one comment_question in
+    status='analyzed' or status='approved', newest video first.
+    Each video embeds its questions with the original comment text and winrate result.
+    Returns [] if the comment_questions table does not exist yet.
+    """
+    import psycopg2
+    import psycopg2.extras
+    try:
+        conn = _go_db_conn()
+        cur  = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        # Fetch videos that have qualifying questions, joined with comment text
+        cur.execute("""
+            SELECT DISTINCT
+                gv.video_db_id,
+                gv.video_id,
+                gv.title,
+                gv.published_at
+            FROM comment_questions cq
+            JOIN game_videos gv ON gv.video_db_id = cq.video_db_id
+            WHERE cq.status IN ('analyzed', 'approved')
+            ORDER BY gv.published_at DESC
+        """)
+        video_rows = cur.fetchall()
+
+        if not video_rows:
+            conn.close()
+            return []
+
+        video_db_ids = [r["video_db_id"] for r in video_rows]
+
+        # Fetch all qualifying questions for those videos in one query
+        # comment_text and author are stored directly on comment_questions
+        # (populated by fetch_and_parse_comments.py at parse time)
+        cur.execute("""
+            SELECT
+                cq.id,
+                cq.comment_id,
+                cq.video_db_id,
+                COALESCE(cq.comment_text, '') AS comment_text,
+                cq.author,
+                COALESCE(cq.like_count, 0)   AS like_count,
+                cq.at_move,
+                cq.whatif_moves,
+                COALESCE(cq.visits, 1600)    AS visits,
+                cq.result_json,
+                cq.status
+            FROM comment_questions cq
+            WHERE cq.video_db_id = ANY(%s)
+              AND cq.status IN ('analyzed', 'approved')
+            ORDER BY cq.like_count DESC NULLS LAST, cq.id ASC
+        """, (video_db_ids,))
+        question_rows = cur.fetchall()
+        conn.close()
+
+        # Group questions by video_db_id
+        from collections import defaultdict
+        q_map: dict = defaultdict(list)
+        for q in question_rows:
+            raw = q["result_json"]
+            if raw is None:
+                continue
+            if isinstance(raw, str):
+                import json as _json
+                raw = _json.loads(raw)
+            steps = [
+                WinrateStep(
+                    color=s["color"],
+                    move=s["move"],
+                    winrate=s["winrate"],
+                    score=s["score"],
+                )
+                for s in raw.get("steps", [])
+            ]
+            result = WinrateResult(
+                fork_winrate=raw.get("fork_winrate", 0.0),
+                fork_score=raw.get("fork_score", 0.0),
+                steps=steps,
+            )
+            q_map[q["video_db_id"]].append(CommentQuestion(
+                id=q["id"],
+                comment_id=q["comment_id"],
+                comment_text=q["comment_text"] or "",
+                author=q["author"],
+                like_count=q["like_count"],
+                at_move=q["at_move"],
+                whatif_moves=q["whatif_moves"] or "",
+                visits=q["visits"],
+                result=result,
+                status=q["status"],
+            ))
+
+        result_list = []
+        for vr in video_rows:
+            qs = q_map.get(vr["video_db_id"], [])
+            if not qs:
+                continue
+            result_list.append(VideoWithCommentQuestions(
+                video_db_id=vr["video_db_id"],
+                video_id=vr["video_id"],
+                title=vr["title"],
+                published_at=vr["published_at"],
+                questions=qs,
+            ))
+        return result_list
+
+    except Exception as exc:
+        # Table may not exist yet; return empty list rather than 500
+        import logging
+        logging.getLogger(__name__).warning("comment-questions fetch failed: %s", exc)
+        return []
+
+
+@router.post("/games/comment-questions/{question_id}/approve")
+def approve_comment_question(question_id: int):
+    """Set comment_questions.status = 'approved' for the given question ID."""
+    import psycopg2
+    try:
+        conn = _go_db_conn()
+        cur  = conn.cursor()
+        cur.execute(
+            "UPDATE comment_questions SET status = 'approved' WHERE id = %s AND status IN ('analyzed', 'approved')",
+            (question_id,),
+        )
+        affected = cur.rowcount
+        conn.commit()
+        conn.close()
+        if affected == 0:
+            raise HTTPException(status_code=404, detail="Question not found or not in analyzable state")
+        return {"status": "approved", "id": question_id}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post("/games/comment-questions/{question_id}/skip")
+def skip_comment_question(question_id: int):
+    """Set comment_questions.status = 'skipped' with reason='rejected_by_reviewer'."""
+    import psycopg2
+    try:
+        conn = _go_db_conn()
+        cur  = conn.cursor()
+        cur.execute(
+            """UPDATE comment_questions
+               SET status = 'skipped', error_message = 'rejected_by_reviewer'
+               WHERE id = %s AND status IN ('analyzed', 'approved')""",
+            (question_id,),
+        )
+        affected = cur.rowcount
+        conn.commit()
+        conn.close()
+        if affected == 0:
+            raise HTTPException(status_code=404, detail="Question not found or not in reviewable state")
+        return {"status": "skipped", "id": question_id}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 def _redact_url(url: str) -> str:

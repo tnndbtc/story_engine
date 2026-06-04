@@ -308,3 +308,45 @@ class EngineStatus(BaseModel):
     stories_today: int
     crawler_db_url: str          # password redacted
     crawler_db_reachable: bool
+
+
+# ---------------------------------------------------------------------------
+# Comment-questions review  (GET /api/games/comment-questions)
+# ---------------------------------------------------------------------------
+
+class WinrateStep(BaseModel):
+    """One row of whatif.py output: a single move and the resulting winrate."""
+    color:    str           # "Black" | "White"
+    move:     str           # GTP coordinate, e.g. "Q8"
+    winrate:  float         # Black win% after this move
+    score:    float         # score lead (positive = Black ahead)
+
+
+class WinrateResult(BaseModel):
+    """Parsed result_json from comment_questions, produced by whatif.py."""
+    fork_winrate: float             # Black win% at the fork (before hypothetical)
+    fork_score:   float             # Score lead at fork
+    steps:        list[WinrateStep] # Each hypothetical move in sequence
+
+
+class CommentQuestion(BaseModel):
+    """One analyzed whatif question, ready for human review."""
+    id:            int
+    comment_id:    str
+    comment_text:  str              # original viewer comment (from game_comments.text)
+    author:        Optional[str]    # commenter name
+    like_count:    int
+    at_move:       int              # whatif.py --at param
+    whatif_moves:  str              # whatif.py --moves param, e.g. "Q8 Q9"
+    visits:        int
+    result:        WinrateResult    # parsed result_json
+    status:        str              # 'analyzed' | 'approved' | 'skipped'
+
+
+class VideoWithCommentQuestions(BaseModel):
+    """A KataGo video together with its analyzed comment questions."""
+    video_db_id:  int
+    video_id:     str               # YouTube video ID
+    title:        Optional[str]
+    published_at: Optional[int]     # UNIX timestamp
+    questions:    list[CommentQuestion]

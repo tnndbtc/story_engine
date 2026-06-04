@@ -22,10 +22,10 @@ from __future__ import annotations
 
 import json
 import logging
-import sqlite3
 from datetime import datetime
 
 import engine.format_registry as format_registry
+from db.models import get_connection
 from engine.selector.config import BatchConfig
 from engine.selector.schemas import (
     AllocationEnvelope,
@@ -175,9 +175,7 @@ def stage4_assign(
     # Step 4 — DB writes (single transaction) — only reached if validation passes
     trace_path = get_trace_path(batch_ts, db_path)
 
-    conn = sqlite3.connect(db_path)
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
+    conn = get_connection()
 
     try:
         # 4a. UPDATE story_sets (row was INSERTed by create_story_set() before Stage 1)
@@ -197,8 +195,8 @@ def stage4_assign(
         )
         conn.execute(
             """UPDATE story_sets
-               SET status = ?, partial = ?, partial_formats = ?
-               WHERE id = ?""",
+               SET status = %s, partial = %s, partial_formats = %s
+               WHERE id = %s""",
             (status, 1 if is_partial else 0, partial_formats_json, story_set_id),
         )
 
@@ -216,7 +214,7 @@ def stage4_assign(
                     """INSERT INTO used_items
                        (crawler_item_id, crawler_url, hotness_at_use,
                         story_set_id, story_id, format, used_at, platform)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
                     (
                         crawler_item_id,
                         s_item.url,
