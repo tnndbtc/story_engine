@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-export_story.py — Export hierarchical stories from db.sqlite3 to .txt files.
+export_story.py — Export hierarchical stories from PostgreSQL to .txt files.
 
 Called by both export_latest_story.sh (cron, n=1) and setup.sh option 8
 (interactive, n=user-supplied).  Keeps DB query, strip_md, and outlet-slug
@@ -8,10 +8,12 @@ logic in one place so both callers stay in sync.
 
 Usage:
     python3 export_story.py \
-        --db      /path/to/db.sqlite3 \
         --export-dir /path/to/exports \
         [--n 1] \
+        [--story-set-id 558] \
         [--paths-file /tmp/exported_paths.txt]
+
+    --db is accepted but ignored (legacy flag; database is now PostgreSQL).
 
 Output:
     exports/<category>/<category>_story_<date>_<time>utc_<id>_raw.txt
@@ -23,16 +25,19 @@ Output:
 
 Exit codes:
     0 — at least one story exported
-    1 — error (DB missing, no stories, write failure)
+    1 — error (no stories, write failure)
 """
 
 import argparse
 import json
 import os
 import re
-import sqlite3
 import sys
 from datetime import datetime, timezone
+
+# Allow running from any cwd by resolving src/ relative to this file's location
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from db.models import get_connection  # noqa: E402
 
 
 # ── Text helpers ──────────────────────────────────────────────────────────────
@@ -165,27 +170,39 @@ def to_slug(name: str) -> str:
 
 # ── Export ────────────────────────────────────────────────────────────────────
 
-def export_stories(db_path: str, export_dir: str,
-                   n: int, paths_file: str) -> int:
+def export_stories(export_dir: str, n: int, paths_file: str,
+                   story_set_id: int = 0) -> int:
     """
-    Fetch the n most recent hierarchical stories and write _raw.txt files.
+    Fetch hierarchical stories from PostgreSQL and write _raw.txt files.
+
+    If story_set_id > 0, export that specific story set only.
+    Otherwise export the n most recently generated stories.
 
     Returns the number of stories successfully exported.
     Raises SystemExit(1) on fatal errors.
     """
     try:
-        con = sqlite3.connect(db_path)
-        cur = con.cursor()
-        cur.execute("""
-            SELECT h.id, h.story_set_id, h.batch_ts, h.lang, h.channel,
-                   h.status, h.deep_story, h.supporting_stories,
-                   h.generated_at, ss.profile_id
-            FROM   hierarchical_stories h
-            LEFT JOIN story_sets ss ON ss.id = h.story_set_id
-            ORDER  BY h.generated_at DESC
-            LIMIT  ?
-        """, (n,))
-        rows = cur.fetchall()
+        con = get_connection()
+        if story_set_id:
+            rows = con.execute("""
+                SELECT h.id, h.story_set_id, h.batch_ts, h.lang, h.channel,
+                       h.status, h.deep_story, h.supporting_stories,
+                       h.generated_at, ss.profile_id
+                FROM   hierarchical_stories h
+                LEFT JOIN story_sets ss ON ss.id = h.story_set_id
+                WHERE  h.story_set_id = %s
+                ORDER  BY h.generated_at DESC
+            """, (story_set_id,)).fetchall()
+        else:
+            rows = con.execute("""
+                SELECT h.id, h.story_set_id, h.batch_ts, h.lang, h.channel,
+                       h.status, h.deep_story, h.supporting_stories,
+                       h.generated_at, ss.profile_id
+                FROM   hierarchical_stories h
+                LEFT JOIN story_sets ss ON ss.id = h.story_set_id
+                ORDER  BY h.generated_at DESC
+                LIMIT  %s
+            """, (n,)).fetchall()
         con.close()
     except Exception as exc:
         print(f"  ERROR reading database: {exc}", file=sys.stderr)
@@ -198,8 +215,16 @@ def export_stories(db_path: str, export_dir: str,
     exported = 0
 
     for row in rows:
-        (sid, set_id, batch_ts, lang, channel, status,
-         raw_ds, raw_ss, gen_at, profile_id) = row
+        sid        = row['id']
+        set_id     = row['story_set_id']
+        batch_ts   = row['batch_ts']
+        lang       = row['lang']
+        channel    = row['channel']
+        status     = row['status']
+        raw_ds     = row['deep_story']
+        raw_ss     = row['supporting_stories']
+        gen_at     = row['generated_at']
+        profile_id = row['profile_id']
 
         ds      = json.loads(raw_ds)  if raw_ds else {}
         ss_list = json.loads(raw_ss)  if raw_ss else []
@@ -302,29 +327,27 @@ def export_stories(db_path: str, export_dir: str,
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Export hierarchical stories from db.sqlite3 to _raw.txt files."
+        description="Export hierarchical stories from PostgreSQL to _raw.txt files."
     )
-    parser.add_argument("--db",          required=True,
-                        help="Path to db.sqlite3")
-    parser.add_argument("--export-dir",  required=True,
+    parser.add_argument("--db",           default="",
+                        help="Ignored (legacy flag; database is now PostgreSQL).")
+    parser.add_argument("--export-dir",   required=True,
                         help="Root export directory (exports/)")
-    parser.add_argument("--n",           type=int, default=1,
+    parser.add_argument("--n",            type=int, default=1,
                         help="Number of most-recent stories to export (default: 1)")
-    parser.add_argument("--paths-file",  default="",
+    parser.add_argument("--story-set-id", type=int, default=0,
+                        help="Export a specific story_set_id only (overrides --n).")
+    parser.add_argument("--paths-file",   default="",
                         help="File to append exported raw paths to (one per line)")
     args = parser.parse_args()
-
-    if not os.path.isfile(args.db):
-        print(f"  ERROR: database not found at {args.db}", file=sys.stderr)
-        sys.exit(1)
 
     os.makedirs(args.export_dir, exist_ok=True)
 
     exported = export_stories(
-        db_path    = args.db,
-        export_dir = args.export_dir,
-        n          = args.n,
-        paths_file = args.paths_file,
+        export_dir   = args.export_dir,
+        n            = args.n,
+        paths_file   = args.paths_file,
+        story_set_id = args.story_set_id,
     )
 
     if exported == 0:

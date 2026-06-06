@@ -172,9 +172,9 @@ conn = get_connection()
 # Get the latest story set
 ss = conn.execute('SELECT id, batch_ts FROM story_sets ORDER BY id DESC LIMIT 1').fetchone()
 if ss:
-    ready = conn.execute('SELECT COUNT(*) FROM stories WHERE batch_id=? AND status=\"ready\"', (ss['id'],)).fetchone()[0]
-    failed = conn.execute('SELECT COUNT(*) FROM stories WHERE batch_id=? AND status=\"failed\"', (ss['id'],)).fetchone()[0]
-    hier = conn.execute('SELECT COUNT(*) FROM hierarchical_stories WHERE story_set_id=? AND status=\"ready\"', (ss['id'],)).fetchone()[0]
+    ready = conn.execute('SELECT COUNT(*) FROM stories WHERE batch_id=%s AND status=\'ready\'', (ss['id'],)).fetchone()[0]
+    failed = conn.execute('SELECT COUNT(*) FROM stories WHERE batch_id=%s AND status=\'failed\'', (ss['id'],)).fetchone()[0]
+    hier = conn.execute('SELECT COUNT(*) FROM hierarchical_stories WHERE story_set_id=%s AND status=\'ready\'', (ss['id'],)).fetchone()[0]
     print(f'  Set #{ss[\"id\"]} ({_ts_to_iso(ss[\"batch_ts\"])})')
     print(f'  Flat stories — Ready: {ready}  Failed: {failed}')
     if hier > 0:
@@ -202,24 +202,24 @@ echo "==========================================="
 
 # Guard: verify latest story_set is from this run (< 2h old) and has
 # at least 1 ready hierarchical story. Outputs "1:<set_id>" or "0:0".
-DB_PATH="${STORY_ENGINE_DB:-$SCRIPT_DIR/db.sqlite3}"
-GUARD_RESULT=$(python3 - "$DB_PATH" <<'PYEOF'
-import sqlite3, sys, time
-db = sys.argv[1]
-conn = sqlite3.connect(db)
+GUARD_RESULT=$(cd "$SCRIPT_DIR" && python3 - <<'PYEOF'
+import sys, time
+sys.path.insert(0, 'src')
+from db.models import get_connection
+conn = get_connection()
 ss = conn.execute(
     'SELECT id, batch_ts FROM story_sets ORDER BY id DESC LIMIT 1'
 ).fetchone()
 if not ss:
     print("0:0"); sys.exit()
-age_ms = time.time() * 1000 - int(ss[1])
+age_ms = time.time() * 1000 - int(ss['batch_ts'])
 if age_ms > 7_200_000:
     print("0:0"); sys.exit()
 hier = conn.execute(
     'SELECT COUNT(*) FROM hierarchical_stories '
-    'WHERE story_set_id=? AND status="ready"', (ss[0],)
+    'WHERE story_set_id=%s AND status=\'ready\'', (ss['id'],)
 ).fetchone()[0]
-print(f"1:{ss[0]}" if hier > 0 else "0:0")
+print(f"1:{ss['id']}" if hier > 0 else "0:0")
 conn.close()
 PYEOF
 )
@@ -285,20 +285,21 @@ json.dump(cfg, open('$TMP_CONFIG', 'w'), indent=2, ensure_ascii=False)
             # DB_PATH is defined near the top of this script as:
             #   DB_PATH="${STORY_ENGINE_DB:-$SCRIPT_DIR/db.sqlite3}"
             SSID="$STORY_SET_ID"
-            ATTRACT_RESULT=$(python3 - "$SSID" "$DB_PATH" <<'PYEOF'
-import sqlite3, json, sys
+            ATTRACT_RESULT=$(cd "$SCRIPT_DIR" && python3 - "$SSID" <<'PYEOF'
+import sys, json
+sys.path.insert(0, 'src')
+from db.models import get_connection
 story_set_id = int(sys.argv[1]) if len(sys.argv) > 1 else 0
-db           = sys.argv[2]      if len(sys.argv) > 2 else 'db.sqlite3'
 try:
-    conn = sqlite3.connect(db)
+    conn = get_connection()
     row = conn.execute(
-        "SELECT COALESCE(hs.final_score, hs.attractiveness_score) "
+        "SELECT COALESCE(hs.final_score, hs.attractiveness_score) AS score "
         "FROM hierarchical_stories hs "
-        "WHERE hs.story_set_id = ?",
+        "WHERE hs.story_set_id = %s",
         (story_set_id,)
     ).fetchone()
     conn.close()
-    score = row[0] if row and row[0] is not None else None
+    score = row['score'] if row and row['score'] is not None else None
     cfg = {}
     try:
         with open('config/clustering_config.json') as f:
@@ -307,7 +308,8 @@ try:
         pass
     threshold = int(cfg.get('attractiveness_threshold', 72))
     print(f"{score if score is not None else 'NULL'}:{threshold}")
-except Exception:
+except Exception as e:
+    print(f"NULL:72", file=__import__('sys').stderr)
     print("NULL:72")
 PYEOF
             )

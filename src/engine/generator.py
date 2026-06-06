@@ -1326,13 +1326,16 @@ _DEEP_TIMEOUT = 600  # 10 minutes — iterative Bash tool calls take time
 
 def _call_claude_agent_deep(prompt: str) -> tuple[str, int]:
     """
-    Call claude -p with Bash tool enabled for deep story research + writing.
+    Call claude -p with Bash + WebSearch tools for deep story research + writing.
 
     Claude will:
       1. Reason about the story mechanism
-      2. Use Bash to curl Serper repeatedly with targeted queries
-      3. Write a 900–1100 Chinese character spoken narrative
+      2. Use WebSearch (native Anthropic tool) to find recent news and facts
+      3. Use Bash for fetching specific article URLs when needed
       4. Output JSON: {title, body, sources}
+
+    No external search API key required — WebSearch is a first-party
+    Anthropic tool billed as tokens only.
 
     Returns:
         (raw_output: str, token_estimate: int)
@@ -1346,7 +1349,7 @@ def _call_claude_agent_deep(prompt: str) -> tuple[str, int]:
             [
                 'claude', '-p',
                 '--model',               'claude-sonnet-4-5',
-                '--tools',               'Bash',
+                '--tools',               'Bash,WebSearch',
                 '--output-format',       'text',
                 '--no-session-persistence',
                 '--system-prompt',       _DEEP_SYSTEM_PROMPT,
@@ -1356,7 +1359,7 @@ def _call_claude_agent_deep(prompt: str) -> tuple[str, int]:
             capture_output=True,
             text=True,
             timeout=_DEEP_TIMEOUT,
-            env={**os.environ},          # passes SERPER_API_KEY + all env vars
+            env={**os.environ},
         )
     except subprocess.TimeoutExpired:
         raise RuntimeError(f"deep story agent timed out after {_DEEP_TIMEOUT}s")
@@ -1500,7 +1503,6 @@ def generate_deep_story(
             break
 
     seed_block = '\n'.join(f'  - {u}' for u in seed_urls) if seed_urls else '  (none provided)'
-    serper_key = os.environ.get('SERPER_API_KEY', '')
 
     topic_title = (
         rep.canonical_title or rep.title_original
@@ -1513,12 +1515,11 @@ def generate_deep_story(
     prompt = template.format(
         topic=topic_title,
         seed_urls=seed_block,
-        serper_key=serper_key,
         lang_instruction=_lang_instruction(lang),
     )
 
     logger.info(
-        "generate_deep_story: launching claude -p --tools Bash for cluster %s "
+        "generate_deep_story: launching claude -p --tools Bash,WebSearch for cluster %s "
         "(%d members, %d seed URLs)",
         cluster.event_id, cluster.member_count, len(seed_urls),
     )
@@ -1618,8 +1619,8 @@ def generate_format_deep_en(
     """
     Generate an English deep-dive story for formats 101–105.
 
-    Uses _call_claude_agent_deep() (Bash tool enabled) with deep_dive_en.txt.
-    Template variables match generate_deep_story(): {topic}, {seed_urls}, {serper_key}.
+    Uses _call_claude_agent_deep() (Bash + WebSearch tools) with deep_dive_en.txt.
+    Template variables: {topic}, {seed_urls}.
     Output JSON: {title, body, sources}.
 
     Saves body to the 'hook' column in the stories table — the existing
@@ -1656,7 +1657,6 @@ def generate_format_deep_en(
             break
 
     seed_block = '\n'.join(f'  - {u}' for u in seed_urls) if seed_urls else '  (none provided)'
-    serper_key = os.environ.get('SERPER_API_KEY', '')
 
     template_path = PROMPTS_DIR / 'deep_dive_en.txt'
     if not template_path.exists():
@@ -1666,11 +1666,10 @@ def generate_format_deep_en(
     prompt = template.format(
         topic=topic_title,
         seed_urls=seed_block,
-        serper_key=serper_key,
     )
 
     logger.info(
-        "generate_format_deep_en: launching claude -p --tools Bash "
+        "generate_format_deep_en: launching claude -p --tools Bash,WebSearch "
         "for format %d (%s), topic=%r, seed_urls=%d",
         format_id, format_name, topic_title[:60], len(seed_urls),
     )

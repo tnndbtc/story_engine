@@ -661,6 +661,12 @@ def approve_comment_question(question_id: int):
         conn.close()
         if affected == 0:
             raise HTTPException(status_code=404, detail="Question not found or not in analyzable state")
+        # Fire-and-forget: post the reply to YouTube in the background
+        subprocess.Popen(
+            [_GAMES_PYTHON, str(_GAMES_ROOT / "go" / "post_comment_replies.py")],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
         return {"status": "approved", "id": question_id}
     except HTTPException:
         raise

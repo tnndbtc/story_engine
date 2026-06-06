@@ -48,7 +48,7 @@ def get_trend_bonus(story_set_id: int) -> int:
         conn = get_connection()
         rows = conn.execute(
             "SELECT hotness_at_use FROM used_items "
-            "WHERE story_set_id = ? AND role = 'main'",
+            "WHERE story_set_id = %s AND role = 'main'",
             (story_set_id,)
         ).fetchall()
         conn.close()

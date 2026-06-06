@@ -57,7 +57,6 @@ mkdir -p "$EXPORT_DIR"
 PATHS_TMP=$(mktemp)
 
 python3 "$EXPORT_SCRIPT" \
-    --db         "$DB_PATH" \
     --export-dir "$EXPORT_DIR" \
     --n          1 \
     --paths-file "$PATHS_TMP"

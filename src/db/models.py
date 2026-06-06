@@ -1239,10 +1239,17 @@ def get_channel_videos(lang: str) -> list[dict]:
                ypl.comment_count,
                ypl.analytics_pulled_at,
                ss.profile_id,
-               hs.deep_story::jsonb->>'title' AS title
+               hs.title
            FROM youtube_publish_log ypl
-           LEFT JOIN story_sets ss         ON ss.id  = ypl.story_set_id
-           LEFT JOIN hierarchical_stories hs ON hs.story_set_id = ypl.story_set_id
+           JOIN story_sets ss ON ss.id = ypl.story_set_id
+           LEFT JOIN (
+               SELECT DISTINCT ON (story_set_id)
+                   story_set_id,
+                   deep_story::jsonb->>'title' AS title
+               FROM hierarchical_stories
+               WHERE deep_story::jsonb->>'title' IS NOT NULL
+               ORDER BY story_set_id, id DESC
+           ) hs ON hs.story_set_id = ypl.story_set_id
            WHERE ypl.lang = %s
            ORDER BY ypl.published_at DESC""",
         (lang,),

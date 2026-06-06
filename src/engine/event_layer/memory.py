@@ -87,16 +87,16 @@ def load_published_video_titles(window_days: int = 14) -> list[dict]:
                 ypl.video_id,
                 ypl.published_at,
                 COALESCE(
-                    json_extract(hs.deep_story, '$.title'),
-                    json_extract(hs.deep_story, '$.hook'),
+                    (hs.deep_story::json)->>'title',
+                    (hs.deep_story::json)->>'hook',
                     ''
                 ) AS story_title
             FROM youtube_publish_log ypl
             LEFT JOIN story_sets ss ON ss.id = ypl.story_set_id
             LEFT JOIN hierarchical_stories hs ON hs.story_set_id = ss.id
             WHERE ypl.published_at IS NOT NULL
-              AND ypl.published_at >= ?
-              AND story_title != ''
+              AND ypl.published_at >= %s
+              AND COALESCE((hs.deep_story::json)->>'title', (hs.deep_story::json)->>'hook', '') != ''
             ORDER BY ypl.published_at DESC
             """,
             (cutoff_sec,),
