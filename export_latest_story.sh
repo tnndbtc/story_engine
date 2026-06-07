@@ -30,16 +30,10 @@ if [ -f "$SCRIPT_DIR/.env" ]; then
     set +a
 fi
 
-DB_PATH="${STORY_ENGINE_DB:-$SCRIPT_DIR/db.sqlite3}"
 EXPORT_DIR="$SCRIPT_DIR/exports"
 LAST_EXPORT_FILE="$SCRIPT_DIR/.last_export_txt"
 EXPORT_SCRIPT="$SCRIPT_DIR/src/scripts/export_story.py"
 REFLOW_SCRIPT="$SCRIPT_DIR/src/scripts/reflow_clips.py"
-
-if [ ! -f "$DB_PATH" ]; then
-    echo "  ERROR: database not found at $DB_PATH" >&2
-    exit 1
-fi
 
 if [ ! -f "$EXPORT_SCRIPT" ]; then
     echo "  ERROR: export_story.py not found at $EXPORT_SCRIPT" >&2

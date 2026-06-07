@@ -172,9 +172,9 @@ conn = get_connection()
 # Get the latest story set
 ss = conn.execute('SELECT id, batch_ts FROM story_sets ORDER BY id DESC LIMIT 1').fetchone()
 if ss:
-    ready = conn.execute('SELECT COUNT(*) FROM stories WHERE batch_id=%s AND status=\'ready\'', (ss['id'],)).fetchone()[0]
-    failed = conn.execute('SELECT COUNT(*) FROM stories WHERE batch_id=%s AND status=\'failed\'', (ss['id'],)).fetchone()[0]
-    hier = conn.execute('SELECT COUNT(*) FROM hierarchical_stories WHERE story_set_id=%s AND status=\'ready\'', (ss['id'],)).fetchone()[0]
+    ready = conn.execute('SELECT COUNT(*) AS n FROM stories WHERE batch_id=%s AND status=\'ready\'', (ss['id'],)).fetchone()['n']
+    failed = conn.execute('SELECT COUNT(*) AS n FROM stories WHERE batch_id=%s AND status=\'failed\'', (ss['id'],)).fetchone()['n']
+    hier = conn.execute('SELECT COUNT(*) AS n FROM hierarchical_stories WHERE story_set_id=%s AND status=\'ready\'', (ss['id'],)).fetchone()['n']
     print(f'  Set #{ss[\"id\"]} ({_ts_to_iso(ss[\"batch_ts\"])})')
     print(f'  Flat stories — Ready: {ready}  Failed: {failed}')
     if hier > 0:
@@ -216,9 +216,9 @@ age_ms = time.time() * 1000 - int(ss['batch_ts'])
 if age_ms > 7_200_000:
     print("0:0"); sys.exit()
 hier = conn.execute(
-    'SELECT COUNT(*) FROM hierarchical_stories '
+    'SELECT COUNT(*) AS n FROM hierarchical_stories '
     'WHERE story_set_id=%s AND status=\'ready\'', (ss['id'],)
-).fetchone()[0]
+).fetchone()['n']
 print(f"1:{ss['id']}" if hier > 0 else "0:0")
 conn.close()
 PYEOF
