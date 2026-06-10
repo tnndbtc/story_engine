@@ -51,7 +51,7 @@ def main(days: int, min_count: int) -> None:
                   MAX(ss.batch_ts) as last_seen_ts
            FROM hierarchical_stories hs
            JOIN story_sets ss ON ss.id = hs.story_set_id
-           WHERE ss.batch_ts >= ?
+           WHERE ss.batch_ts >= %s
              AND hs.status = 'ready'
              AND hs.produce_tier IN ('strong', 'weak')
            GROUP BY hs.story_type
@@ -59,9 +59,9 @@ def main(days: int, min_count: int) -> None:
         (cutoff_ms,)
     ).fetchall()
 
-    total = sum(r[1] for r in rows)
-    type_counts = {r[0]: r[1] for r in rows}
-    type_last_seen = {r[0]: r[2] for r in rows}
+    total = sum(r['cnt'] for r in rows)
+    type_counts = {r['story_type']: r['cnt'] for r in rows}
+    type_last_seen = {r['story_type']: r['last_seen_ts'] for r in rows}
 
     print(f"\n{'='*60}")
     print(f"  Distribution Watch — last {days} days")
@@ -125,7 +125,7 @@ def main(days: int, min_count: int) -> None:
            WHERE p.analytics_pulled_at IS NOT NULL
              AND hs.produce_tier IN ('strong', 'weak')
            GROUP BY hs.story_type
-           HAVING cnt >= ?
+           HAVING COUNT(*) >= %s
            ORDER BY avg_avp DESC""",
         (min_count,)
     ).fetchall()
@@ -134,8 +134,11 @@ def main(days: int, min_count: int) -> None:
         print(f"\nRetention by story_type  (≥{min_count} videos with analytics):")
         print(f"{'Story Type':<22} {'n':>4}  {'avg_avp':>8}  {'avg_views':>10}")
         print(f"{'─'*22}  {'─'*4}  {'─'*8}  {'─'*10}")
-        for stype, cnt, avg_avp, avg_views in ret_rows:
-            label = stype or "(unclassified)"
+        for r in ret_rows:
+            label = r['story_type'] or "(unclassified)"
+            avg_avp = r['avg_avp']
+            avg_views = r['avg_views']
+            cnt = r['cnt']
             print(f"  {label:<20}  {cnt:>4}  {avg_avp or 0:>7.1f}%  {avg_views or 0:>10.0f}")
     else:
         print(f"\n  (No retention data yet with ≥{min_count} videos per type)")
@@ -145,7 +148,7 @@ def main(days: int, min_count: int) -> None:
         """SELECT produce_tier, COUNT(*) as cnt
            FROM hierarchical_stories hs
            JOIN story_sets ss ON ss.id = hs.story_set_id
-           WHERE ss.batch_ts >= ?
+           WHERE ss.batch_ts >= %s
              AND hs.status = 'ready'
              AND hs.produce_tier IS NOT NULL
            GROUP BY produce_tier""",
@@ -153,7 +156,7 @@ def main(days: int, min_count: int) -> None:
     ).fetchall()
 
     if tier_rows:
-        tier_map = {r[0]: r[1] for r in tier_rows}
+        tier_map = {r['produce_tier']: r['cnt'] for r in tier_rows}
         t_strong = tier_map.get('strong', 0)
         t_weak   = tier_map.get('weak',   0)
         t_skip   = tier_map.get('skip',   0)

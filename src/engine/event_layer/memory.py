@@ -229,6 +229,20 @@ _STOPWORDS: frozenset[str] = frozenset({
     'also', 'just', 'still', 'now', 'here', 'there', 'when', 'how', 'why',
     'more', 'most', 'much', 'many', 'some', 'any', 'all', 'each', 'every',
     'says', 'said', 'say',   # attribution verbs that appear in nearly every headline
+    # ── Chinese structural particles (single CJK chars only) ──────────────────
+    # With CJK char-level tokenisation these high-frequency characters inflate
+    # Jaccard similarity without contributing topic signal.  Domain nouns
+    # (specific entities, places, persons) are intentionally left in.
+    '的', '了', '是', '在', '有', '和', '与', '或', '也', '而',
+    '被', '把', '将', '让', '使', '从', '到', '于', '上', '下',
+    '中', '为', '以', '由', '对', '向', '按', '及', '但', '却',
+    '都', '就', '又', '再', '已', '还', '来', '去', '着', '过',
+    '很', '更', '最', '太', '非', '不', '没', '无',
+    '这', '那', '哪', '此', '其',
+    '他', '她', '我', '你', '它', '们',
+    '何', '如', '能', '可', '会', '要', '得', '用',
+    '一', '二', '三', '四', '五', '六', '七', '八', '九', '十',
+    '个', '件', '次', '年', '月', '日', '时', '分', '秒',
 })
 
 
@@ -255,8 +269,18 @@ def _tokenize(text: str) -> set[str]:
     Filtering common structural words means similarity is driven by entity
     tokens (names, specific nouns) rather than the news-template skeleton
     ('X resigns from Y' shares 'from' with every resignation story).
+
+    CJK handling: each Chinese/Japanese/Korean character is extracted
+    individually (character-level tokenisation).  Grouping consecutive
+    CJK chars into a single token \u2014 as a greedy `[\u4e00-\u9fff]+` would \u2014
+    produces tokens like "\u90ae\u8f6e\u60ca\u9b42" that share zero overlap with
+    "\u6c49\u5766\u75c5\u6bd2\u767b\u4e0a\u90ae\u8f6e", making Jaccard similarity 0.0 for clearly related
+    ZH stories.  Character-level tokenisation lets key entity chars
+    (\u75c5,\u6bd2,\u90ae,\u8f6e) appear in both token sets and raises similarity above the
+    0.20 dedup threshold where appropriate.
     """
-    tokens = set(re.findall(r"[a-zA-Z0-9\u4e00-\u9fff]+", text.lower()))
+    # ASCII alphanumeric words + individual CJK characters
+    tokens = set(re.findall(r"[a-zA-Z0-9]+|[\u4e00-\u9fff]", text.lower()))
     return tokens - _STOPWORDS
 
 
