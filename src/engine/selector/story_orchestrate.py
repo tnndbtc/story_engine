@@ -277,6 +277,38 @@ def _get_novelty_score(cluster) -> float:
     return 0.0
 
 
+def _region_concentration_penalty(cluster) -> float:
+    """Soft penalty for EN output when a cluster's articles are heavily India-region.
+
+    Measures the fraction of all cluster members whose region_key is 'in'.
+    If >65% of members are India-sourced the story is likely India-domestic
+    (LPG prices, RBI repo rate, NEET, AP job calendar, circle rates) and gets
+    a 0.15 score deduction — equal in weight to the source_diversity term.
+
+    This correctly distinguishes:
+      India-domestic: TOI + NDTV + Business Standard  (all region_key='in')
+                      → concentration ~1.0 → PENALISED
+      Genuinely global: TOI + CNBC + Reuters + Bloomberg  (mixed regions)
+                      → concentration 0.25 → NOT penalised
+      Cockroach protest: TOI + 2× Al Jazeera  (mixed regions)
+                      → concentration 0.33 → NOT penalised
+
+    The penalty is not a hard block — a hot India story with non-India sources
+    (international coverage) still wins a deep story slot on merit.
+    """
+    members = (
+        [cluster.representative] if cluster.representative else []
+        + list(getattr(cluster, 'fact_sources',     []))
+        + list(getattr(cluster, 'context_sources',  []))
+        + list(getattr(cluster, 'reaction_sources', []))
+    )
+    if not members:
+        return 0.0
+    india_count = sum(1 for m in members if getattr(m, 'region_key', None) == 'in')
+    concentration = india_count / len(members)
+    return 0.15 if concentration > 0.65 else 0.0
+
+
 def _normalized_score(cluster) -> float:
     """
     Step 1 — base normalized score:
@@ -285,12 +317,14 @@ def _normalized_score(cluster) -> float:
       + 0.2 * source_diversity
       + 0.2 * novelty_score
       + 0.2 * recency_decay
+      - region_concentration_penalty   (0.15 for low-diversity India clusters)
     """
     return (
         0.4 * math.log(1.0 + cluster.event_hotness)
         + 0.2 * getattr(cluster, 'source_diversity', 0.0)
         + 0.2 * _get_novelty_score(cluster)
         + 0.2 * _recency_decay(cluster)
+        - _region_concentration_penalty(cluster)
     )
 
 

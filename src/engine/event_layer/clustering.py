@@ -39,6 +39,7 @@ import hashlib
 import logging
 import math
 import re
+from urllib.parse import urlparse
 from dataclasses import dataclass, field
 
 import json
@@ -115,7 +116,7 @@ class EventCluster:
     timeline:         list[dict] = field(default_factory=list)
                                                      # [{timestamp, title, platform, role}]
                                                      # sorted ascending by freshness
-    source_diversity: float = 0.0                    # distinct platforms / member_count; set by build_clusters()
+    source_diversity: float = 0.0                    # distinct domains / member_count; set by build_clusters()
     cluster_countries: set = field(default_factory=set)  # union of candidate_entities['countries']
     cluster_orgs:      set = field(default_factory=set)  # union of candidate_entities['orgs']
 
@@ -290,6 +291,20 @@ def _purity_score(cosine: float, ents_a: dict, ents_b: dict) -> float:
     entity_overlap = _entity_overlap_score(ents_a, ents_b)
     etype_match    = 1.0 if ents_a.get('event_type') == ents_b.get('event_type') else 0.0
     return round(0.5 * cosine + 0.3 * entity_overlap + 0.2 * etype_match, 4)
+
+
+def _extract_domain(url: str) -> str:
+    """Normalise a URL to its bare hostname, stripping 'www.' prefix.
+
+    Used by source_diversity to count distinct publishing outlets rather than
+    distinct platforms.  Five Times-of-India articles are one domain; CNBC +
+    Reuters + TOI are three.
+    """
+    try:
+        host = urlparse(url).netloc.lower()
+        return host[4:] if host.startswith("www.") else host
+    except Exception:
+        return url
 
 
 def _source_role(platform: str) -> str:
@@ -508,9 +523,13 @@ def build_clusters(
 
         all_members = [sel_cand] + [mate for _, mate in mates]
 
-        # Compute source_diversity: distinct platforms / member_count
-        distinct_platforms = {m.platform for m in all_members}
-        source_diversity = len(distinct_platforms) / max(len(all_members), 1)
+        # Compute source_diversity: distinct publishing domains / member_count.
+        # Domain-based diversity is stricter than platform-based diversity:
+        # five articles from timesofindia.com all share one domain and score
+        # the same as a single-source cluster, forcing low-diversity India-only
+        # clusters below the MIN_SOURCE_DIVERSITY floor in story_orchestrate.
+        distinct_domains = {_extract_domain(m.url) for m in all_members}
+        source_diversity = len(distinct_domains) / max(len(all_members), 1)
 
         # Aggregate entity sets across all cluster members
         cluster_countries: set[str] = set()
