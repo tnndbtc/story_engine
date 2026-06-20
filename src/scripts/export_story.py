@@ -34,10 +34,13 @@ import os
 import re
 import sys
 from datetime import datetime, timezone
+from html.parser import HTMLParser
+from urllib.parse import urlparse
 
 # Allow running from any cwd by resolving src/ relative to this file's location
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from db.models import get_connection  # noqa: E402
+from db.models import get_connection          # noqa: E402
+from db.crawler_reader import get_crawler_connection  # noqa: E402
 
 
 # ── Text helpers ──────────────────────────────────────────────────────────────
@@ -166,6 +169,199 @@ def to_slug(name: str) -> str:
                   '', name, flags=re.IGNORECASE)
     name = re.sub(r'[^\w\s]', '', name).strip()
     return re.sub(r'\s+', '', name)
+
+
+# ── Source image extraction ───────────────────────────────────────────────────
+# Extract image URLs from raw_payload per platform so export_stories() can write
+# a _sources.json alongside every _raw.txt for the MediaPlan auto-generator.
+
+_IMG_SKIP_RE = re.compile(
+    r"(avatar|/icon[s]?/|/logo[s]?/|badge|1x1|pixel|tracker|spacer"
+    r"|sprite|/thumb/\d{2,3}x|/thumbnail/\d{2,3}x)",
+    re.IGNORECASE,
+)
+_MIN_IMG_WIDTH = 400
+
+
+class _ImgSrcParser(HTMLParser):
+    """Minimal HTML parser that collects <img src> values."""
+    def __init__(self):
+        super().__init__()
+        self.found: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list) -> None:
+        if tag != "img":
+            return
+        d = dict(attrs)
+        src = (d.get("src") or d.get("data-src") or d.get("data-lazy-src") or "")
+        if not src.startswith("http"):
+            return
+        try:
+            w = int(d.get("width") or 0)
+            if w and w < _MIN_IMG_WIDTH:
+                return
+        except (ValueError, TypeError):
+            pass
+        self.found.append(src)
+
+
+def _extract_image_urls(raw_payload: dict, platform: str) -> list[str]:
+    """Return up to 2 content-image URLs from a raw_payload dict."""
+    if not raw_payload:
+        return []
+
+    urls: list[str] = []
+
+    if platform == "reddit":
+        thumb = raw_payload.get("media_thumbnail") or {}
+        if isinstance(thumb, dict) and thumb.get("url"):
+            urls.append(thumb["url"])
+        for mc in raw_payload.get("media_content") or []:
+            if isinstance(mc, dict) and mc.get("url"):
+                urls.append(mc["url"])
+
+    elif platform in ("twitter", "weibo", "bilibili", "tiktok", "instagram", "mastodon"):
+        for key in ("media_thumbnail", "thumbnail", "image", "cover", "poster"):
+            val = raw_payload.get(key)
+            if isinstance(val, dict) and val.get("url"):
+                urls.append(val["url"])
+                break
+            if isinstance(val, str) and val.startswith("http"):
+                urls.append(val)
+                break
+
+    else:
+        # news_rss and generic sites: parse HTML content blocks
+        parser = _ImgSrcParser()
+        for block in raw_payload.get("content") or []:
+            html = block.get("value", "") if isinstance(block, dict) else ""
+            if html:
+                try:
+                    parser.feed(html)
+                except Exception:
+                    pass
+        # Prioritise explicit top-level fields
+        top: list[str] = []
+        for key in ("image", "thumbnail", "media_thumbnail", "cover"):
+            val = raw_payload.get(key)
+            if isinstance(val, dict):
+                u = val.get("url") or val.get("href") or ""
+                if u.startswith("http"):
+                    top.append(u)
+            elif isinstance(val, str) and val.startswith("http"):
+                top.append(val)
+        urls = top + parser.found
+
+    # Quality filter: skip tiny icons, trackers, etc.
+    filtered = [u for u in urls if u.startswith("http") and not _IMG_SKIP_RE.search(u)]
+    return filtered[:2]
+
+
+def _fetch_source_images(source_urls: list[str]) -> dict[str, dict]:
+    """Query crawler DB for raw_payload + platform for each source URL.
+
+    Returns {url: {platform, image_urls}} for matched items.
+    Silently skips on any DB error to keep export_story robust.
+    """
+    if not source_urls:
+        return {}
+    try:
+        conn = get_crawler_connection()
+        placeholders = ",".join(["%s"] * len(source_urls))
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT ti.url, ti.raw_payload, ts.platform
+                FROM   crawler_admin_trenditem ti
+                JOIN   crawler_admin_trendsurface ts ON ti.surface_id = ts.id
+                WHERE  ti.url IN ({placeholders})
+                """,
+                source_urls,
+            )
+            rows = cur.fetchall()
+        conn.close()
+
+        result: dict[str, dict] = {}
+        for row in rows:
+            url      = row[0]
+            payload  = row[1]
+            platform = row[2] or "news_rss"
+            if isinstance(payload, str):
+                try:
+                    payload = json.loads(payload)
+                except Exception:
+                    payload = {}
+            payload = payload or {}
+            result[url] = {
+                "platform":   platform,
+                "image_urls": _extract_image_urls(payload, platform),
+            }
+        return result
+
+    except Exception as exc:
+        print(f"  [export] source image lookup failed (non-fatal): {exc}", file=sys.stderr)
+        return {}
+
+
+def _domain_label(url: str, title: str) -> str:
+    """Return a short outlet label for display, e.g. 'Reuters', 'BBC'."""
+    parts = (title or "").rsplit(" - ", 1)
+    if len(parts) == 2 and parts[1].strip():
+        return parts[1].strip()
+    try:
+        host = urlparse(url).netloc.lower()
+        for prefix in ("www.", "m.", "news.", "rss.", "feeds."):
+            host = host.removeprefix(prefix)
+        return host.split(".")[0].capitalize()
+    except Exception:
+        return "Source"
+
+
+def write_sources_json(
+    base_path: str,
+    story_id: int,
+    story_title: str,
+    generated_at: str,
+    raw_sources: list[dict],
+) -> str | None:
+    """Write <base_path>_sources.json with per-source image URLs.
+
+    raw_sources is ds.get("sources", []) — each item has "title" and "url".
+    Returns the path written, or None on failure.
+    """
+    source_urls = [s.get("url", "") for s in raw_sources if s.get("url")]
+    image_map   = _fetch_source_images(source_urls)
+
+    sources_out: list[dict] = []
+    for src in raw_sources:
+        url   = src.get("url", "")
+        title = src.get("title", "")
+        info  = image_map.get(url, {})
+        sources_out.append({
+            "url":        url,
+            "title":      title,
+            "platform":   info.get("platform", "news_rss"),
+            "domain":     _domain_label(url, title),
+            "image_urls": info.get("image_urls", []),
+        })
+
+    payload = {
+        "schema_id":    "StorySources",
+        "story_id":     story_id,
+        "story_title":  story_title,
+        "generated_at": generated_at,
+        "sources":      sources_out,
+    }
+
+    out_path = base_path + "_sources.json"
+    try:
+        with open(out_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2, ensure_ascii=False)
+            f.write("\n")
+        return out_path
+    except Exception as exc:
+        print(f"  [export] failed to write sources JSON: {exc}", file=sys.stderr)
+        return None
 
 
 # ── Export ────────────────────────────────────────────────────────────────────
@@ -317,6 +513,21 @@ def export_stories(export_dir: str, n: int, paths_file: str,
                 pf.write(raw_path + "\n")
 
         print(f"  ✓  Raw txt  : {raw_path}")
+
+        # ── Write _sources.json (for MediaPlan auto-generation) ───────────────
+        raw_sources = ds.get("sources", [])
+        if raw_sources:
+            gen_at_str = dt_utc.isoformat()
+            src_path = write_sources_json(
+                base_path     = base,
+                story_id      = sid,
+                story_title   = title,
+                generated_at  = gen_at_str,
+                raw_sources   = raw_sources,
+            )
+            if src_path:
+                print(f"  ✓  Sources  : {src_path}")
+
         exported += 1
 
     print(f"\n  {exported} story/stories written.")

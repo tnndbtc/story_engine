@@ -38,8 +38,28 @@ your goal is to find the facts that prove and deepen it, not to find a different
 
 Also generate thumbnail_text: 3–6 words MAX, punchy, for the YouTube thumbnail image.
 NOT the title. The visual hook that makes someone stop scrolling.
-Use a number, a name, or a paradox.
-Examples: "$800 Tax Bill?" / "3,800 Repos Gone" / "Beijing Wins Again" / "The CEO Fired by Coffee"
+
+RULE 1 — SUBJECT ANCHOR (mandatory): thumbnail_text MUST name the main subject —
+  the company, person, technology, place, or asset the story is about.
+  A viewer who has never heard this story must be able to identify the TOPIC from
+  thumbnail_text alone. If they can't, rewrite it.
+
+RULE 2 — FORMAT: [Subject] + [Drama]. Both are required.
+  The subject anchors; the drama creates urgency or curiosity.
+
+GOOD examples (subject + drama):
+  "Bitcoin: No Plan for 2140"     ← subject=Bitcoin, drama=no plan
+  "SpaceX Spent $60B on Code"     ← subject=SpaceX, drama=absurd spend
+  "Two Trains, One Track"         ← subject=trains, drama=collision setup
+  "Robinhood Fires 290"           ← subject=Robinhood, drama=mass layoff
+  "SEC Blocked Every Path"        ← subject=SEC, drama=total block
+
+BAD examples (drama only — subject missing):
+  "21 Million. Then What?"        ← what is this about? Bitcoin? People? Dollars?
+  "Safety Gap Kills"              ← kills what? trains? planes? systems?
+  "$21B They Don't Have"          ← who? for what?
+  "Fired for Success?"            ← who got fired?
+  "Top 20. Twice."                ← top 20 what? who?
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 PHASE 1 — RESEARCH (run at least 6 WebSearch calls before writing)
@@ -220,7 +240,7 @@ Start with {{ and end with }}. No text before or after.
 {{
   "title": "Engaging title, max 12 words, creates curiosity gap",
   "hook_type": "one of: mystery | hidden_mechanism | reversal | collapse | irony | betrayal",
-  "thumbnail_text": "3-6 word punchy thumbnail hook, NOT the title",
+  "thumbnail_text": "3-6 words: [Subject] + [Drama]. MUST name the main subject (company/person/place/asset). Viewer must know the TOPIC from these words alone.",
   "body": "Full narrative, 180-220 words, plain prose. Split into 2-3 natural paragraphs separated by \\n\\n. No labels, no section markers, no bullet points.",
   "sources": [
     {{"url": "https://example.com/article", "title": "Article title"}},
