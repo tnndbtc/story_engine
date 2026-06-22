@@ -647,31 +647,42 @@ def get_comment_questions():
 
 @router.post("/games/comment-questions/{question_id}/approve")
 def approve_comment_question(question_id: int):
-    """Set comment_questions.status = 'approved' for the given question ID."""
-    import psycopg2
+    """
+    Approve a comment question and immediately post the KataGo reply to YouTube.
+    Delegates to post_comment_replies.py --post-id (games venv) via subprocess
+    to avoid cross-virtualenv import conflicts.
+    Returns {"status": "posted", "reply_id": "...", "id": ...} on success.
+    Raises HTTP 400/500 with a human-readable detail on failure.
+    """
+    script = str(_GAMES_ROOT / "go" / "post_comment_replies.py")
     try:
-        conn = _go_db_conn()
-        cur  = conn.cursor()
-        cur.execute(
-            "UPDATE comment_questions SET status = 'approved' WHERE id = %s AND status IN ('analyzed', 'approved')",
-            (question_id,),
+        result = subprocess.run(
+            [_GAMES_PYTHON, script, "--post-id", str(question_id)],
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
-        affected = cur.rowcount
-        conn.commit()
-        conn.close()
-        if affected == 0:
-            raise HTTPException(status_code=404, detail="Question not found or not in analyzable state")
-        # Fire-and-forget: post the reply to YouTube in the background
-        subprocess.Popen(
-            [_GAMES_PYTHON, str(_GAMES_ROOT / "go" / "post_comment_replies.py")],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        return {"status": "approved", "id": question_id}
-    except HTTPException:
-        raise
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="YouTube post timed out after 30s")
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=f"Subprocess failed: {exc}")
+
+    # Parse JSON printed to stdout by run_post_id()
+    stdout = result.stdout.strip()
+    if not stdout:
+        detail = result.stderr.strip() or f"post_comment_replies.py exited with code {result.returncode}"
+        raise HTTPException(status_code=500, detail=detail)
+
+    try:
+        data = json.loads(stdout)
+    except Exception:
+        raise HTTPException(status_code=500, detail=f"Unexpected output: {stdout[:200]}")
+
+    if data.get("status") == "posted":
+        return {"status": "posted", "id": question_id, "reply_id": data.get("reply_id")}
+
+    # Script returned an error dict
+    raise HTTPException(status_code=400, detail=data.get("detail", "post failed"))
 
 
 @router.post("/games/comment-questions/{question_id}/skip")
