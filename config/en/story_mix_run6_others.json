@@ -54,7 +54,10 @@
       "(?i)\\b(just\\s+)?(claimed|takes?|took)\\s+(another|a\\s+new|its\\s+(latest|next))\\s+(life|victim|casualty)\\b",
       "(?i)^(He|She)\\s+(asked|begged|told|said|left|gave|got|made|wanted|paid|posted|sent)\\b",
       "(?i)\\b(so|most|very)\\s+(remote|isolated|cut.?off)\\b",
-      "(?i)^Why\\s+\\w+(\\s+\\w+)?\\s+keeps?\\s+(returning|happening|coming\\s+back|recurring|striking|spreading|appearing)\\b"
+      "(?i)^Why\\s+\\w+(\\s+\\w+)?\\s+keeps?\\s+(returning|happening|coming\\s+back|recurring|striking|spreading|appearing)\\b",
+      "(?i)^(The\\s+)?(Shocking|Surprising|Incredible|Unbelievable|Amazing|Stunning|Heartbreaking|Tragic|Devastating)\\s+(Story|Truth|Reason|Fact|Secret|Reality)\\b",
+      "(?i)\\b(reveals?|exposes?|admits?|confesses?)\\s+(all|everything|the\\s+truth|shocking\\s+details)\\b",
+      "(?i)^(This|Here|That)\\s+(is\\s+why|explains|shows\\s+why|proves)\\b"
     ],
     "platform_weight_overrides": {
       "news_rss":       1.50,

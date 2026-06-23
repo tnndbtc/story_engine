@@ -68,7 +68,7 @@ logger = logging.getLogger(__name__)
 # to catch "same event, different angle" pairs that slipped through event-memory
 # (e.g., three Ebola stories published across consecutive batches).
 _PUBLISHED_DUP_THRESHOLD_JACCARD = 0.20
-_PUBLISHED_DUP_WINDOW_DAYS       = 14  # 14-day cooldown for published topics
+_PUBLISHED_DUP_WINDOW_DAYS       = 21  # 21-day cooldown for published topics (raised from 14 on 2026-06-22 to catch SpaceX/IPO entity saturation)
 
 
 def load_published_video_titles(window_days: int = 14) -> list[dict]:

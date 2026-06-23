@@ -1,4 +1,5 @@
 [
+  {"date": "2026-06-22", "label": "策略H（地区多样性修复：run4_business EN 新增 google_news_in_en/india_english_news_rss/aajtak_rss/thehindu_news 抑制至权重0.05、bloomberg_news/wsj_news提升至2.50、cnbc_news提升至2.00、fed_rss/ft_news提升至1.80、google_news提升至1.20、添加India金融术语cluster_title_blocklist（NSE/BSE/SEBI/Sensex/Nifty/RBI/Rupee/crore/lakh/Suzlon/Adani等）、event_memory冷却从14天提升至21天、story_mix finance配额下调 — 承诺：若下周2026-06-28 EN run4_business美国相关新闻占比仍低于15%，本策略完全失效，必须在代码层加 region_cap 硬性限制，无任何借口）"},
   {"date": "2026-06-09", "label": "策略G（P0修复：ZH run4_business已从cron移除（avg_ret 0.8%止损）、_tokenize改为CJK字符级分词修复ZH去重盲区、补充中文停用词38个）"},
   {"date": "2026-06-03", "label": "策略F（包装层优化：缩略图启用thumbnail_text短钩子、DB加hook_type/thumbnail_text字段、脚本规则前15秒必出冲突/前30秒必出机制/禁止背景开头、ZH加PHASE 0钩子分类、topic-cluster 14天冷却期拦截同事件多批重复、crypto加price-commentary过滤、ZH降至1条/天仅run2_ai+run7_crypto、hook_type轮转追踪）"},
   {"date": "2026-05-30", "label": "策略E（留存优化全面落地：run5_entertainment EN/ZH暂停、social_tech全局强制skip、run4_business EN增至2x/day、run6_others EN加cluster_title_blocklist拦截非机制故事、EN/ZH title_prompt升级AI专项规则、ZH YouTube元数据加双语标签+niche锚点）"},

@@ -6,3 +6,4 @@ httpx>=0.27.0
 trafilatura>=1.8.0
 newspaper3k>=0.2.8
 psycopg2-binary>=2.9.0
+opencc-python-reimplemented>=0.1.7  # Traditional→Simplified post-processing for ZH deep stories

@@ -12,7 +12,28 @@
     "  - youtube raised 0.10 → 0.60 (English financial/economics channels)",
     "  - reddit added 1.20 (r/finance, r/economics, r/investing)",
     "  - weibo/baidu dropped 0.30 → 0.10 (Chinese-language content)",
-    "  - news_rss raised 1.30 → 1.50 (English financial RSS feeds)"
+    "  - news_rss raised 1.30 → 1.50 (English financial RSS feeds)",
+    "",
+    "2026-06-22: Region diversity fix — India sources suppressed, US sources boosted.",
+    "  Root cause: google_news_in_en (147/wk) and india_english_news_rss (119/wk)",
+    "  were getting default weight (0.10) — same as Bloomberg — causing Indian",
+    "  financial stories (NSE/RBI/Suzlon/rupee) to win slots at the same rate as",
+    "  US tier-1 financial sources. THREE WEEKS of reviews flagged this; zero fixes",
+    "  were committed. This time the fix is explicit and auditable.",
+    "  Changes:",
+    "    google_news_in_en      → 0.05 (suppressed)",
+    "    india_english_news_rss → 0.05 (suppressed)",
+    "    aajtak_rss             → 0.05 (suppressed)",
+    "    thehindu_news          → 0.05 (suppressed)",
+    "    bloomberg_news         → 2.50 (boosted — top US financial source)",
+    "    cnbc_news              → 2.00 (boosted)",
+    "    wsj_news               → 2.50 (boosted — Wall Street Journal)",
+    "    fed_rss                → 1.80 (boosted — Federal Reserve official feeds)",
+    "    ft_news                → 1.80 (boosted — Financial Times)",
+    "    google_news            → 1.20 (boosted — global Google News, not India edition)",
+    "  Title blocklist added for India-only financial terms as second layer.",
+    "  Accountability: if USA stories remain <15% of EN run4_business output",
+    "  by next review (2026-06-28), this fix failed and needs code-level region cap."
   ],
 
   "soft_targets": {
@@ -41,20 +62,35 @@
       "sports":        0.05,
       "entertainment": 0.05
     },
+    "cluster_title_blocklist": [
+      "(?i)\\b(₹|crore|lakh|NSE|BSE|SEBI|Sensex|Nifty|RBI|Rupee)\\b",
+      "(?i)\\b(Suzlon|Zomato|Paytm|Infosys|Wipro|TCS|HCL\\s+Tech|Reliance\\s+Industries|Adani|Tata\\s+Motors|HDFC|ICICI\\s+Bank|Axis\\s+Bank|SBI)\\b",
+      "(?i)\\b(PM\\s+Kisan|AgriStack|eKYC\\s+farm|Aadhaar\\s+farm|Kharif|Rabi\\s+season|MSP\\s+procurement)\\b"
+    ],
     "platform_weight_overrides": {
-      "bilibili":      0.10,
-      "youtube":       0.60,
-      "nicovideo":     0.10,
-      "hackernews":    1.80,
-      "news_rss":      1.50,
-      "bbc":           1.20,
-      "guardian":      1.20,
-      "reuters":       1.50,
-      "reddit":        1.20,
-      "weibo":         0.10,
-      "baidu":         0.10,
-      "google_trends": 0.20,
-      "wikipedia":     0.50
+      "bilibili":            0.10,
+      "youtube":             0.60,
+      "nicovideo":           0.10,
+      "hackernews":          1.80,
+      "news_rss":            1.50,
+      "bbc":                 1.20,
+      "guardian":            1.20,
+      "reuters":             1.50,
+      "reddit":              1.20,
+      "weibo":               0.10,
+      "baidu":               0.10,
+      "google_trends":       0.20,
+      "wikipedia":           0.50,
+      "bloomberg_news":      2.50,
+      "cnbc_news":           2.00,
+      "wsj_news":            2.50,
+      "fed_rss":             1.80,
+      "ft_news":             1.80,
+      "google_news":         1.20,
+      "google_news_in_en":   0.05,
+      "india_english_news_rss": 0.05,
+      "aajtak_rss":          0.05,
+      "thehindu_news":       0.05
     }
   }
 }

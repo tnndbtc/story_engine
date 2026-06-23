@@ -23,6 +23,24 @@ PROMPTS_DIR = Path(__file__).resolve().parent.parent / 'prompts'
 CLAUDE_TIMEOUT = 120  # seconds
 CLAUDE_MODEL = os.environ.get('CLAUDE_MODEL', 'sonnet')  # opus / sonnet / haiku
 
+# ── Traditional → Simplified Chinese post-processing ─────────────────────────
+# Model instructions ("write in Simplified Chinese") are unreliable when the
+# agent reads predominantly Traditional Chinese sources.  We apply OpenCC t2s
+# conversion as a hard deterministic step on all ZH text fields after parsing.
+
+try:
+    from opencc import OpenCC as _OpenCC
+    _T2S = _OpenCC('t2s')
+    def _to_simplified(text: str) -> str:
+        """Convert Traditional Chinese → Simplified Chinese (no-op on already simplified)."""
+        if not text:
+            return text
+        return _T2S.convert(text)
+except Exception:
+    logger.warning("opencc not available — Traditional→Simplified conversion disabled")
+    def _to_simplified(text: str) -> str:  # type: ignore[misc]
+        return text
+
 
 def _extract_entities(title: str, sources: list[dict]) -> list[dict] | None:
     """
@@ -1591,11 +1609,22 @@ def generate_deep_story(
         logger.warning("%s", raw)
         logger.warning("=== EMPTY BODY RAW OUTPUT END ===")
 
+    # Apply deterministic Traditional→Simplified conversion for ZH output.
+    # Prompt instructions alone are unreliable when agent reads TW/HK sources.
+    if lang == 'zh':
+        title_out          = _to_simplified(parsed.get('title', topic_title))
+        body_out           = _to_simplified(body)
+        thumbnail_text_out = _to_simplified(parsed.get('thumbnail_text', ''))
+    else:
+        title_out          = parsed.get('title', topic_title)
+        body_out           = body
+        thumbnail_text_out = parsed.get('thumbnail_text', '')
+
     return {
-        'title':            parsed.get('title', topic_title),
-        'body':             body,
+        'title':            title_out,
+        'body':             body_out,
         'hook_type':        parsed.get('hook_type', ''),
-        'thumbnail_text':   parsed.get('thumbnail_text', ''),
+        'thumbnail_text':   thumbnail_text_out,
         # Legacy fields — empty; get_stories_by_set() reads 'body' first
         'hook':             '',
         'bullets':          [],

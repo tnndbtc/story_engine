@@ -76,15 +76,15 @@
 
     "category_mix": {
       "politics":      0.12,
-      "society":       0.12,
+      "society":       0.14,
       "entertainment": 0.12,
-      "technology":    0.11,
-      "business":      0.08,
+      "technology":    0.13,
+      "business":      0.06,
       "sports":        0.11,
       "ai":            0.11,
       "science":       0.10,
       "world":         0.08,
-      "crypto":        0.05
+      "crypto":        0.03
     },
 
     "category_policy": {
