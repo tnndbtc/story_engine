@@ -155,6 +155,16 @@ def _save_story_and_remember(
         topic_clusters:   Structured cluster data for multi-item format stories.
                           None for single-item formats (cluster members are in sources).
     """
+    # Apply deterministic Traditional→Simplified conversion for all ZH formats.
+    # Prompt instructions alone are unreliable when Claude reads TW/HK sources.
+    # generate_deep_story() already converts before returning; this covers every
+    # other format (3-9 individual functions, 10-46 via generate_by_format).
+    if lang == 'zh':
+        title   = _to_simplified(title)
+        hook    = _to_simplified(hook)
+        twist   = _to_simplified(twist)
+        bullets = [_to_simplified(b) if isinstance(b, str) else b for b in bullets]
+
     story_id = save_story(
         title=title,
         format=format,
@@ -1853,11 +1863,16 @@ def generate_supporting_stories(
         if not valid_sources:
             logger.warning("generate_supporting_stories: no valid source objects — skipping element")
             return None
+        # Apply deterministic Traditional→Simplified conversion for ZH output.
+        # _validate_element is a closure — lang is captured from the outer scope.
+        title_val          = _to_simplified(el['title'])          if lang == 'zh' else el['title']
+        summary_val        = _to_simplified(el['summary'])        if lang == 'zh' else el['summary']
+        why_val            = _to_simplified(el['why_it_matters']) if lang == 'zh' else el['why_it_matters']
         return {
             'event_id':       cluster.event_id,
-            'title':          el['title'],
-            'summary':        el['summary'],
-            'why_it_matters': el['why_it_matters'],
+            'title':          title_val,
+            'summary':        summary_val,
+            'why_it_matters': why_val,
             'sources':        valid_sources,
         }
 
