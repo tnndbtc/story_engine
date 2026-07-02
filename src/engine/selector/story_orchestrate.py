@@ -83,9 +83,17 @@ NEW_DIMENSION_THRESHOLD      = 0.35   # minimum score for a story to add a new d
 REPEAT_WINDOW_BATCHES = 5       # number of previous batches to check for repeats
 REPEAT_EVICT_HOURS    = 24      # also evict batches older than this many hours
 
+# Geo quota — rolling window for USA% enforcement (applies to EN profiles only)
+GEO_QUOTA_WINDOW = 14           # last N deep-story selections to measure USA rate against
+
 # History file — written alongside other engine logs
 _HISTORY_PATH: Path = (
     Path(__file__).resolve().parents[3] / 'logs' / 'ranking_history.json'
+)
+
+# Geo-quota state file — per-profile USA tracking (persisted across runs)
+_GEO_QUOTA_PATH: Path = (
+    Path(__file__).resolve().parents[3] / 'logs' / 'geo_quota_state.json'
 )
 
 # ── Analytics feedback constants (Changes 1, 3, 5) ───────────────────────────
@@ -139,6 +147,104 @@ def _entity_fingerprint(cluster) -> str:
     orgs       = set(getattr(cluster, 'cluster_orgs', None) or set())
     all_ents   = sorted(countries | orgs)[:3]
     return '|'.join(all_ents) if all_ents else 'UNKNOWN'
+
+
+# ── USA geography detection ───────────────────────────────────────────────────
+
+# Phrases/tokens that unambiguously signal a USA story even when "US/America" is
+# absent from the title.  Checked as lowercase substrings against all cluster titles.
+_USA_IMPLICIT_PHRASES: frozenset[str] = frozenset({
+    # Abbreviated forms that the NER tokenizer misses ("U.S." splits into "u" + "s")
+    'u.s.', ' u.s ', '(u.s.)',
+    # People (unique to US politics)
+    'trump', 'biden', 'harris', 'pelosi', 'mcconnell',
+    # Institutions
+    'federal reserve', 'the fed', 'wall street', 'congress', 'senate',
+    'white house', 'pentagon', 'treasury department',
+    # Markets / regulators
+    'nasdaq', 'nyse', 'dow jones', 's&p 500',
+    'washington dc', 'silicon valley',
+    # US-specific companies with predominantly US regulatory/political news
+    'tesla', 'spacex',
+})
+
+# ALL-CAPS orgs uniquely tied to the US Federal Reserve system
+_USA_ORG_SET: frozenset[str] = frozenset({'FED', 'FDIC', 'FOMC', 'CFPB'})
+
+
+def _is_usa_cluster(cluster) -> bool:
+    """Return True when this cluster is primarily about the United States.
+
+    Two-layer check:
+    1. Explicit NER: 'united states' in cluster_countries (catches US/USA/America/American).
+    2. Implicit markers: USA-specific phrases in timeline titles or USA-specific orgs.
+    """
+    # Layer 1 — explicit NER country detection
+    countries = getattr(cluster, 'cluster_countries', None) or set()
+    if 'united states' in {c.lower() for c in countries}:
+        return True
+
+    # Layer 2a — USA-specific ALL-CAPS orgs (FED, FDIC, FOMC, CFPB)
+    orgs = getattr(cluster, 'cluster_orgs', None) or set()
+    if orgs & _USA_ORG_SET:
+        return True
+
+    # Layer 2b — implicit phrase scan across all cluster titles
+    # Collect: representative title + all timeline entry titles
+    rep = getattr(cluster, 'representative', None)
+    title_texts: list[str] = []
+    if rep is not None:
+        t = getattr(rep, 'canonical_title', None) or getattr(rep, 'title_original', None) or ''
+        if t:
+            title_texts.append(t.lower())
+    for entry in (getattr(cluster, 'timeline', None) or []):
+        t = entry.get('title', '')
+        if t:
+            title_texts.append(t.lower())
+    combined = ' '.join(title_texts)
+    for phrase in _USA_IMPLICIT_PHRASES:
+        if phrase in combined:
+            return True
+
+    return False
+
+
+# ── Geo quota helpers (per-profile USA% tracking) ────────────────────────────
+
+def _load_geo_quota_state() -> dict:
+    """Load per-profile geo quota state from JSON, returning {} on any error."""
+    try:
+        with open(_GEO_QUOTA_PATH) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+    except Exception as e:
+        logger.warning("story_orchestrate: could not load geo_quota_state (%s) — starting fresh", e)
+        return {}
+
+
+def _save_geo_quota_state(state: dict) -> None:
+    """Persist geo quota state to JSON, creating the directory if needed."""
+    try:
+        _GEO_QUOTA_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(_GEO_QUOTA_PATH, 'w') as f:
+            json.dump(state, f, indent=2)
+    except Exception as e:
+        logger.warning("story_orchestrate: could not save geo_quota_state (%s)", e)
+
+
+def _get_usa_rate(state: dict, profile_key: str, window: int) -> tuple:
+    """
+    Compute (usa_rate, usa_count, total_count) from the last `window` entries
+    for this profile.  Returns (0.0, 0, 0) when no history exists yet.
+    """
+    entries = (state.get(profile_key) or {}).get('recent', [])
+    recent  = entries[-window:] if len(entries) > window else entries
+    if not recent:
+        return 0.0, 0, 0
+    usa_count = sum(1 for e in recent if e.get('is_usa', False))
+    total     = len(recent)
+    return usa_count / total, usa_count, total
 
 
 # ── Batch history (JSON file) ─────────────────────────────────────────────────
@@ -543,6 +649,8 @@ def story_orchestrate(
     cluster_map: dict,
     apply_repetition_penalty: bool = True,
     cluster_title_blocklist: list[str] | None = None,
+    geo_quota_target: float = 0.0,
+    geo_quota_profile: str = '',
 ) -> dict | None:
     """
     Stage 3: Select deep_story and supporting_stories from a cluster_map.
@@ -559,6 +667,14 @@ def story_orchestrate(
                      any pattern is excluded before story selection. Used to block
                      low-retention story types per profile (e.g. price-update stories
                      in run7_crypto). Patterns compiled with re.IGNORECASE.
+        geo_quota_target: When > 0, enforce that at least this fraction of deep-story
+                     selections are USA stories (as detected by _is_usa_cluster).
+                     Measured over the last GEO_QUOTA_WINDOW selections for this
+                     profile.  When below target, the deep-story eligible set is
+                     restricted to USA clusters (falls back to full set if none
+                     available). Default 0.0 = disabled.
+        geo_quota_profile: Identifier for geo-quota state tracking (e.g.
+                     'run4_business_en'). Required when geo_quota_target > 0.
 
     Returns:
         {
@@ -796,6 +912,45 @@ def story_orchestrate(
                     len(kept), len(eligible),
                 )
             eligible = kept
+
+    # ── Geo quota enforcement (USA hard floor) ───────────────────────────────
+    # When geo_quota_target > 0 and this profile's USA rate (over the last
+    # GEO_QUOTA_WINDOW deep stories) is below the target, restrict deep-story
+    # selection to USA clusters.  Fails open: if no USA clusters are available,
+    # selection falls back to the full eligible set with a logged warning.
+    geo_quota_state: dict = {}
+    if geo_quota_target > 0 and geo_quota_profile:
+        geo_quota_state = _load_geo_quota_state()
+        usa_rate, usa_count, q_total = _get_usa_rate(
+            geo_quota_state, geo_quota_profile, GEO_QUOTA_WINDOW
+        )
+        logger.info(
+            "story_orchestrate: geo_quota — profile=%s usa=%d/%d (%.0f%%) target=%.0f%%",
+            geo_quota_profile, usa_count, q_total, usa_rate * 100, geo_quota_target * 100,
+        )
+        if usa_rate < geo_quota_target:
+            usa_eligible = [(c, s) for c, s in eligible if _is_usa_cluster(c)]
+            if usa_eligible:
+                logger.info(
+                    "story_orchestrate: geo_quota ENFORCED — USA rate %.0f%% < %.0f%% target; "
+                    "restricting deep story pool to %d/%d USA clusters",
+                    usa_rate * 100, geo_quota_target * 100,
+                    len(usa_eligible), len(eligible),
+                )
+                eligible = usa_eligible
+            else:
+                logger.warning(
+                    "story_orchestrate: geo_quota BELOW TARGET (%.0f%% < %.0f%%) but "
+                    "NO USA clusters available in eligible pool (%d clusters) — "
+                    "falling back to full eligible set",
+                    usa_rate * 100, geo_quota_target * 100, len(eligible),
+                )
+        else:
+            logger.info(
+                "story_orchestrate: geo_quota OK — USA rate %.0f%% >= %.0f%% target; "
+                "no restriction applied",
+                usa_rate * 100, geo_quota_target * 100,
+            )
 
     # ── Stage 4b: LLM cluster scorer ─────────────────────────────────────────
     # Score the top-5 eligible clusters semantically before committing to rank 1.
@@ -1184,6 +1339,25 @@ def story_orchestrate(
     batches.append(new_batch)
     batches = _evict_history(batches)
     _save_history(batches)
+
+    # ── Geo quota state update ────────────────────────────────────────────────
+    # Record whether the selected deep story is a USA story.
+    # This drives the enforcement check on the NEXT invocation for this profile.
+    if geo_quota_target > 0 and geo_quota_profile:
+        is_usa = _is_usa_cluster(deep_cluster)
+        geo_quota_state = _load_geo_quota_state()
+        profile_entry   = geo_quota_state.setdefault(geo_quota_profile, {'recent': []})
+        profile_entry['recent'].append({'is_usa': is_usa})
+        # Keep at most 2× the window to avoid unbounded growth
+        max_keep = GEO_QUOTA_WINDOW * 2
+        if len(profile_entry['recent']) > max_keep:
+            profile_entry['recent'] = profile_entry['recent'][-max_keep:]
+        _save_geo_quota_state(geo_quota_state)
+        logger.info(
+            "story_orchestrate: geo_quota state updated — profile=%s is_usa=%s "
+            "(recent window: %d entries)",
+            geo_quota_profile, is_usa, len(profile_entry['recent']),
+        )
 
     logger.info(
         "story_orchestrate: complete — 1 deep story + %d supporting + %d excluded "

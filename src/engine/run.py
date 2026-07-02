@@ -58,6 +58,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Geo quota — per-profile USA% floor overrides for EN deep-story generation.
+# Default is 0.45 (see _geo_quota_target below); a profile listed here uses its
+# override instead. Keys are config_profile names (e.g. "run4_business").
+GEO_QUOTA_TARGET_DEFAULT = 0.45
+GEO_QUOTA_TARGET_OVERRIDES = {
+    'run4_business': 0.60,   # business/finance EN deep dives — raised from 45% default
+}
+
 # Region display names — used by _dispatch_legacy for generate_regional
 REGION_NAMES = {
     'jp': 'Japan', 'kr': 'South Korea', 'cn': 'China', 'de': 'Germany',
@@ -372,10 +380,28 @@ def main():
                         "— %s — proceeding without blocklist", _cfg_load_exc,
                     )
 
+                # Geo quota: enforce a USA% floor for EN deep stories, per profile.
+                # Tracks per-profile rate over last GEO_QUOTA_WINDOW selections.
+                # When below target, deep story pool is restricted to USA clusters.
+                # Default is GEO_QUOTA_TARGET_DEFAULT (45%); profiles in
+                # GEO_QUOTA_TARGET_OVERRIDES use their override instead
+                # (e.g. run4_business is raised to 60%).
+                _geo_quota_target = (
+                    GEO_QUOTA_TARGET_OVERRIDES.get(args.config_profile, GEO_QUOTA_TARGET_DEFAULT)
+                    if args.lang == 'en' else 0.0
+                )
+                _geo_quota_profile = (
+                    f"{args.config_profile}_{args.lang}"
+                    if args.config_profile and args.lang
+                    else ''
+                )
+
                 orchestration_result = story_orchestrate(
                     cluster_map,
                     apply_repetition_penalty=not args.no_repetition_penalty,
                     cluster_title_blocklist=_cluster_title_blocklist or None,
+                    geo_quota_target=_geo_quota_target,
+                    geo_quota_profile=_geo_quota_profile,
                 )
                 if orchestration_result is None:
                     logger.warning("--deep-story: story_orchestrate() returned None — skipping")
