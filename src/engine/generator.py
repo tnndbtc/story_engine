@@ -1498,7 +1498,8 @@ def generate_deep_story(
     The agent:
       1. Receives the topic + crawler seed URLs
       2. Iteratively searches Serper via Bash tool (6+ queries)
-      3. Writes a spoken narrative in the target language (en: 700–900 words; zh: 900–1100 chars)
+      3. Writes a spoken narrative in the target language (en: 120–150 words; zh: 230–270 chars —
+         per deep_dive_en.txt / deep_dive_zh.txt, targeting ~80s of narration)
       4. Returns JSON: {title, body, sources}
 
     sources in the returned dict merges:

@@ -29,17 +29,29 @@
     "  politics   0.30/0.357=0.84",
     "  society    0.30/0.233=1.29",
     "  world/entertainment/sports: 0.00 (skipped)",
-    "All within gate."
+    "All within gate.",
+    "",
+    "2026-07-06: AI-only mode (temporary, per explicit request).",
+    "  category_mix set to ai=1.00, every other category=0.00. Stage 1's category",
+    "  allowlist hard-excludes any zero-weight category (not fetched from crawler",
+    "  DB at all) — see stage1_normalize.py. This is a deliberate narrowing, not a",
+    "  bug: 'technology' stories (e.g. iPhone hardware/supply-chain pieces) were",
+    "  getting swept in under this profile and folded into the same 'tech_ai'",
+    "  story_type bucket as real AI stories.",
+    "  Tradeoff accepted: ai is only ~3.9% of crawler supply (corpus_share.json),",
+    "  so batches under this profile may frequently come back with 0-1 stories",
+    "  instead of a full set — there is no more politics/society filler for volume.",
+    "  To restore a fuller mix, revert category_mix to the previous block above."
   ],
 
   "soft_targets": {
     "category_mix": {
-      "politics":      0.30,
-      "society":       0.30,
-      "technology":    0.14,
-      "business":      0.13,
-      "ai":            0.07,
-      "science":       0.06,
+      "ai":            1.00,
+      "politics":      0.00,
+      "society":       0.00,
+      "technology":    0.00,
+      "business":      0.00,
+      "science":       0.00,
       "entertainment": 0.00,
       "sports":        0.00,
       "world":         0.00
