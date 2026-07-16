@@ -329,17 +329,33 @@ class WinrateResult(BaseModel):
     steps:        list[WinrateStep] # Each hypothetical move in sequence
 
 
+class LifeDeathResult(BaseModel):
+    """Parsed result_json for a dead/live question (kind='life_death')."""
+    status:           str                    # 'alive' | 'dead' | 'unsettled'
+    target_color:     str                    # 'B' | 'W'
+    group_anchor_gtp: str                    # a representative point of the group, e.g. "S2"
+    group_size:       int                    # number of stones in the group
+    ownership_avg:    float                  # avg ownership, group's-color perspective [-1,1]
+    confidence:       float                  # 0..1
+    at_move:          Optional[int]   = None # position analysed at
+    whatif_moves:     Optional[str]   = ""   # hypothetical moves played before the read
+    resolved_by:      Optional[str]   = None # 'anchor' | 'nearest_move' | 'region'
+
+
 class CommentQuestion(BaseModel):
-    """One analyzed whatif question, ready for human review."""
+    """One analyzed comment question (whatif or life_death), ready for human review."""
     id:            int
     comment_id:    str
     comment_text:  str              # original viewer comment (from game_comments.text)
     author:        Optional[str]    # commenter name
     like_count:    int
-    at_move:       int              # whatif.py --at param
+    at_move:       Optional[int]    # whatif.py --at param (may be null for life_death)
     whatif_moves:  str              # whatif.py --moves param, e.g. "Q8 Q9"
     visits:        int
-    result:        WinrateResult    # parsed result_json
+    kind:          str = "whatif"           # "whatif" | "life_death"
+    result:        Optional[WinrateResult]    = None   # set when kind='whatif'
+    life_death:    Optional[LifeDeathResult]  = None   # set when kind='life_death'
+    reply_preview: Optional[str]    = None   # exact localized reply that will be posted
     status:        str              # 'analyzed' | 'approved' | 'skipped'
 
 

@@ -11,11 +11,23 @@ Endpoints:
 import json
 import sqlite3 as _sqlite3
 import subprocess
+import sys as _sys
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
+
+# Reuse the games repo's pure reply formatter so the trend UI can preview the
+# exact localized reply that post_comment_replies.py will post.  reply_format.py
+# has no DB/YouTube deps, so this import is safe.
+try:
+    _GAMES_GO = str(Path("/home/tnnd/data/code/games/go"))
+    if _GAMES_GO not in _sys.path:
+        _sys.path.insert(0, _GAMES_GO)
+    from reply_format import format_reply as _format_reply   # type: ignore
+except Exception:   # pragma: no cover — preview is best-effort
+    _format_reply = None
 
 from api.schemas import (
     Story,
@@ -42,6 +54,7 @@ from api.schemas import (
     GamesVideoRow,
     ChannelVideoRow,
     CommentQuestion,
+    LifeDeathResult,
     VideoWithCommentQuestions,
     WinrateResult,
     WinrateStep,
@@ -597,20 +610,50 @@ def get_comment_questions():
             if isinstance(raw, str):
                 import json as _json
                 raw = _json.loads(raw)
-            steps = [
-                WinrateStep(
-                    color=s["color"],
-                    move=s["move"],
-                    winrate=s["winrate"],
-                    score=s["score"],
+
+            kind = raw.get("kind", "whatif")
+            result = None
+            life_death = None
+            if kind == "life_death":
+                life_death = LifeDeathResult(
+                    status           = raw.get("status", "unsettled"),
+                    target_color     = raw.get("target_color", "B"),
+                    group_anchor_gtp = raw.get("group_anchor_gtp", "?"),
+                    group_size       = raw.get("group_size", 0),
+                    ownership_avg    = raw.get("ownership_avg", 0.0),
+                    confidence       = raw.get("confidence", 0.0),
+                    at_move          = raw.get("at_move"),
+                    whatif_moves     = raw.get("whatif_moves", "") or "",
+                    resolved_by      = raw.get("resolved_by"),
                 )
-                for s in raw.get("steps", [])
-            ]
-            result = WinrateResult(
-                fork_winrate=raw.get("fork_winrate", 0.0),
-                fork_score=raw.get("fork_score", 0.0),
-                steps=steps,
-            )
+            else:
+                steps = [
+                    WinrateStep(
+                        color=s["color"],
+                        move=s["move"],
+                        winrate=s["winrate"],
+                        score=s["score"],
+                    )
+                    for s in raw.get("steps", [])
+                ]
+                result = WinrateResult(
+                    fork_winrate=raw.get("fork_winrate", 0.0),
+                    fork_score=raw.get("fork_score", 0.0),
+                    steps=steps,
+                )
+            # Localized preview of the exact reply that will be posted (best-effort).
+            reply_preview = None
+            if _format_reply is not None:
+                try:
+                    reply_preview = _format_reply({
+                        "comment_text": q["comment_text"] or "",
+                        "result_json":  raw,
+                        "whatif_moves": q["whatif_moves"] or "",
+                        "at_move":      q["at_move"],
+                    })
+                except Exception:
+                    reply_preview = None
+
             q_map[q["video_db_id"]].append(CommentQuestion(
                 id=q["id"],
                 comment_id=q["comment_id"],
@@ -620,7 +663,10 @@ def get_comment_questions():
                 at_move=q["at_move"],
                 whatif_moves=q["whatif_moves"] or "",
                 visits=q["visits"],
+                kind=kind,
                 result=result,
+                life_death=life_death,
+                reply_preview=reply_preview,
                 status=q["status"],
             ))
 
