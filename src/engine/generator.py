@@ -42,6 +42,121 @@ except Exception:
         return text
 
 
+# ── thumbnail_text validation ─────────────────────────────────────────────────
+# The thumbnail repeats the title's core claim (reinforcement, not complement),
+# so every word and number it shows must already be in the title. The model does
+# not reliably obey that from the prompt alone: in one 16-story sample it wrote
+# "Ford: 74% Empty Plant" for a title that says 34% — a factual contradiction
+# visible to the viewer, since the title renders right next to the thumbnail.
+#
+# This check is deterministic and runs after parsing. On failure we do NOT spend
+# another LLM call; we derive the thumbnail from the title directly, which is
+# guaranteed consistent by construction.
+
+_TN_STOPWORDS = {
+    'a', 'an', 'the', 'and', 'or', 'but', 'of', 'to', 'in', 'on', 'at', 'for',
+    'with', 'by', 'from', 'as', 'is', 'was', 'are', 'were', 'be', 'been', 'it',
+    'its', 'this', 'that', 'just', 'now', 'has', 'have', 'had',
+}
+
+
+def _tn_norm(word: str) -> str:
+    """Lowercase and strip possessive / simple plural so OpenAI's == OpenAI."""
+    w = word.lower().strip("'’")
+    for suf in ("'s", "’s", "s'"):
+        if w.endswith(suf):
+            w = w[: -len(suf)]
+            break
+    if len(w) > 3 and w.endswith('s') and not w.endswith('ss'):
+        w = w[:-1]
+    return w
+
+
+def _tn_words(text: str) -> set[str]:
+    """Content words (normalised). CJK is compared per character."""
+    import re as _re
+    out: set[str] = set()
+    for w in _re.findall(r"[A-Za-z][A-Za-z'’]*", text or ''):
+        w = _tn_norm(w)
+        if w and w not in _TN_STOPWORDS:
+            out.add(w)
+    for ch in _re.findall(r'[一-鿿]', text or ''):
+        out.add(ch)
+    return out
+
+
+def _tn_numbers(text: str) -> set[str]:
+    """Numeric literals, normalised so '34%' and '34' compare equal."""
+    import re as _re
+    return {n.rstrip('.').replace(',', '')
+            for n in _re.findall(r'\d[\d.,]*', text or '')}
+
+
+def _derive_thumbnail_from_title(title: str, lang: str) -> str:
+    """
+    Deterministic fallback, used only when the model's thumbnail_text conflicts
+    with the title. Picks a clause OF THE TITLE, so it cannot contradict it.
+    """
+    import re as _re
+    t = (title or '').strip()
+    if not t:
+        return ''
+    parts = [p.strip() for p in _re.split(r'[.。!！?？,，;；:：—–]', t) if p.strip()]
+    if lang == 'zh':
+        for p in reversed(parts):
+            if 4 <= len(p) <= 12:
+                return p
+        return t[:10]
+    # Prefer a tail clause that stands alone; the reveal usually lives there.
+    for p in reversed(parts):
+        if 3 <= len(p.split()) <= 7:
+            return p
+    # Otherwise truncate, then trim trailing filler so it never ends on "of"/"with".
+    words = t.split()[:6]
+    while words and _tn_norm(words[-1]) in _TN_STOPWORDS:
+        words.pop()
+    return ' '.join(words)
+
+
+def _validate_thumbnail_text(thumb: str, title: str, lang: str) -> str:
+    """
+    Keep the model's thumbnail_text unless it contradicts the title.
+
+    Two separate tests, because they fail for different reasons:
+
+      * numbers — STRICT. A figure the title does not contain is a factual
+        contradiction the viewer can see (observed: "Ford: 74% Empty Plant"
+        against a title saying 34%). Any novel number is rejected outright.
+      * words — LOOSE. Requires only that most content words come from the
+        title. Compression should stay legal: "Never Opened" for a title
+        reading "never looked inside" is good writing, not an error. Only
+        wholesale invention is rejected.
+    """
+    if not thumb:
+        return _derive_thumbnail_from_title(title, lang)
+
+    reason = ''
+    bad_nums = _tn_numbers(thumb) - _tn_numbers(title)
+    if bad_nums:
+        reason = f"number(s) not in title: {', '.join(sorted(bad_nums))}"
+    else:
+        t_words = _tn_words(thumb)
+        if t_words:
+            shared = len(t_words & _tn_words(title)) / len(t_words)
+            if shared < 0.5:
+                reason = f"only {shared:.0%} of content words come from the title"
+
+    if not reason:
+        return thumb
+
+    fallback = _derive_thumbnail_from_title(title, lang)
+    logger.warning(
+        "thumbnail_text %r rejected (%s) — replaced with %r. Title: %r",
+        thumb, reason, fallback, title,
+    )
+    return fallback
+
+
 def _extract_entities(title: str, sources: list[dict]) -> list[dict] | None:
     """
     Extract named entities from a story title + source titles using Claude Haiku.
@@ -1630,6 +1745,10 @@ def generate_deep_story(
         title_out          = parsed.get('title', topic_title)
         body_out           = body
         thumbnail_text_out = parsed.get('thumbnail_text', '')
+
+    # Thumbnail repeats the title, so it may not contain anything the title does
+    # not. Runs after t2s so both sides are compared in the same script.
+    thumbnail_text_out = _validate_thumbnail_text(thumbnail_text_out, title_out, lang)
 
     return {
         'title':            title_out,

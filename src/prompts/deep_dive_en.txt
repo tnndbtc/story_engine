@@ -36,28 +36,50 @@ Select the hook with the highest total score. Record its type as hook_type.
 This becomes your narrative anchor. Proceed to research with that hook in mind —
 your goal is to find the facts that prove and deepen it, not to find a different story.
 
-Also generate thumbnail_text: 3–6 words MAX, punchy, for the YouTube thumbnail image.
-NOT the title. The visual hook that makes someone stop scrolling.
+Also generate thumbnail_text: 8–12 words for the YouTube thumbnail image.
 
-RULE 1 — SUBJECT ANCHOR (mandatory): thumbnail_text MUST name the main subject —
-  the company, person, technology, place, or asset the story is about.
-  A viewer who has never heard this story must be able to identify the TOPIC from
-  thumbnail_text alone. If they can't, rewrite it.
+LENGTH (important): aim for 8–12 words. Fewer than 8 is almost always too few —
+  at 3-6 words there is no room for the specific detail that makes the story
+  interesting, and the result reads like a category label ("Supernode: Ban
+  Bypass") instead of a claim. The thumbnail renderer wraps up to three lines and
+  scales the type to fit, so 8–12 words still render large. Use the room.
 
-RULE 2 — FORMAT: [Subject] + [Drama]. Both are required.
-  The subject anchors; the drama creates urgency or curiosity.
+thumbnail_text is the TITLE COMPRESSED — the same claim, in fewer, bigger words.
+It is NOT a second, different hook. YouTube renders the title directly beside the
+thumbnail, so the two must reinforce each other, never diverge.
 
-GOOD examples (subject + drama):
-  "Bitcoin: No Plan for 2140"     ← subject=Bitcoin, drama=no plan
-  "SpaceX Spent $60B on Code"     ← subject=SpaceX, drama=absurd spend
-  "Two Trains, One Track"         ← subject=trains, drama=collision setup
-  "Robinhood Fires 290"           ← subject=Robinhood, drama=mass layoff
-  "SEC Blocked Every Path"        ← subject=SEC, drama=total block
+RULE 1 — COME FROM THE TITLE (mandatory): every word and every number must come
+  from the title you just wrote. Compressing and re-cutting is fine; introducing
+  a fact, figure or subject the title does not contain is not.
+  A number that disagrees with the title is the worst possible failure — the
+  viewer sees both at once and catches it instantly.
 
-BAD examples (drama only — subject missing):
-  "21 Million. Then What?"        ← what is this about? Bitcoin? People? Dollars?
-  "Safety Gap Kills"              ← kills what? trains? planes? systems?
-  "$21B They Don't Have"          ← who? for what?
+RULE 2 — KEEP THE SHARPEST DETAIL (mandatory): when cutting the title down, keep
+  the most CONCRETE thing in it — the count, the percentage, the specific action.
+  Never trade it for a vague summary word. That specific detail is the whole hook.
+
+RULE 3 — SUBJECT (preferred, not mandatory): name the subject when it fits.
+  If the subject and the sharp detail cannot both fit in 6 words, KEEP THE DETAIL
+  — the title beside the thumbnail already supplies the subject.
+
+Do NOT default to a "Subject: Phrase" colon template. It reads like a news ticker
+and flattens the drama. Vary the shape.
+
+GOOD (title → thumbnail_text):
+  "Police seized a terror suspect's phone twice and never looked inside"
+      → "Seized His Phone Twice, Never Looked Inside"        (7 words)
+  "OpenAI's AI Escaped Its Test Environment to Steal the Answer Key"
+      → "The AI Escaped Its Test To Steal The Answer Key"    (10 words)
+  "Ford Gave Geely 34% of Its Spanish Plant to Fill the Empty Lines"
+      → "Ford Gave Away 34% Just To Fill Empty Lines"        (9 words)
+  Each keeps the title's sharpest detail — twice / escaped to steal / 34%.
+
+BAD (all real failures from the current output):
+  "Ford: 74% Empty Plant"       ← 74% is nowhere in the title. Contradiction.
+  "OpenAI AI Hacked Out"        ← "hacked" is vaguer than the title's "escaped
+                                   to steal the answer key". Detail thrown away.
+  "Police Never Checked Phone"  ← drops "twice", the detail that makes it damning.
+  "Supernode: Ban Bypass"       ← too short to say anything. A label, not a claim.
   "Fired for Success?"            ← who got fired?
   "Top 20. Twice."                ← top 20 what? who?
 

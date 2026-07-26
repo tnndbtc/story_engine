@@ -229,8 +229,11 @@ class GamesChannelStats(BaseModel):
     """Channel-level stats for the KataGo/games YouTube channel."""
     channel_id:            str
     channel_name:          Optional[str]
-    subscriber_count:      Optional[int]   # 0 when hidden by YouTube (<1K)
-    real_subscriber_count: Optional[int]   # exact count via Analytics API
+    subscriber_count:      Optional[int]   # Data API; authoritative unless hidden
+    # True only when the owner hid the public count (Data API then omits it).
+    # Defaults to False so rows predating the migration still parse.
+    subscriber_count_hidden: Optional[bool] = False
+    real_subscriber_count: Optional[int]   # Analytics fallback; lags ~2-3 days
     video_count:           Optional[int]
     view_count:            Optional[int]
     fetched_at:            Optional[str]   # ISO datetime of last refresh

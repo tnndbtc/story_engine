@@ -9,9 +9,12 @@ Endpoints:
 """
 
 import json
+import os
 import sqlite3 as _sqlite3
 import subprocess
 import sys as _sys
+import threading
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -400,6 +403,7 @@ def get_games_channel_stats():
         channel_id=_GAMES_CHANNEL_ID,
         channel_name=None,
         subscriber_count=None,
+        subscriber_count_hidden=False,
         real_subscriber_count=None,
         video_count=None,
         view_count=None,
@@ -521,15 +525,172 @@ def get_games_subtitle_langs():
         return []
 
 
+# ── games analytics refresh: scope + throttle + single-flight lock ─────────────
+#
+# The games page auto-POSTs this on every load. Unthrottled it spawned a full
+# ~875-call sweep per page view, with no lock, so two open tabs meant two
+# concurrent processes doing full-row upserts on the same rows.
+#
+# Two guards:
+#   scope   'quick' (default) refreshes channel stats, discovers newly
+#           published videos, and updates views/likes — ~21 calls. 'full'
+#           additionally re-pulls per-video retention, traffic sources and
+#           comment bodies (~875 calls). Default is 'quick' because retention carries a 48-72h
+#           reporting lag at YouTube, so an interactive full sweep cannot
+#           surface anything the nightly cron has not already stored. New-video
+#           discovery, which is why the auto-refresh exists, is kept in both.
+#   lock    an O_EXCL lockfile holding the pid, so overlapping requests are
+#           rejected instead of racing. Stale locks (dead pid) are reclaimed.
+_GAMES_REFRESH_LOCK     = Path("/tmp/games_refresh.lock")
+_GAMES_REFRESH_COOLDOWN = 30 * 60    # seconds between accepted 'full' sweeps
+_GAMES_REFRESH_STAMP    = Path("/tmp/games_refresh.last_full")
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except (ProcessLookupError, ValueError):
+        return False
+    except PermissionError:
+        return True          # exists, owned by someone else
+    return True
+
+
+def _acquire_refresh_lock() -> bool:
+    """O_EXCL create, reclaiming a lock whose owner has died. True if acquired."""
+    for _ in range(2):
+        try:
+            fd = os.open(str(_GAMES_REFRESH_LOCK), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+            os.write(fd, str(os.getpid()).encode())
+            os.close(fd)
+            return True
+        except FileExistsError:
+            try:
+                owner = int(_GAMES_REFRESH_LOCK.read_text().strip() or 0)
+            except (ValueError, OSError):
+                owner = 0
+            if owner and _pid_alive(owner):
+                return False
+            # Stale (crashed mid-run). Drop it and retry once.
+            try:
+                _GAMES_REFRESH_LOCK.unlink()
+            except FileNotFoundError:
+                pass
+    return False
+
+
+def _release_refresh_lock() -> None:
+    try:
+        _GAMES_REFRESH_LOCK.unlink()
+    except FileNotFoundError:
+        pass
+
+
+def _run_games_refresh(cmd: list[str], full: bool) -> None:
+    """Run the fetcher to completion, then release the lock. Used as a thread."""
+    try:
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                       timeout=30 * 60)
+        if full:
+            try:
+                _GAMES_REFRESH_STAMP.write_text(str(int(time.time())))
+            except OSError:
+                pass
+    except Exception:
+        pass
+    finally:
+        _release_refresh_lock()
+
+
 @router.post("/games/refresh")
-def refresh_games_analytics():
-    """Spawn fetch_games_analytics.py in background. Poll GET /api/games/channel-stats after ~15s."""
-    subprocess.Popen(
-        [_GAMES_PYTHON, str(_GAMES_ROOT / "fetch_games_analytics.py")],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    return {"status": "started"}
+def refresh_games_analytics(scope: str = Query("quick", pattern="^(quick|full)$")):
+    """
+    Refresh games.db analytics. Poll GET /api/games/channel-stats after ~15s.
+
+    scope=quick (default) — channel stats, new-video discovery, views/likes.
+                 ~21 API calls.
+    scope=full — additionally re-pulls per-video retention, traffic sources and
+                 comment bodies. ~875 API calls, rate-limited to once per
+                 30 minutes.
+    """
+    full = scope == "full"
+
+    if full:
+        try:
+            last = int(_GAMES_REFRESH_STAMP.read_text().strip() or 0)
+        except (ValueError, OSError):
+            last = 0
+        age = int(time.time()) - last
+        if last and age < _GAMES_REFRESH_COOLDOWN:
+            return {
+                "status": "skipped",
+                "reason": "cooldown",
+                "scope": scope,
+                "retry_after_s": _GAMES_REFRESH_COOLDOWN - age,
+            }
+
+    if not _acquire_refresh_lock():
+        return {"status": "skipped", "reason": "already_running", "scope": scope}
+
+    cmd = [_GAMES_PYTHON, str(_GAMES_ROOT / "fetch_games_analytics.py")]
+    if not full:
+        cmd.append("--quick")
+
+    try:
+        threading.Thread(target=_run_games_refresh, args=(cmd, full), daemon=True).start()
+    except Exception:
+        _release_refresh_lock()
+        raise
+
+    return {"status": "started", "scope": scope}
+
+
+@router.get("/games/subscriber-split")
+def get_games_subscriber_split(lang: str = Query("en")):
+    """
+    Live subscriber vs non-subscriber view split for one KataGo language tab
+    (en | zh | ja | ko).  Runs games/db/subscriber_split.py on demand against the
+    YouTube Analytics API — nothing is cached — and returns its JSON.
+
+    Fetched fresh on every page load, so no /refresh step is needed.
+
+    Shape (see subscriber_split.py):
+      { lang, channel_id, through, available, note, video_count,
+        windows: [ {key,label,subscribed,non_subscribed,total,pct} ],
+        weeks:   [ {week_start,label,subscribed,non_subscribed,total,pct,partial} ] }
+
+    When YouTube withholds the breakdown (too few views) the script returns
+    available=false with a human-readable note; the UI shows that notice
+    instead of an empty chart.
+    """
+    if lang not in ("en", "zh", "ja", "ko"):
+        raise HTTPException(status_code=400, detail="lang must be en, zh, ja, or ko")
+
+    def _unavailable(note: str):
+        return {
+            "lang": lang, "channel_id": None, "through": None,
+            "available": False, "note": note,
+            "video_count": 0, "windows": [], "weeks": [],
+        }
+
+    try:
+        proc = subprocess.run(
+            [_GAMES_PYTHON, str(_GAMES_ROOT / "db" / "subscriber_split.py"),
+             "--lang", lang],
+            capture_output=True, text=True, timeout=30,
+        )
+    except subprocess.TimeoutExpired:
+        return _unavailable("Timed out querying YouTube Analytics.")
+    except Exception as e:
+        return _unavailable(f"Could not run analytics query: {e}")
+
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return _unavailable("Analytics query failed on the server.")
+
+    try:
+        return json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return _unavailable("Analytics query returned malformed data.")
 
 
 _GO_DB_URL = "postgres://dbuser:dbpass@localhost:5432/go_db"
