@@ -23,12 +23,14 @@ PG_DSN = os.environ.get(
     'postgresql://story_engine_user:se_pass_2026@localhost/story_engine'
 )
 
-# Legacy path variable — no longer used for DB connection (PostgreSQL via PG_DSN).
-# Kept for stage1/stage4/run.py which use os.path.dirname(DB_PATH) to derive
-# the logs/ and snapshots/ directories relative to the project root.
-DB_PATH = os.environ.get(
-    'STORY_ENGINE_DB',
-    str(Path(__file__).resolve().parent.parent.parent / 'db.sqlite3')
+# story_engine project root — used by stage1/stage4/run.py (via selector.run_batch)
+# to locate the logs/ and snapshots/ directories. Not a database path; story_engine
+# has been PostgreSQL-only (via PG_DSN above) since the sqlite migration. This used
+# to be derived from db.sqlite3's own path as a shortcut to the project root — that
+# file has since been deleted and this constant points at the root directly instead.
+PROJECT_ROOT = os.environ.get(
+    'STORY_ENGINE_ROOT',
+    str(Path(__file__).resolve().parent.parent.parent)
 )
 
 SCHEMA = """
@@ -199,7 +201,12 @@ CREATE TABLE IF NOT EXISTS youtube_publish_log (
     created_at          BIGINT NOT NULL,
     production_method   TEXT,
     hook_type           TEXT,
-    thumbnail_text      TEXT
+    thumbnail_text      TEXT,
+    watch_time_hours    DOUBLE PRECISION,   -- estimatedMinutesWatched/60, from batch video-dimension pull
+    shares              BIGINT,             -- Analytics API 'shares' metric
+    subscribers_gained  BIGINT,             -- Analytics API 'subscribersGained' metric, attributed to this video
+    dislikes            BIGINT,             -- Analytics API 'dislikes' (owner-only estimate, public Data API no longer exposes this)
+    retention_curve_fetched_at BIGINT       -- set once the elapsedVideoTimeRatio curve has been pulled for this video
 );
 
 CREATE INDEX IF NOT EXISTS idx_yt_log_video_id
@@ -210,6 +217,34 @@ CREATE INDEX IF NOT EXISTS idx_yt_log_published_at
     ON youtube_publish_log(published_at);
 CREATE INDEX IF NOT EXISTS idx_yt_log_analytics
     ON youtube_publish_log(analytics_pulled_at);
+
+-- Channel-level Audience-tab snapshot (country / age+gender / device / OS / playback
+-- location). One full-replace snapshot per (upload_profile, dimension) each fetch run —
+-- mirrors the games pipeline's channel_country_views replace pattern.
+CREATE TABLE IF NOT EXISTS youtube_channel_audience (
+    id             BIGSERIAL PRIMARY KEY,
+    channel_id     TEXT NOT NULL,
+    upload_profile TEXT NOT NULL,
+    dimension      TEXT NOT NULL,   -- 'country' | 'age_gender' | 'device' | 'os' | 'playback_location'
+    dim_key        TEXT NOT NULL,   -- e.g. 'US', 'age25-34|male', 'MOBILE', 'ANDROID', 'WATCH'
+    metric_value   DOUBLE PRECISION NOT NULL,
+    fetched_at     BIGINT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_yt_audience_profile_dim
+    ON youtube_channel_audience(upload_profile, dimension);
+
+-- Per-video audience retention curve (Content tab "Audience retention" graph).
+-- Fetched once per video (retention_curve_fetched_at gate above) since the shape is
+-- stable after early data settles, not re-fetched every cron run.
+CREATE TABLE IF NOT EXISTS youtube_video_retention_curve (
+    video_id              TEXT NOT NULL,
+    elapsed_video_time_pct DOUBLE PRECISION NOT NULL,  -- 0.00-1.00, position in the video
+    audience_watch_ratio   DOUBLE PRECISION,            -- fraction of viewers still watching at this point
+    relative_performance   DOUBLE PRECISION,            -- vs similar-length videos on YouTube, >0 = better than typical
+    fetched_at              BIGINT NOT NULL,
+    PRIMARY KEY (video_id, elapsed_video_time_pct)
+);
 """
 
 
@@ -294,9 +329,22 @@ def _iso_to_unix(iso_str: str) -> int:
 
 
 def init_db():
-    """Create tables if they don't exist. All columns are baked into SCHEMA."""
+    """Create tables if they don't exist. All columns are baked into SCHEMA.
+
+    CREATE TABLE IF NOT EXISTS does not retroactively add columns to a table
+    that already exists (this is Postgres, not a fresh install) — new columns
+    on youtube_publish_log need an explicit ALTER TABLE, hence the
+    _add_column_if_missing calls below. New *tables* (youtube_channel_audience,
+    youtube_video_retention_curve) are still created fine by the executescript
+    above since those don't exist yet anywhere.
+    """
     conn = get_connection()
     conn.executescript(SCHEMA)
+    _add_column_if_missing(conn, "youtube_publish_log", "watch_time_hours", "DOUBLE PRECISION")
+    _add_column_if_missing(conn, "youtube_publish_log", "shares", "BIGINT")
+    _add_column_if_missing(conn, "youtube_publish_log", "subscribers_gained", "BIGINT")
+    _add_column_if_missing(conn, "youtube_publish_log", "dislikes", "BIGINT")
+    _add_column_if_missing(conn, "youtube_publish_log", "retention_curve_fetched_at", "BIGINT")
     conn.commit()
     conn.close()
 
@@ -1238,6 +1286,12 @@ def get_channel_videos(lang: str) -> list[dict]:
                ypl.like_count,
                ypl.comment_count,
                ypl.analytics_pulled_at,
+               ypl.traffic_sources,
+               ypl.watch_time_hours,
+               ypl.shares,
+               ypl.subscribers_gained,
+               ypl.dislikes,
+               ypl.retention_curve_fetched_at,
                ss.profile_id,
                hs.title
            FROM youtube_publish_log ypl
@@ -1265,8 +1319,72 @@ def get_channel_videos(lang: str) -> list[dict]:
             else 'no_data' if d['analytics_pulled_at'] == -1
             else _ts_to_iso(d['analytics_pulled_at'])
         )
+        raw_traffic = d.pop('traffic_sources', None)
+        try:
+            d['traffic_sources'] = json.loads(raw_traffic) if raw_traffic else None
+        except (TypeError, ValueError):
+            d['traffic_sources'] = None
+        d['has_retention_curve'] = d.pop('retention_curve_fetched_at', None) is not None
         result.append(d)
     return result
+
+
+def get_channel_audience(upload_profile: str) -> dict:
+    """
+    Return the channel-level Audience-tab snapshot for one profile (en|zh),
+    grouped by dimension. Populated by fetch_analytics.py's per-profile
+    _pull_channel_audience / _write_channel_audience (full-replace on every
+    fetch run, so this always reflects the latest snapshot, not history).
+
+    Returns {"upload_profile": ..., "fetched_at": iso-or-None,
+             "country": [...], "age_gender": [...], "device": [...],
+             "os": [...], "playback_location": [...]}
+    Each dimension list holds {"dim_key": ..., "metric_value": ...} dicts.
+    Empty lists (not missing keys) when a dimension has no data yet, so
+    callers don't need to guard with .get().
+    """
+    conn = get_connection()
+    rows = conn.execute(
+        """SELECT dimension, dim_key, metric_value, fetched_at
+           FROM youtube_channel_audience
+           WHERE upload_profile = %s
+           ORDER BY dimension, metric_value DESC""",
+        (upload_profile,),
+    ).fetchall()
+    conn.close()
+
+    out = {
+        "upload_profile": upload_profile,
+        "fetched_at": None,
+        "country": [], "age_gender": [], "device": [], "os": [], "playback_location": [],
+    }
+    for r in rows:
+        d = dict(r)
+        dimension = d["dimension"]
+        if dimension not in out:
+            continue  # unknown dimension key — ignore rather than crash the response
+        out[dimension].append({"dim_key": d["dim_key"], "metric_value": d["metric_value"]})
+        out["fetched_at"] = _ts_to_iso(d["fetched_at"])  # same fetched_at across all rows of a snapshot
+    return out
+
+
+def get_video_retention_curve(video_id: str) -> list[dict]:
+    """
+    Return the audience retention curve for one video, sorted by position in
+    the video (elapsed_video_time_pct ascending). Empty list if never fetched
+    (see youtube_publish_log.retention_curve_fetched_at / ChannelVideoRow.has_retention_curve
+    to distinguish "not fetched yet" from "fetched, genuinely no data").
+    """
+    conn = get_connection()
+    rows = conn.execute(
+        """SELECT elapsed_video_time_pct, audience_watch_ratio, relative_performance
+           FROM youtube_video_retention_curve
+           WHERE video_id = %s
+           ORDER BY elapsed_video_time_pct ASC""",
+        (video_id,),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
 
 
 def get_stories_with_comments() -> list[dict]:

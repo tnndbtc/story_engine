@@ -1,6 +1,6 @@
 #!/bin/bash
 # export_latest_story.sh — Non-interactive export of the most recently generated
-# hierarchical story from db.sqlite3 to reflowed .txt files.
+# hierarchical story from PostgreSQL to reflowed .txt files.
 #
 # Called automatically by run_generate.sh after each story generation run.
 # Mirrors the logic of setup.sh option 8, with n=1 hardcoded (always the

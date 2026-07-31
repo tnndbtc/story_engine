@@ -56,9 +56,9 @@ def _candidate_decoder(obj: dict) -> Any:
     return obj
 
 
-def _snapshots_dir(db_path: str) -> str:
-    """Return the snapshots/ directory alongside db.sqlite3."""
-    return os.path.join(os.path.dirname(os.path.abspath(db_path)), "snapshots")
+def _snapshots_dir(project_root: str) -> str:
+    """Return the snapshots/ directory under the story_engine project root."""
+    return os.path.join(os.path.abspath(project_root), "snapshots")
 
 
 _SNAPSHOT_SCHEMA_VERSION = 2
@@ -66,7 +66,7 @@ _SNAPSHOT_SCHEMA_VERSION = 2
 
 def save_snapshot(
     candidates: list[NormalizedCandidate],
-    db_path: str,
+    project_root: str,
     batch_ts: int,
     metadata: dict | None = None,
 ) -> str:
@@ -88,17 +88,18 @@ def save_snapshot(
     load_snapshot() handles both on read.
 
     Args:
-        candidates: Stage 1 output (used items already excluded).
-        db_path:    Path to db.sqlite3 — used to locate snapshots/ directory.
-        batch_ts:   UNIX milliseconds — used in file name.
-        metadata:   Optional dict of batch metadata (profile_id,
-                    keyword_map_sha, ...). When None, metadata block is
-                    written with batch_ts only.
+        candidates:   Stage 1 output (used items already excluded).
+        project_root: story_engine project root — used to locate the
+                      snapshots/ directory alongside it.
+        batch_ts:     UNIX milliseconds — used in file name.
+        metadata:     Optional dict of batch metadata (profile_id,
+                      keyword_map_sha, ...). When None, metadata block is
+                      written with batch_ts only.
 
     Returns:
         Absolute path to the written snapshot file.
     """
-    snap_dir = _snapshots_dir(db_path)
+    snap_dir = _snapshots_dir(project_root)
     os.makedirs(snap_dir, exist_ok=True)
     path = os.path.join(snap_dir, f"{batch_ts}_stage1.json")
 
@@ -186,13 +187,13 @@ def load_snapshot_with_metadata(
     return metadata, candidates
 
 
-def cleanup_old_snapshots(db_path: str) -> None:
+def cleanup_old_snapshots(project_root: str) -> None:
     """
     Delete snapshot files older than 48 hours.
 
     Called at the start of each batch run before Stage 1 begins.
     """
-    snap_dir = _snapshots_dir(db_path)
+    snap_dir = _snapshots_dir(project_root)
     if not os.path.isdir(snap_dir):
         return
 

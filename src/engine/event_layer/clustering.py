@@ -47,7 +47,7 @@ import os
 from pathlib import Path
 
 from db.crawler_reader import get_embeddings
-from db.models import DB_PATH, log_purity_decision
+from db.models import log_purity_decision
 from engine.selector.schemas import NormalizedCandidate
 
 logger = logging.getLogger(__name__)

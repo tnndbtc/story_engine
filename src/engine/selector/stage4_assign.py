@@ -48,7 +48,7 @@ def stage4_assign(
     traces:        list[TraceRecord],
     envelope:      AllocationEnvelope,
     config:        BatchConfig,
-    db_path:       str,
+    project_root:  str,
     batch_ts:      int,
     story_set_id:  int,
 ) -> BatchResult:
@@ -60,7 +60,8 @@ def stage4_assign(
         traces:       Stage 3 output (summary — actual records in JSONL).
         envelope:     Stage 2 AllocationEnvelope.
         config:       Loaded BatchConfig.
-        db_path:      Path to story_engine's db.sqlite3.
+        project_root: story_engine project root — used to locate the logs/
+                      directory for the trace log.
         batch_ts:     UNIX milliseconds.
         story_set_id: Row ID created by create_story_set() before Stage 1.
 
@@ -160,7 +161,7 @@ def stage4_assign(
             logger.error("Stage 4 validation failed: %s", err)
         # Close trace, emit trace log for observability, return failure — do NOT raise.
         # Design: "do NOT raise an exception; return a failed BatchResult"
-        trace_path = get_trace_path(batch_ts, db_path)
+        trace_path = get_trace_path(batch_ts, project_root)
         close_trace_handle(batch_ts)
         return BatchResult(
             story_set_id       = story_set_id,
@@ -173,7 +174,7 @@ def stage4_assign(
         )
 
     # Step 4 — DB writes (single transaction) — only reached if validation passes
-    trace_path = get_trace_path(batch_ts, db_path)
+    trace_path = get_trace_path(batch_ts, project_root)
 
     conn = get_connection()
 

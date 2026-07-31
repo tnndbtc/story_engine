@@ -141,20 +141,19 @@ reset_last_batch() {
     echo -e "  ${BOLD}Reset Last Batch${NC}"
     echo ""
 
-    local db_path="${STORY_ENGINE_DB:-$SCRIPT_DIR/db.sqlite3}"
-
-    if [ ! -f "$db_path" ]; then
-        echo -e "  ${RED}ERROR: database not found at $db_path${NC}"
-        echo ""
-        return
-    fi
+    # story_engine has been Postgres-only since the sqlite migration (see
+    # db/models.py PG_DSN) — this used to connect directly to db.sqlite3,
+    # which was frozen since 2026-06-04. That meant every prior run of this
+    # command "succeeded" against a 2-month-dead snapshot without touching
+    # the real last batch at all. Ported to go through get_connection().
 
     # Find the last story set
     local result
     result=$(python3 -c "
-import sqlite3, sys
-conn = sqlite3.connect('$db_path')
-conn.row_factory = sqlite3.Row
+import sys
+sys.path.insert(0, '$SRC_DIR')
+from db.models import get_connection
+conn = get_connection()
 row = conn.execute('SELECT id, status, created_at FROM story_sets ORDER BY id DESC LIMIT 1').fetchone()
 if not row:
     print('NONE')
@@ -195,43 +194,44 @@ conn.close()
 
     echo ""
     python3 -c "
-import sqlite3, sys
-db_path = '$db_path'
+import sys
+sys.path.insert(0, '$SRC_DIR')
+from db.models import get_connection
+
 set_id = $set_id
+conn = get_connection()
 
-conn = sqlite3.connect(db_path)
-conn.row_factory = sqlite3.Row
-conn.execute('PRAGMA foreign_keys=ON')
-
-# Step 1 — delete used_items first (FK references story_sets + stories)
-cur = conn.execute('DELETE FROM used_items WHERE story_set_id = ?', (set_id,))
+# Step 1 — delete used_items first (real FK: used_items.story_set_id ->
+# story_sets(id), used_items.story_id -> stories(id) — Postgres enforces
+# these unconditionally, no PRAGMA needed like sqlite required).
+cur = conn.execute('DELETE FROM used_items WHERE story_set_id = %s', (set_id,))
 print('  used_items deleted:  ' + str(cur.rowcount))
 
-# Step 1.5 — delete event_memory rows for this batch BEFORE deleting stories.
-# event_memory.story_id → stories(id) and event_memory.story_set_id → story_sets(id)
-# are both FK constraints enforced by PRAGMA foreign_keys=ON.
-# Without this step, Step 2 raises sqlite3.IntegrityError: FOREIGN KEY constraint failed.
-cur = conn.execute('DELETE FROM event_memory WHERE story_set_id = ?', (set_id,))
+# Step 1.5 — delete event_memory rows for this batch. In Postgres these are
+# soft references (no enforced FK — see models.py schema comment), so this
+# isn't strictly required for constraint reasons like it was in sqlite, but
+# it's still the correct cleanup for a real reset.
+cur = conn.execute('DELETE FROM event_memory WHERE story_set_id = %s', (set_id,))
 print('  event_memory deleted: ' + str(cur.rowcount))
 
 # Step 2 — delete stories linked to this set via batch_id
-story_rows = conn.execute('SELECT id FROM stories WHERE batch_id = ?', (set_id,)).fetchall()
-story_ids = [r['id'] for r in story_rows]
+cur = conn.execute('DELETE FROM stories WHERE batch_id = %s RETURNING id', (set_id,))
+story_ids = [r['id'] for r in cur.fetchall()]
 if story_ids:
-    placeholders = ','.join('?' * len(story_ids))
-    cur = conn.execute('DELETE FROM stories WHERE id IN (' + placeholders + ')', story_ids)
-    print('  stories deleted:     ' + str(cur.rowcount) + '  (ids: ' + str(story_ids) + ')')
+    print('  stories deleted:     ' + str(len(story_ids)) + '  (ids: ' + str(story_ids) + ')')
 else:
     print('  stories deleted:     0  (none found for batch_id=' + str(set_id) + ')')
 
 # Step 3 — delete the story set itself
-cur = conn.execute('DELETE FROM story_sets WHERE id = ?', (set_id,))
-print('  story_sets deleted:  ' + str(cur.rowcount))
+cur = conn.execute('DELETE FROM story_sets WHERE id = %s', (set_id,))
+deleted = cur.rowcount
 
 conn.commit()
 conn.close()
 
-if cur.rowcount == 0:
+print('  story_sets deleted:  ' + str(deleted))
+
+if deleted == 0:
     print('WARNING: story_sets row was already gone — nothing deleted')
     sys.exit(1)
 else:
@@ -435,13 +435,7 @@ _export_story_txt() {
     local no_reflow=0
     [ "${1:-}" = "no_reflow" ] && no_reflow=1
 
-    local db_path="${STORY_ENGINE_DB:-$SCRIPT_DIR/db.sqlite3}"
     local export_dir="$SCRIPT_DIR/exports"
-
-    if [ ! -f "$db_path" ]; then
-        echo -e "  ${RED}ERROR: database not found at $db_path${NC}"
-        echo ""; return
-    fi
 
     read -p "  How many recent stories to export? [1]: " n_choice
     n_choice="${n_choice:-1}"
@@ -468,7 +462,6 @@ _export_story_txt() {
     fi
 
     python3 "$export_script" \
-        --db         "$db_path" \
         --export-dir "$export_dir" \
         --n          "$n_choice" \
         --paths-file "$paths_tmp"

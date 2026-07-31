@@ -25,7 +25,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from db.crawler_reader import get_top_items, CRAWLER_ROOT
-from db.models import get_used_urls_with_hotness, DB_PATH
+from db.models import get_used_urls_with_hotness
 from engine.selector.config import BatchConfig
 from engine.selector.schemas import NormalizedCandidate, TraceRecord
 from engine.selector.snapshot import cleanup_old_snapshots, save_snapshot
@@ -285,7 +285,7 @@ def _engagement_intensity_multiplier(signals: dict | None) -> float:
 
 
 def stage1_normalize(
-    db_path: str,
+    project_root: str,
     config: BatchConfig,
     format_ids: list[int],
     hours: int,
@@ -296,7 +296,9 @@ def stage1_normalize(
     Stage 1: normalize raw crawler items into typed NormalizedCandidate objects.
 
     Args:
-        db_path:    Path to story_engine's db.sqlite3 (for used_urls lookup).
+        project_root: story_engine project root — used to locate the logs/
+                      and snapshots/ directories. used_urls itself comes from
+                      Postgres (get_used_urls_with_hotness()), not from this path.
         config:     Loaded BatchConfig from story_mix.json.
         format_ids: List of integer format IDs included in this batch.
         hours:      Lookback window in hours.
@@ -311,10 +313,10 @@ def stage1_normalize(
         Side effects: snapshot written, trace JSONL opened and partially written.
     """
     # Clean up old snapshots at run start
-    cleanup_old_snapshots(db_path)
+    cleanup_old_snapshots(project_root)
 
-    # Determine logs directory alongside db.sqlite3
-    logs_dir = os.path.join(os.path.dirname(os.path.abspath(db_path)), 'logs')
+    # Determine logs directory under the project root
+    logs_dir = os.path.join(os.path.abspath(project_root), 'logs')
 
     # Compute batch metadata (profile_id + keyword_map_sha) for snapshot
     # envelope and trace header. This lets replay tooling detect when
@@ -760,7 +762,7 @@ def stage1_normalize(
         )
 
     # Step 7 — Write snapshot (available candidates only, used excluded)
-    snap_path = save_snapshot(available, db_path, batch_ts, metadata=_batch_metadata)
+    snap_path = save_snapshot(available, project_root, batch_ts, metadata=_batch_metadata)
 
     # Store trace handle on module level for Stage 3/4 to retrieve
     # (passed via the returned candidates list is not possible cleanly;
@@ -797,13 +799,13 @@ def get_trace_handle(batch_ts: int):
     return entry[0]
 
 
-def get_trace_path(batch_ts: int, db_path: str) -> str:
+def get_trace_path(batch_ts: int, project_root: str) -> str:
     """Return the path to the trace JSONL file for this batch."""
     entry = _trace_handles.get(batch_ts)
     if entry:
         logs_dir = entry[1]
     else:
-        logs_dir = os.path.join(os.path.dirname(os.path.abspath(db_path)), 'logs')
+        logs_dir = os.path.join(os.path.abspath(project_root), 'logs')
     return os.path.join(logs_dir, f"trace_{batch_ts}.jsonl")
 
 

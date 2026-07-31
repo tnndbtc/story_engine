@@ -56,13 +56,15 @@ from api.schemas import (
     GamesSubtitleRow,
     GamesVideoRow,
     ChannelVideoRow,
+    ChannelAudienceSnapshot,
+    VideoRetentionCurve,
     CommentQuestion,
     LifeDeathResult,
     VideoWithCommentQuestions,
     WinrateResult,
     WinrateStep,
 )
-from db.models import get_story, get_stories_today, get_stories, get_story_sets, get_stories_by_set, get_youtube_analytics, get_subscribers, get_stories_with_comments, get_channel_videos
+from db.models import get_story, get_stories_today, get_stories, get_story_sets, get_stories_by_set, get_youtube_analytics, get_subscribers, get_stories_with_comments, get_channel_videos, get_channel_audience, get_video_retention_curve
 from db.crawler_reader import get_item_count, test_connection, CRAWLER_DB_URL
 
 router = APIRouter(prefix="/api")
@@ -220,6 +222,31 @@ def get_channel_analytics(lang: str = "en"):
     """
     rows = get_channel_videos(lang)
     return [ChannelVideoRow(**r) for r in rows]
+
+
+@router.get("/analytics/channel/audience", response_model=ChannelAudienceSnapshot)
+def get_channel_audience_snapshot(upload_profile: str = "en"):
+    """
+    Return the channel-level Audience-tab snapshot (country, age+gender, device,
+    OS, playback location) for one profile (en|zh), as of the most recent
+    fetch_analytics.py run. Full-replace snapshot, not a time series — see
+    ChannelAudienceSnapshot.fetched_at for when it was pulled.
+    """
+    return ChannelAudienceSnapshot(**get_channel_audience(upload_profile))
+
+
+@router.get("/analytics/video/{video_id}/retention-curve", response_model=VideoRetentionCurve)
+def get_video_retention_curve_route(video_id: str):
+    """
+    Return the audience retention curve for one video (Studio Content tab's
+    "Audience retention" graph) — ~100 points showing what fraction of viewers
+    were still watching at each point in the video, and how that compares to
+    similar-length videos on YouTube. Empty points list if never fetched
+    (check ChannelVideoRow.has_retention_curve first to distinguish
+    "not fetched yet" from "fetched, no data").
+    """
+    points = get_video_retention_curve(video_id)
+    return VideoRetentionCurve(video_id=video_id, points=points)
 
 
 _STRATEGY_CHANGES_PATH       = Path("/home/tnnd/data/code/story_engine/strategy_changes.json")

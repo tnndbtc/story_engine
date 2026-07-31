@@ -23,7 +23,7 @@ from pathlib import Path
 # Add src/ to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from db.models import init_db, DB_PATH, complete_story_set
+from db.models import init_db, PROJECT_ROOT, complete_story_set
 from engine import selector
 from engine.format_registry import FORMAT_NAME_TO_ID, FORMAT_NAMES
 from engine.generator import (
@@ -273,7 +273,7 @@ def main():
     try:
         batch_result = selector.run_batch(
             format_ids     = format_ids,
-            db_path        = DB_PATH,
+            project_root   = PROJECT_ROOT,
             config_path    = CONFIG_PATH,
             lang           = args.lang,
             channel        = args.channel,

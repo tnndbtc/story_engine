@@ -280,10 +280,9 @@ json.dump(cfg, open('$TMP_CONFIG', 'w'), indent=2, ensure_ascii=False)
 
             echo ""
             echo "--- Step B: Attractiveness + trend gate ---"
-            # Pass STORY_SET_ID and DB_PATH via argv (heredoc is single-quoted,
-            # so $VAR inside it is NOT expanded by the shell).
-            # DB_PATH is defined near the top of this script as:
-            #   DB_PATH="${STORY_ENGINE_DB:-$SCRIPT_DIR/db.sqlite3}"
+            # Pass STORY_SET_ID via argv (heredoc is single-quoted, so $VAR
+            # inside it is NOT expanded by the shell). The Python below
+            # connects via db.models.get_connection() (PostgreSQL).
             SSID="$STORY_SET_ID"
             ATTRACT_RESULT=$(cd "$SCRIPT_DIR" && python3 - "$SSID" <<'PYEOF'
 import sys, json

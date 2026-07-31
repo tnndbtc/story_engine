@@ -2,7 +2,7 @@
 selector package — batch selection pipeline.
 
 Public API:
-    run_batch(format_ids, db_path, config_path, lang, channel,
+    run_batch(format_ids, project_root, config_path, lang, channel,
               hours=48, snapshot_path=None,
               config_profile=None) -> BatchResult
 
@@ -62,7 +62,7 @@ def _validate_replay_metadata(
 
 def run_batch(
     format_ids:     list[int],
-    db_path:        str,
+    project_root:   str,
     config_path:    str,
     lang:           str,
     channel:        int,
@@ -75,7 +75,8 @@ def run_batch(
 
     Args:
         format_ids:     List of integer format IDs to include in this batch.
-        db_path:        Path to story_engine's own db.sqlite3.
+        project_root:   story_engine project root — used to locate the logs/
+                        and snapshots/ directories.
         config_path:    Path to story_mix.json (the BASE file).
         lang:           Output language ("en" or "zh").
         channel:        Output channel (1, 2, or 3).
@@ -127,15 +128,15 @@ def run_batch(
 
         # Open trace handle for replay mode — use current metadata so the
         # replay's trace shows the state under which replay ran.
-        logs_dir = os.path.join(os.path.dirname(os.path.abspath(db_path)), 'logs')
+        logs_dir = os.path.join(os.path.abspath(project_root), 'logs')
         trace_handle = open_trace(logs_dir, batch_ts, metadata=current_metadata)
         _store_trace_handle(batch_ts, trace_handle, logs_dir)
         snap_path = snapshot_path
     else:
-        candidates = stage1_normalize(db_path, config, format_ids, hours, batch_ts, lang=lang)
+        candidates = stage1_normalize(project_root, config, format_ids, hours, batch_ts, lang=lang)
         # snapshot path is inferred from batch_ts by save_snapshot
         import os
-        snap_dir = os.path.join(os.path.dirname(os.path.abspath(db_path)), "snapshots")
+        snap_dir = os.path.join(os.path.abspath(project_root), "snapshots")
         snap_path = os.path.join(snap_dir, f"{batch_ts}_stage1.json")
 
         # 3b. Stage 1b — pre-selection title/description attract scoring.
@@ -159,7 +160,7 @@ def run_batch(
 
     # 7. Stage 4 — format assignment + DB writes + trace log
     result = stage4_assign(
-        selected, traces, envelope, config, db_path, batch_ts, story_set_id
+        selected, traces, envelope, config, project_root, batch_ts, story_set_id
     )
 
     # Attach snapshot path to result

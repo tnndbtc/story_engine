@@ -13,8 +13,6 @@ Usage:
         [--story-set-id 558] \
         [--paths-file /tmp/exported_paths.txt]
 
-    --db is accepted but ignored (legacy flag; database is now PostgreSQL).
-
 Output:
     exports/<category>/<category>_story_<date>_<time>utc_<id>_raw.txt
       — one paragraph per item, sections prefixed with "## ", source tags
@@ -540,8 +538,6 @@ def main():
     parser = argparse.ArgumentParser(
         description="Export hierarchical stories from PostgreSQL to _raw.txt files."
     )
-    parser.add_argument("--db",           default="",
-                        help="Ignored (legacy flag; database is now PostgreSQL).")
     parser.add_argument("--export-dir",   required=True,
                         help="Root export directory (exports/)")
     parser.add_argument("--n",            type=int, default=1,

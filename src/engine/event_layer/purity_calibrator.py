@@ -41,7 +41,7 @@ from pathlib import Path
 # Add src/ to path so db.models is importable when run as a script
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from db.models import DB_PATH, get_connection
+from db.models import get_connection
 
 # ---------------------------------------------------------------------------
 # Paths

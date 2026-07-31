@@ -113,8 +113,9 @@ CORE SYSTEM GUARANTEES (hard requirements)
      given the same snapshot must.
    Snapshot storage:
      Persisted to disk for 48 hours, named by batch_ts, stored in snapshots/
-     alongside db.sqlite3. Snapshot is taken after Stage 1 normalization (post-
-     dedup, post-eligibility-tagging), not from raw crawler output.
+     under the story_engine project root. Snapshot is taken after Stage 1
+     normalization (post-dedup, post-eligibility-tagging), not from raw
+     crawler output.
      Replay is supported as a debug-only operation in v1 (run selector against
      a snapshot file rather than live DB). No production replay API in v1.
 
@@ -1589,7 +1590,7 @@ DB SCHEMA CHANGES
        -- get_used_urls_with_hotness() filters WHERE role = 'main' OR role IS NULL
 
   3. snapshots/ directory (new)
-       Location: same directory as db.sqlite3
+       Location: under the story_engine project root (PROJECT_ROOT in db/models.py)
        File format: snapshots/{batch_ts}_stage1.json
        Retention: deleted if older than 48 hours at batch start
 

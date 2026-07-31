@@ -298,6 +298,43 @@ class ChannelVideoRow(BaseModel):
     like_count:          Optional[int]
     comment_count:       Optional[int]
     analytics_pulled_at: Optional[str]      # None=pending, 'no_data'=gave up, ISO=fetched
+    traffic_sources:     Optional[dict]     # {"YT_SEARCH": 42, "SUGGESTED_VIDEOS": 31, ...} — was fetched
+                                             # since fetch_analytics.py's first version but never surfaced
+    watch_time_hours:    Optional[float]    # estimatedMinutesWatched/60
+    shares:              Optional[int]
+    subscribers_gained:  Optional[int]
+    dislikes:            Optional[int]      # Analytics API owner-only estimate
+    has_retention_curve: bool = False       # true if youtube_video_retention_curve has rows for this video
+
+
+class AudienceDimensionRow(BaseModel):
+    """One breakdown row within a channel Audience-tab dimension."""
+    dim_key:      str      # e.g. 'US', 'age25-34|male', 'MOBILE', 'ANDROID', 'WATCH'
+    metric_value: float    # views (count) for most dimensions, viewer % for age_gender
+
+
+class ChannelAudienceSnapshot(BaseModel):
+    """Channel-level Audience-tab snapshot for one profile (en|zh), grouped by dimension."""
+    upload_profile: str
+    fetched_at:     Optional[str]                            # ISO datetime of the snapshot, None if never fetched
+    country:            list[AudienceDimensionRow] = []
+    age_gender:          list[AudienceDimensionRow] = []
+    device:              list[AudienceDimensionRow] = []
+    os:                  list[AudienceDimensionRow] = []
+    playback_location:   list[AudienceDimensionRow] = []
+
+
+class RetentionCurvePoint(BaseModel):
+    """One point on a video's audience retention curve."""
+    elapsed_video_time_pct: float             # 0.00-1.00, position in the video
+    audience_watch_ratio:   Optional[float]   # fraction of viewers still watching
+    relative_performance:   Optional[float]   # vs similar-length YouTube videos; >0 = better than typical
+
+
+class VideoRetentionCurve(BaseModel):
+    """Full retention curve for one video."""
+    video_id: str
+    points:   list[RetentionCurvePoint]
 
 
 # ---------------------------------------------------------------------------
