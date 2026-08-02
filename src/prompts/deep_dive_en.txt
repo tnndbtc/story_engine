@@ -251,6 +251,12 @@ QUALITY CHECK (mandatory before finalizing body):
   - Does the title create a gap (not summarize)?
   - Does the ending create a strong, memorable takeaway?
   - Did you invent any fact not found in your searches? → remove it
+  - Does the title contain at least one real named entity (specific person, company,
+    place, event, or product — copied verbatim from your sources, not paraphrased)?
+    This is what a viewer actually types into YouTube search. If the title only has
+    a "counterintuitive result" with no named actor → rewrite so the [Specific
+    Actor/Entity] in the title formula is a real, searchable name from your sources.
+    (The mystery/gap itself doesn't need to change — just make the actor concrete.)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 OUTPUT FORMAT

@@ -2138,6 +2138,18 @@ def generate_story_batch(
             lang=lang,
         )
 
+        # ── Entity extraction: MUST happen before save_hierarchical_story() ──
+        # Previously this ran only after the save (below, for event_memory
+        # dedup only), so entities never reached hierarchical_stories.deep_story
+        # and gen_youtube_json.py (SEO/title/tags) had no entity data to anchor
+        # on. Extracting here and merging into deep_story fixes that — one
+        # Haiku call now serves both dedup and downstream SEO.
+        _em_title   = deep_story.get('title', '')
+        _em_sources = deep_story.get('sources', [])
+        _em_ents    = _extract_entities(_em_title, _em_sources)
+        if _em_ents:
+            deep_story['entities'] = _em_ents
+
         result = {
             'deep_story':        deep_story,
             'supporting_stories': supporting_stories,
@@ -2161,10 +2173,7 @@ def generate_story_batch(
         # not prevent the event from being recorded.
         # deep_cluster is an EventCluster object; use getattr, not dict.get().
         try:
-            _em_title   = deep_story.get('title', '')
-            _em_sources = deep_story.get('sources', [])
-            _em_emb     = getattr(deep_cluster, 'embedding_center', None)
-            _em_ents    = _extract_entities(_em_title, _em_sources)
+            _em_emb = getattr(deep_cluster, 'embedding_center', None)
             store_event(
                 story_id         = story_id,
                 story_set_id     = batch_id or 0,

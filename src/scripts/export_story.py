@@ -321,10 +321,16 @@ def write_sources_json(
     story_title: str,
     generated_at: str,
     raw_sources: list[dict],
+    entities: list[dict] | None = None,
 ) -> str | None:
     """Write <base_path>_sources.json with per-source image URLs.
 
     raw_sources is ds.get("sources", []) — each item has "title" and "url".
+    entities is ds.get("entities", []) — [{"text":..., "type":...}, ...] from
+    generator.py's _extract_entities(), carried through so the pipe repo's
+    gen_youtube_json.py can anchor tags/title/description on real named
+    entities instead of guessing keywords from scratch (see story_engine
+    zero-play-rate diagnosis, 2026-07-31).
     Returns the path written, or None on failure.
     """
     source_urls = [s.get("url", "") for s in raw_sources if s.get("url")]
@@ -349,6 +355,7 @@ def write_sources_json(
         "story_title":  story_title,
         "generated_at": generated_at,
         "sources":      sources_out,
+        "entities":     entities or [],
     }
 
     out_path = base_path + "_sources.json"
@@ -445,6 +452,7 @@ def export_stories(export_dir: str, n: int, paths_file: str,
         twist          = ds.get("twist",          "")   # legacy format
         thumbnail_text = ds.get("thumbnail_text", "")   # short thumbnail hook text
         hook_type      = ds.get("hook_type",      "")   # hook classification
+        entities       = ds.get("entities",       [])   # [{"text":..., "type":...}, ...] for SEO anchoring
 
         items = [f"## {strip_md(title)}"]
         # Write metadata for render pipeline (### lines are excluded from TTS)
@@ -452,6 +460,15 @@ def export_stories(export_dir: str, n: int, paths_file: str,
             items.append(f"### thumbnail: {thumbnail_text.strip()}")
         if hook_type:
             items.append(f"### hook_type: {hook_type.strip()}")
+        if entities:
+            # Travels inline with the pasted story text (same channel as thumbnail/
+            # hook_type above) so it survives the manual copy-paste-into-
+            # create-episode workflow with no extra file or ID to link up.
+            # Parsed by gen_youtube_json.py / server.py's /api/generate_youtube_json
+            # for entity-anchored SEO (story_engine zero-play-rate diagnosis, 2026-07-31).
+            entity_names = [e.get("text", "").strip() for e in entities if e.get("text")]
+            if entity_names:
+                items.append("### entities: " + " | ".join(entity_names))
         if body:
             # Split body into paragraphs first (\n\n-separated), then each paragraph
             # into short TTS clips (~50 chars for Chinese, ~30 words for English).
@@ -512,9 +529,9 @@ def export_stories(export_dir: str, n: int, paths_file: str,
 
         print(f"  ✓  Raw txt  : {raw_path}")
 
-        # ── Write _sources.json (for MediaPlan auto-generation) ───────────────
+        # ── Write _sources.json (for MediaPlan auto-generation + YouTube SEO) ──
         raw_sources = ds.get("sources", [])
-        if raw_sources:
+        if raw_sources or entities:
             gen_at_str = dt_utc.isoformat()
             src_path = write_sources_json(
                 base_path     = base,
@@ -522,6 +539,7 @@ def export_stories(export_dir: str, n: int, paths_file: str,
                 story_title   = title,
                 generated_at  = gen_at_str,
                 raw_sources   = raw_sources,
+                entities      = entities,
             )
             if src_path:
                 print(f"  ✓  Sources  : {src_path}")

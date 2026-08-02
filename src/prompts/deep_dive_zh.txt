@@ -216,6 +216,10 @@ QUALITY CHECK (mandatory before finalizing body):
   - Does any sentence feel optional? → remove it
   - Does the ending create a strong, memorable takeaway?
   - Did you invent any fact not found in your searches? → remove it
+  - 标题里是否包含至少一个来自信息来源的真实实体（具体人名/机构名/地点名/事件名/产品名，
+    原文照抄，不要泛化）？这是观众实际会在 YouTube 搜索框里敲的词——如果标题只有
+    "反直觉行为/结果"而没有点名任何具体实体，→ 重写，把结构里的"具体主体"换成信息来源
+    中出现过的真实名字。（悬念钩子本身不需要改，只是主体必须可核实、可搜索。）
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 OUTPUT FORMAT
