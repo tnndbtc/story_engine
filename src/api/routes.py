@@ -487,8 +487,9 @@ def list_games_videos():
                        gv.video_id
                 FROM game_comments gc
                 JOIN game_videos gv ON gv.video_db_id = gc.video_db_id
+                WHERE gc.author_channel_id IS DISTINCT FROM %s
                 ORDER BY gc.like_count DESC NULLS LAST, gc.published_at DESC
-            """)
+            """, (_GAMES_CHANNEL_ID,))
             for c in cur.fetchall():
                 comment_map[c["video_id"]].append(GamesComment(
                     comment_id        = c["comment_id"],

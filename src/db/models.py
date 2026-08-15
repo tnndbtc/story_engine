@@ -1081,6 +1081,8 @@ def register_youtube_publish(
     lang:           str,
     locale:         str,
     published_at:   int | None = None,
+    hook_type:      str | None = None,
+    thumbnail_text: str | None = None,
 ) -> int:
     """
     Record a published YouTube video and its link to a story/story_set.
@@ -1096,6 +1098,14 @@ def register_youtube_publish(
     ON CONFLICT (video_id) DO NOTHING: first write wins. If publish_episode.py is
     retried after analytics have already been fetched, the existing row (with
     ctr_pct etc.) is preserved unchanged.
+
+    hook_type / thumbnail_text: sourced from generator.py's deep_story output,
+    carried through export_story.py's "### hook_type: " / "### thumbnail: "
+    lines and meta.json (see simple_narration_setup.py's build_meta()). Added
+    2026-08 — previously these columns existed on the table but were never
+    populated by any write path, so hook_type performance could never actually
+    be analyzed (story_engine zero-play-rate diagnosis follow-up). Both are
+    optional; pass None when unavailable (e.g. non-simple_narration formats).
 
     Timestamp units:
       created_at   — UNIX epoch MILLISECONDS (matches _now() convention)
@@ -1119,11 +1129,11 @@ def register_youtube_publish(
     cursor = conn.execute(
         """INSERT INTO youtube_publish_log
            (video_id, story_set_id, story_id, channel_id, upload_profile,
-            lang, locale, published_at, created_at)
-           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            lang, locale, published_at, created_at, hook_type, thumbnail_text)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
            ON CONFLICT (video_id) DO NOTHING RETURNING id""",
         (video_id, story_set_id, story_id, channel_id, upload_profile,
-         lang, locale, pub_sec, now_ms),
+         lang, locale, pub_sec, now_ms, hook_type, thumbnail_text),
     )
     row = cursor.fetchone()
     row_id = row['id'] if row else 0
@@ -1576,7 +1586,17 @@ def get_story_type_prediction_error() -> dict:
     MIN_SAMPLES     = 5
     WINDOW          = 30      # rolling last N videos per type
     MAX_CORRECTION  = 0.15
-    MIN_VIEWS       = 100
+    # Was 100 — at current channel scale (max views ever recorded: EN=100 on a
+    # single video, ZH=25) that threshold matches zero rows, ever, making this
+    # function permanently inert (confirmed by running it: "no data found").
+    # Lowered to 5 (2026-08-02) based on actual distribution: EN has 52
+    # videos >=5 views, ZH has 11 — enough to populate a handful of story_types
+    # at MIN_SAMPLES=5. Trade-off: avg_view_pct/ctr_pct is noisier per-video at
+    # 5 views than at 100; accepted because MIN_SAMPLES aggregation already
+    # damps single-video noise, and *some* signal beats guaranteed zero. Raise
+    # this back once the channel regularly clears 100 views — it was not an
+    # arbitrary choice originally, just miscalibrated for a young channel.
+    MIN_VIEWS       = 5
 
     conn = get_connection()
     try:
