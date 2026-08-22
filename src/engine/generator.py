@@ -2194,7 +2194,13 @@ def generate_story_batch(
         # Non-fatal: if scoring fails, score stays NULL and gate fails open.
         # IMPORTANT: only save to DB when score is not None — a failure returns
         # (None, {}) and must NOT be written, or the gate will block the story.
+        # _story_type defaults to None here so Phase 1.6's blocked-type check
+        # below is always safe to evaluate, even when scoring never runs/succeeds
+        # (empty title/body, score_story() returning None, or an exception) —
+        # previously this left _story_type unbound and crashed with
+        # UnboundLocalError, discarding an already-saved, otherwise-good story.
         _score = None
+        _story_type = None
         try:
             from engine.attract_scorer import score_story
             from db.models import save_attractiveness_score
