@@ -387,12 +387,24 @@ print('  ✓ meta.json')
                 # ── Full pipeline mode (TTS + render + upload) ──────────────────
                 source /home/tnnd/.virtualenvs/pipe/bin/activate
                 cd "$PIPE_DIR"
+
+                # export_story.py writes <base>_sources.json alongside
+                # <base>_no_norm.txt / <base>_with_norm.txt (same base prefix).
+                # STORY_TXT is always the _no_norm.txt path (see
+                # export_latest_story.sh). Passed through to run.sh's Stage 9
+                # (media_plan_from_sources.py) so it can try each source's own
+                # og:image instead of the single flat background — missing
+                # file is a normal no-op there, so no existence check needed
+                # before passing it.
+                SOURCES_JSON_PATH="${STORY_TXT%_no_norm.txt}_sources.json"
+
                 ./simple_run.sh \
                     --story         "$STORY_TXT" \
                     --config        "$TMP_CONFIG" \
                     --story_set_id  "$STORY_SET_ID" \
                     --locale        "$LOCALE_VAL" \
                     --slot          "$CATEGORY" \
+                    --sources-json  "$SOURCES_JSON_PATH" \
                   >> "$SCRIPT_DIR/logs/pipeline.log" 2>&1 \
                   || echo "  WARNING: pipeline error — see logs/pipeline.log"
             fi
