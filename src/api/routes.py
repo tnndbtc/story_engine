@@ -235,6 +235,51 @@ def get_channel_audience_snapshot(upload_profile: str = "en"):
     return ChannelAudienceSnapshot(**get_channel_audience(upload_profile))
 
 
+@router.get("/analytics/channel/subscriber-split")
+def get_channel_subscriber_split(upload_profile: str = Query("en")):
+    """
+    Live subscriber vs non-subscriber view split for one deep-story channel
+    (en | zh). Runs channel_subscriber_split.py on demand against the
+    YouTube Analytics API — nothing is cached — and returns its JSON.
+
+    Fetched fresh on every page load, so no /refresh step is needed.
+    Sibling of /games/subscriber-split — same response shape (see
+    channel_subscriber_split.py's module docstring).
+
+    When YouTube withholds the breakdown (too few views) the script returns
+    available=false with a human-readable note; the UI shows that notice
+    instead of an empty chart.
+    """
+    if upload_profile not in ("en", "zh"):
+        raise HTTPException(status_code=400, detail="upload_profile must be en or zh")
+
+    def _unavailable(note: str):
+        return {
+            "lang": upload_profile, "channel_id": None, "through": None,
+            "available": False, "note": note,
+            "video_count": 0, "windows": [], "weeks": [],
+        }
+
+    try:
+        proc = subprocess.run(
+            [_PIPE_PYTHON, str(_STORY_ENGINE_SCRIPTS / "channel_subscriber_split.py"),
+             "--lang", upload_profile],
+            capture_output=True, text=True, timeout=30,
+        )
+    except subprocess.TimeoutExpired:
+        return _unavailable("Timed out querying YouTube Analytics.")
+    except Exception as e:
+        return _unavailable(f"Could not run analytics query: {e}")
+
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return _unavailable("Analytics query failed on the server.")
+
+    try:
+        return json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return _unavailable("Analytics query returned malformed data.")
+
+
 @router.get("/analytics/video/{video_id}/retention-curve", response_model=VideoRetentionCurve)
 def get_video_retention_curve_route(video_id: str):
     """
@@ -286,6 +331,8 @@ _GAMES_DB     = _GAMES_ROOT / "games.db"
 _GAMES_PYTHON = "/home/tnnd/.virtualenvs/games/bin/python3"
 
 _GAMES_CHANNEL_ID = "UCLeNQ9jLgctQzOhjYseIlFQ"
+
+_STORY_ENGINE_SCRIPTS = Path("/home/tnnd/data/code/story_engine/src/scripts")
 
 
 @router.post("/subscribers/refresh")

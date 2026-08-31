@@ -137,7 +137,7 @@ def score_story(title: str, body: str, lang: str = "zh") -> tuple[int | None, di
     try:
         result = subprocess.run(
             [_CLAUDE_BIN, "--output-format", "text", "--max-turns", "1",
-             "--tools", "", "-p", prompt],
+             "--tools", "", "--model", "haiku", "-p", prompt],
             capture_output=True, text=True, timeout=45,
             cwd=Path(__file__).resolve().parents[2],   # story_engine/
         )

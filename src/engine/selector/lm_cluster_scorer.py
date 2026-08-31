@@ -158,7 +158,7 @@ def score_clusters(clusters: list[object]) -> list[dict] | None:
     try:
         result = subprocess.run(
             [_CLAUDE_BIN, "--output-format", "text", "--max-turns", "1",
-             "--tools", "", "-p", prompt],
+             "--tools", "", "--model", "haiku", "-p", prompt],
             capture_output=True, text=True, timeout=45,
             cwd=Path(__file__).resolve().parents[3],  # story_engine/
         )

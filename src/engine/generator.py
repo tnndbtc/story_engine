@@ -1497,6 +1497,7 @@ def _call_claude_agent_deep(prompt: str) -> tuple[str, int]:
                 '--no-session-persistence',
                 '--system-prompt',       _DEEP_SYSTEM_PROMPT,
                 '--disable-slash-commands',
+                '--dangerously-skip-permissions',
             ],
             input=prompt,
             capture_output=True,
@@ -1508,6 +1509,16 @@ def _call_claude_agent_deep(prompt: str) -> tuple[str, int]:
         raise RuntimeError(f"deep story agent timed out after {_DEEP_TIMEOUT}s")
     except FileNotFoundError:
         raise RuntimeError("claude CLI not found in PATH")
+
+    # Log stdout/stderr unconditionally (not just on non-zero exit) — a run
+    # can exit 0 while every tool call inside it failed (e.g. WebSearch
+    # permission errors), and stderr from that case was previously lost.
+    logger.info(
+        "_call_claude_agent_deep: exit=%d stdout=%d chars stderr=%d chars",
+        result.returncode, len(result.stdout), len(result.stderr),
+    )
+    logger.info("_call_claude_agent_deep: stdout:\n%s", result.stdout)
+    logger.info("_call_claude_agent_deep: stderr:\n%s", result.stderr)
 
     if result.returncode != 0:
         raise RuntimeError(
@@ -1521,6 +1532,53 @@ def _call_claude_agent_deep(prompt: str) -> tuple[str, int]:
         len(raw), token_estimate,
     )
     return raw, token_estimate
+
+
+# Markers seen when the deep-dive agent fails its research (e.g. a WebSearch
+# tool-permission error inside the claude -p subprocess) and writes an
+# explanation of the failure into title/body instead of an actual story.
+# Checked case-sensitively for CJK (case doesn't apply) and case-insensitively
+# for English. Keep this list narrow — it must not false-positive on a real
+# news story that happens to mention "permission" or "access".
+#
+# The two real incidents on record (story_id 959 and 978) used different
+# phrasing ("无法完成" vs "才能完成" — "unable to complete" vs "needs X to
+# complete"), so this also matches on the literal tool name: a real spoken
+# news narrative has no legitimate reason to say "WebSearch" — that string
+# only shows up when the agent is talking about its own tooling.
+_AGENT_REFUSAL_MARKERS_CJK = (
+    '无法完成任务', '无法完成', '才能完成', '权限未授予', '权限错误',
+    '没有权限', '未获得权限', '无法访问', '访问权限', '信息源访问',
+    '抱歉，无法', '抱歉,无法',
+)
+_AGENT_REFUSAL_MARKERS_EN = (
+    'unable to complete the task', 'i cannot complete', "i'm unable to",
+    'permission not granted', 'permission denied', 'websearch tool permission',
+    'all websearch calls returned', 'i cannot access the provided',
+    'i do not have access', "i don't have access", 'no such tool',
+    'websearch',
+)
+
+
+def _detect_agent_refusal(title: str, body: str) -> str | None:
+    """
+    Detect when the deep-dive agent's JSON output is actually a refusal /
+    error explanation (e.g. "WebSearch permission not granted") rather than
+    a real narrative — the failure mode that let video ObuwlI9uxn4's episode
+    ("抱歉,无法完成任务:WebSearch工具权限未授予") reach 'ready' status and
+    get rendered + uploaded with the error text as its script.
+
+    Returns the matched marker string if a refusal is detected, else None.
+    """
+    combined = f"{title}\n{body}"
+    for marker in _AGENT_REFUSAL_MARKERS_CJK:
+        if marker in combined:
+            return marker
+    lowered = combined.lower()
+    for marker in _AGENT_REFUSAL_MARKERS_EN:
+        if marker in lowered:
+            return marker
+    return None
 
 
 # ── Deep story generation ──────────────────────────────────────────────────────
@@ -1735,6 +1793,19 @@ def generate_deep_story(
         logger.warning("%s", raw)
         logger.warning("=== EMPTY BODY RAW OUTPUT END ===")
 
+    # Guardrail: reject a refusal/error explanation masquerading as a story
+    # (e.g. the agent's tools errored and it wrote that failure into title/
+    # body instead of a narrative). Must run BEFORE this is returned, since
+    # the caller (generate_story_batch) saves the return value with
+    # status='ready' and it flows straight into render + upload otherwise.
+    _refusal_marker = _detect_agent_refusal(parsed.get('title', ''), body)
+    if _refusal_marker:
+        raise RuntimeError(
+            f"generate_deep_story: agent output looks like a refusal/error, "
+            f"not a story (matched {_refusal_marker!r}) — cluster={cluster.event_id} "
+            f"title={parsed.get('title', '')[:80]!r}"
+        )
+
     # Apply deterministic Traditional→Simplified conversion for ZH output.
     # Prompt instructions alone are unreliable when agent reads TW/HK sources.
     if lang == 'zh':
@@ -1879,6 +1950,19 @@ def generate_format_deep_en(
         logger.warning("generate_format_deep_en: body is EMPTY for format %d", format_id)
 
     try:
+        # Guardrail: reject a refusal/error explanation masquerading as a
+        # story (e.g. a WebSearch tool-permission error inside the agent
+        # subprocess got written into title/body instead of a narrative).
+        # Must run BEFORE _save_story_and_remember(), whose save is otherwise
+        # unconditional and would ship the error text straight to render.
+        _refusal_marker = _detect_agent_refusal(title, body)
+        if _refusal_marker:
+            raise RuntimeError(
+                f"generate_format_deep_en: agent output looks like a refusal/error, "
+                f"not a story (matched {_refusal_marker!r}) — format={format_id} "
+                f"title={title[:80]!r}"
+            )
+
         story_id = _save_story_and_remember(
             title=title,
             format=format_key,
